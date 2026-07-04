@@ -1,0 +1,53 @@
+id: careercoach
+name: Career Coach
+version: 0.1.0
+description: >-
+  Your career coach and job-hunt copilot. Talk through strategy and positioning,
+  run mock interviews with honest feedback, get a straight critique of your CV,
+  weigh an offer and rehearse the salary negotiation — and, when you want it done
+  for you, evaluate a posting and tailor the CV + cover letter end to end. A
+  full-surface showcase plugin (skills · workflow · subagent · tools + Knobs ·
+  console view · config). Adapted with credit from MadsLorentzen/ai-job-search (MIT).
+# Provenance (ADR 0027) — shown in the install review when added by git URL.
+repository: "https://github.com/protoLabsAI/careercoach-plugin"
+guide_url: "https://github.com/protoLabsAI/careercoach-plugin#readme"
+# The DS plugin-kit (/_ds/) + the sandboxed-iframe view convention need a recent host.
+min_protoagent_version: "0.34.0"
+# Declarative posture (ADR 0071) — the SHIPPED code makes no outbound calls of its
+# own (company research runs through the agent's own web_search/fetch_url tools, not
+# the plugin). Flip `network` to the provider host only if you wire the optional
+# Phase-3 job-source integration (see README § Extending).
+capabilities:
+  network: []
+  filesystem: scoped        # a small application tracker under the instance data dir
+enabled: false              # author default — operators opt in via plugins.enabled
+
+# Config + secrets + Settings (ADR 0019). The profile basics render in
+# System → Settings → Career Coach and round-trip through the generic settings
+# surface; `jobs_api_key` is routed to the gitignored secrets.yaml. The fit-rubric
+# WEIGHTS are a separate, agent-tunable Knobs surface (see __init__.py), not settings.
+config_section: careercoach
+config:
+  full_name: ""
+  location: ""
+  target_roles: ""
+  render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | latex
+  jobs_api_key: ""
+secrets: [jobs_api_key]
+settings:
+  - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
+  - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
+  - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }
+  - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain) or 'latex' for the classic moderncv .tex export." }
+  - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional — only used by the Phase-3 job-source integration (see README). Stored in secrets.yaml, never the tracked YAML." }
+
+# Console rail view (ADR 0026) — a "Career Coach" icon opens the dashboard: your
+# pipeline, fit scores, the rubric, and your prep/upskilling at a glance.
+views:
+  - { id: careercoach, label: "Career Coach", icon: "Compass", path: /plugins/careercoach/view }
+
+# Event bus (ADR 0039) — broadcast when the pipeline changes so the rail icon gets a
+# notification dot even when the panel is closed. Auto-namespaced careercoach.*.
+emits:
+  - application_tracked
+  - documents_generated

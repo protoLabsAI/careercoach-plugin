@@ -1,0 +1,72 @@
+# The autonomous "apply" pipeline (ADR 0002 — static-DAG workflow). The coach's
+# "do it for me" mode: given a posting, a small crew of this plugin's subagents
+# research the company, score fit against the rubric, and draft a tailored CV +
+# cover letter. Run it:
+#   run_workflow("apply", {"posting": "<url or pasted text>"})
+# Steps are chained via `depends_on`; each step's output feeds the next through
+# {{steps.<id>.output}} templating. Every step is a configured subagent (the engine
+# only runs subagent steps) — the crew is registered in __init__.py and pulls the full
+# discipline from the job-application-assistant skill via load_skill.
+name: apply
+description: >-
+  Evaluate a job posting and, if it's a fit, draft a tailored CV + cover letter — the
+  Career Coach's end-to-end application pipeline (research → evaluate → write).
+version: 1
+inputs:
+  - name: posting
+    description: The job posting — a URL or the pasted text.
+    required: true
+
+steps:
+  # 1. Sourced company brief.
+  - id: research
+    subagent: company_researcher
+    prompt: |
+      Research the company behind this job posting and return a sourced brief
+      (mission, recent news, employee sentiment, team, red/green flags):
+
+      {{inputs.posting}}
+
+  # 2. Score fit against the rubric, using the research for the culture/career dimensions.
+  - id: evaluate
+    subagent: job_evaluator
+    depends_on: [research]
+    prompt: |
+      Evaluate fit for this posting using the job-evaluation rubric. Use the company
+      research for the behavioral/culture and career-alignment dimensions. Output the full
+      evaluation (table, weighted overall, verdict, strengths, gaps, recommendation) and
+      track it.
+
+      POSTING:
+      {{inputs.posting}}
+
+      COMPANY RESEARCH:
+      {{steps.research.output}}
+
+  # 3. Draft the tailored CV + cover letter (honest reframing only; verify company claims).
+  - id: write
+    subagent: application_writer
+    depends_on: [evaluate, research]
+    prompt: |
+      Using the evaluation and the company research below, draft a tailored CV and a cover
+      letter following the writing-style discipline and the honesty test. Verify every
+      company-specific claim against the research sources. If the verdict was Weak or Poor
+      Fit, say so and stop rather than forcing a draft. Report the verification checklist.
+
+      EVALUATION:
+      {{steps.evaluate.output}}
+
+      COMPANY RESEARCH:
+      {{steps.research.output}}
+
+output: |
+  # Application pack
+
+  ## Fit evaluation
+  {{steps.evaluate.output}}
+
+  ## Tailored CV + cover letter
+  {{steps.write.output}}
+
+  ---
+  Next: ask your coach to run a **mock interview** (interview-coach) or render these to PDF.

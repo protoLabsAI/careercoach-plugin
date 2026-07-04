@@ -1,0 +1,13 @@
+[project]
+name = "careercoach"
+version = "0.1.0"            # keep in lockstep with protoagent.plugin.yaml
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# asyncio_mode = "auto"     # uncomment with pytest-asyncio for async tests
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

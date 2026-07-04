@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    # The org's Namespace Linux profile; override NSC_RUNNER on a fork that lacks it.
+    runs-on: ${{ vars.NSC_RUNNER || 'namespace-profile-protolabs-linux' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt ruff
+      # Lint the whole plugin; format-check only tests/ (the generated starter
+      # __init__ is yours to shape). Broaden to `ruff format --check .` once you've
+      # run `ruff format .` on your code.
+      - run: ruff check . && ruff format --check tests/
+      - run: pytest -q
