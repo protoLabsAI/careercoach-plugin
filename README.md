@@ -78,20 +78,27 @@ careercoach-plugin/
 
 ---
 
-## Install & use
+## Quick start
 
-```sh
-# From a running protoAgent (or: python -m server plugin install <git-url>)
-python -m server plugin install https://github.com/protoLabsAI/careercoach-plugin
-```
-Then **enable** it (Console → Plugins, or `enable_plugin("careercoach")`) — install ≠ enable ≠ trust.
-Set your profile in **Settings → Career Coach**, then just talk to your agent:
+1. **Install it.** In a running protoAgent: **Console → Plugins → Discover → _Career Coach_ → Install**. Or from the shell:
+   ```sh
+   python -m server plugin install https://github.com/protoLabsAI/careercoach-plugin
+   ```
+2. **Enable it.** Toggle it on in **Console → Plugins**, or ask the agent to `enable_plugin("careercoach")`.
+   (Install ≠ enable ≠ trust — enabling is the trust decision.)
+3. **Set your profile.** **Settings → Career Coach**: your name, location, and target roles. That's all it needs to start.
+4. **Talk to your agent.** A few things to try:
+   - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
+   - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
 
-- "Help me think about what roles to target." · "Run a mock interview for the Acme ML role."
-- "Here's a posting — is it worth applying to?" (paste URL/text) · "Critique my CV for this."
-- "I got the offer. Help me negotiate." · `run_workflow("apply", {"posting": "<url>"})`
-
-Tune how strictly it scores fit: `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`).
+### Optional
+- **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
+  under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
+  the keyless **Remotive** remote-jobs board — so it works out of the box.
+- **Background job-watch.** Turn on **Background job-watch** in Settings and it periodically surfaces new roles
+  matching your profile on the dashboard (and lights the rail icon). Off by default.
+- **Tune the fit rubric.** `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`) reweights
+  scoring live.
 
 ---
 

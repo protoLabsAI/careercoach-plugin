@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.2.0
+version: 0.2.1
 description: >-
   Your career coach and job-hunt copilot. Talk through strategy and positioning,
   run mock interviews with honest feedback, get a straight critique of your CV,
@@ -10,7 +10,7 @@ description: >-
   console view · config). Adapted with credit from MadsLorentzen/ai-job-search (MIT).
 # Provenance (ADR 0027) — shown in the install review when added by git URL.
 repository: "https://github.com/protoLabsAI/careercoach-plugin"
-guide_url: "https://github.com/protoLabsAI/careercoach-plugin#readme"
+guide_url: "https://github.com/protoLabsAI/careercoach-plugin#quick-start"   # Settings "Setup guide" link (ADR 0059)
 # The DS plugin-kit (/_ds/) + the sandboxed-iframe view convention need a recent host.
 min_protoagent_version: "0.34.0"
 # Declarative posture (ADR 0071) — company research still runs through the agent's own
