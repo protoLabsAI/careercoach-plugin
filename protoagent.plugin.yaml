@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.1.0
+version: 0.2.0
 description: >-
   Your career coach and job-hunt copilot. Talk through strategy and positioning,
   run mock interviews with honest feedback, get a straight critique of your CV,
@@ -13,12 +13,11 @@ repository: "https://github.com/protoLabsAI/careercoach-plugin"
 guide_url: "https://github.com/protoLabsAI/careercoach-plugin#readme"
 # The DS plugin-kit (/_ds/) + the sandboxed-iframe view convention need a recent host.
 min_protoagent_version: "0.34.0"
-# Declarative posture (ADR 0071) — the SHIPPED code makes no outbound calls of its
-# own (company research runs through the agent's own web_search/fetch_url tools, not
-# the plugin). Flip `network` to the provider host only if you wire the optional
-# Phase-3 job-source integration (see README § Extending).
+# Declarative posture (ADR 0071) — company research still runs through the agent's own
+# web_search/fetch_url tools, but the live job source (careercoach_search_jobs) + the
+# background job-watch call two job APIs directly, so `network` lists exactly those hosts.
 capabilities:
-  network: []
+  network: ["jsearch.p.rapidapi.com", "remotive.com"]
   filesystem: scoped        # a small application tracker under the instance data dir
 enabled: false              # author default — operators opt in via plugins.enabled
 
@@ -33,13 +32,21 @@ config:
   target_roles: ""
   render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | latex
   jobs_api_key: ""
+  jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else remotive) | jsearch | remotive
+  watch_enabled: false      # background job-watch: periodically surface new matching roles
+  watch_interval_min: 180   # how often the watch scans (minutes; floored at 5)
+  watch_min_score: 75       # only surface roles whose quick prescore is >= this
 secrets: [jobs_api_key]
 settings:
   - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
   - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }
   - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain) or 'latex' for the classic moderncv .tex export." }
-  - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional — only used by the Phase-3 job-source integration (see README). Stored in secrets.yaml, never the tracked YAML." }
+  - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A RapidAPI key for JSearch (Google-for-Jobs). With it, live job search + the watch use JSearch; without it they fall back to the keyless Remotive remote-jobs board. Stored in secrets.yaml." }
+  - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job API to use: 'auto' (JSearch when a key is set, else Remotive), 'jsearch', or 'remotive'." }
+  - { key: watch_enabled, label: "Background job-watch", type: bool, group: "Career Coach", description: "When on, periodically searches your target roles and surfaces new matching postings on the dashboard (lights the rail icon). Off by default." }
+  - { key: watch_interval_min, label: "Watch interval (min)", type: number, group: "Career Coach", description: "How often the background watch scans, in minutes (minimum 5)." }
+  - { key: watch_min_score, label: "Watch match threshold", type: number, group: "Career Coach", description: "Only surface postings whose quick keyword prescore is at least this (0-100). The coach still runs the full fit rubric on demand." }
 
 # Console rail view (ADR 0026) — a "Career Coach" icon opens the dashboard: your
 # pipeline, fit scores, the rubric, and your prep/upskilling at a glance.
@@ -51,3 +58,4 @@ views:
 emits:
   - application_tracked
   - documents_generated
+  - new_matches

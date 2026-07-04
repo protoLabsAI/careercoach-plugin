@@ -9,8 +9,10 @@ contribution surface in one place:
 
   • SKILL.md skills (progressive disclosure, with sub-files)  → skills/            (auto-loaded)
   • a static-DAG workflow (the autonomous "apply" pipeline)   → workflows/apply.yaml (auto-loaded)
-  • a delegate subagent (company research)                    → register_subagent
+  • a delegate subagent crew (research → evaluate → write)    → register_subagent
   • agent tools + a tunable Knobs control surface (the rubric)→ register_tools + graph.sdk.Knobs
+  • a live job source (JSearch / Remotive)                    → careercoach_search_jobs + jobsource.py
+  • an opt-in background job-watch + a goal verifier          → register_surface + supervise · register_goal_verifier
   • a console rail view (the Career Coach dashboard)          → register_router + manifest views:
   • config / secrets / Settings fields                        → manifest + registry.config (ADR 0019)
   • event-bus topics (rail notification dots)                 → registry.emit (ADR 0039)
@@ -44,12 +46,21 @@ def register(registry) -> None:
     cfg = registry.config  # this plugin's resolved config + secrets (ADR 0019)
 
     _register_tracker_tools(registry)
+    _register_jobsearch_tool(registry, cfg)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_views(registry, cfg)
+    _register_job_watch(registry, cfg)
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
-    log.info("[careercoach] registered: tracker tools + fit-rubric knobs + company_researcher + dashboard")
+    log.info("[careercoach] registered: tracker + job-search tools, rubric knobs, crew, dashboard, watch")
+
+
+def _as_bool(value) -> bool:
+    """Config booleans can arrive as real bools or strings (env/UI). Normalize."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 # ── agent tools: the application tracker ──────────────────────────────────────
@@ -90,6 +101,38 @@ def _register_tracker_tools(registry) -> None:
         )
 
     registry.register_tools([careercoach_track_application, careercoach_list_applications])
+
+
+# ── agent tool: live job search (the real job source, Phase 3) ────────────────
+def _register_jobsearch_tool(registry, cfg) -> None:
+    @tool
+    async def careercoach_search_jobs(query: str, location: str = "", remote: bool = False, limit: int = 10) -> str:
+        """Search LIVE job postings for `query` (a title, skill, or role), optionally narrowed by
+        `location` or `remote`-only. Uses the configured job source — JSearch (Google-for-Jobs) when a
+        Job-source API key is set in Settings, otherwise the keyless Remotive remote-jobs board. Returns
+        a numbered list with apply links; offer to evaluate fit or track any of them."""
+        from . import jobsource
+
+        try:
+            jobs = await jobsource.search_jobs(
+                query,
+                location=location,
+                remote=remote,
+                limit=limit,
+                api_key=cfg.get("jobs_api_key", ""),
+                provider=cfg.get("jobs_provider", "auto"),
+            )
+        except Exception as e:  # noqa: BLE001 — surface the reason to the user, don't crash the turn
+            return f"Job search failed: {e}"
+        if not jobs:
+            return f"No postings found for {query!r}. Try a broader query or a different location."
+        lines = [
+            f"{i}. {j['title']} — {j['company']} · {j['location'] or 'n/a'} ({j['source']})\n   {j['url']}"
+            for i, j in enumerate(jobs, 1)
+        ]
+        return f"Found {len(jobs)} role(s):\n" + "\n".join(lines) + "\n\nWant me to evaluate fit or track any of these?"
+
+    registry.register_tool(careercoach_search_jobs)
 
 
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────
@@ -228,6 +271,116 @@ def _register_views(registry, cfg) -> None:
         return HTMLResponse(_DASHBOARD_HTML)
 
     registry.register_router(page, prefix="/plugins/careercoach")  # PUBLIC page
+
+
+# ── a background job-watch: periodic scan → nudge via the event bus (Phase 3) ─
+def _register_job_watch(registry, cfg) -> None:
+    """Off unless `watch_enabled` (ADR 0071 posture). When on, a supervised background engine
+    (graph.sdk.supervise) periodically searches the target roles, prescreens fresh postings, records
+    NEW ones scoring >= `watch_min_score` to the tracker, and emits `careercoach.new_matches` so the
+    console rail icon lights up. The goal verifier is registered either way, so you can arm a WATCH on
+    the pipeline yourself (create_watch, ADR 0067) even with the auto-scan off."""
+    _register_watch_verifier(registry)
+
+    if not _as_bool(cfg.get("watch_enabled", False)):
+        return
+
+    interval_s = max(300, int(cfg.get("watch_interval_min", 180) or 180) * 60)
+    min_score = int(cfg.get("watch_min_score", 75) or 75)
+    holder: dict = {"engine": None}
+
+    async def _scan() -> None:
+        from . import jobsource, state
+        from . import watch as watchmod
+
+        roles = (cfg.get("target_roles", "") or "").strip()
+        if not roles:
+            return
+        query = roles.split(",")[0].strip() or roles
+        try:
+            jobs = await jobsource.search_jobs(
+                query,
+                remote=True,
+                limit=25,
+                api_key=cfg.get("jobs_api_key", ""),
+                provider=cfg.get("jobs_provider", "auto"),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.info("[careercoach] watch scan failed: %s", e)
+            return
+        seen = {
+            (r.get("company", "").strip().lower(), r.get("role", "").strip().lower()) for r in state.load_applications()
+        }
+        matches = watchmod.find_new_matches(jobs, roles, seen, min_score)
+        for m in matches:
+            state.track_application(
+                company=m["company"],
+                role=m["title"],
+                fit_score=m["score"],
+                status="considering",
+                source=m["url"],
+                notes=f"auto-surfaced by watch · prescore {m['score']}",
+            )
+        if matches:
+            try:
+                registry.emit(
+                    "new_matches",
+                    {
+                        "count": len(matches),
+                        "min_score": min_score,
+                        "top": [
+                            {"title": m["title"], "company": m["company"], "score": m["score"]} for m in matches[:3]
+                        ],
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            log.info("[careercoach] watch surfaced %d new match(es) >= %d", len(matches), min_score)
+
+    async def _start() -> None:
+        try:
+            from graph.sdk import supervise
+        except Exception as e:  # noqa: BLE001
+            log.info("[careercoach] job-watch unavailable (host-free?): %s", e)
+            return
+        holder["engine"] = supervise(_scan, name="careercoach-watch", interval=interval_s)
+        holder["engine"].start()
+        log.info("[careercoach] job-watch started (every %d min, >= %d)", interval_s // 60, min_score)
+
+    async def _stop() -> None:
+        engine = holder.get("engine")
+        if engine is not None:
+            try:
+                engine.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    registry.register_surface(_start, stop=_stop, name="careercoach-watch")
+
+
+def _register_watch_verifier(registry) -> None:
+    """Register a plugin goal verifier so a WATCH (create_watch, ADR 0067) or a monitor goal can be
+    armed on the pipeline: `careercoach:new_matches` trips when there's an un-actioned tracked role
+    scoring >= `min_score`. Guarded — needs the host goal types."""
+    if not hasattr(registry, "register_goal_verifier"):
+        return
+    try:
+        from graph.goals.types import VerifyResult
+    except Exception as e:  # noqa: BLE001
+        log.info("[careercoach] watch verifier skipped (host-free?): %s", e)
+        return
+
+    def _verify(min_score: int = 75, **_ignored):
+        from . import state
+
+        hi = [
+            r
+            for r in state.load_applications()
+            if int(r.get("fit_score", 0)) >= int(min_score) and r.get("status") == "considering"
+        ]
+        return VerifyResult(bool(hi), f"{len(hi)} un-actioned role(s) >= {min_score}", str(len(hi)))
+
+    registry.register_goal_verifier("careercoach:new_matches", _verify)
 
 
 # The dashboard page. Self-contained: links the DS plugin-kit for theming, derives a
