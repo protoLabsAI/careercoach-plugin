@@ -62,6 +62,7 @@ plugin loads and its suite runs with **no protoAgent present**.
 ```
 careercoach-plugin/
 ├─ protoagent.plugin.yaml     # manifest: config/secrets/settings, views, emits, provenance
+├─ SOUL.md                    # recommended agent persona — copy into your agent's SOUL.md
 ├─ __init__.py                # register(): tools + knobs + crew + dashboard + the job-watch
 ├─ rubric.py                  # the weighted fit rubric — pure, tested
 ├─ state.py                   # the application tracker — instance-scoped JSON, tested
@@ -87,7 +88,13 @@ careercoach-plugin/
 2. **Enable it.** Toggle it on in **Console → Plugins**, or ask the agent to `enable_plugin("careercoach")`.
    (Install ≠ enable ≠ trust — enabling is the trust decision.)
 3. **Set your profile.** **Settings → Career Coach**: your name, location, and target roles. That's all it needs to start.
-4. **Talk to your agent.** A few things to try:
+4. **Give it the coach's persona _(recommended)_.** The plugin ships a recommended persona in
+   [`SOUL.md`](./SOUL.md). Enabling a plugin never touches your agent's identity — by design
+   (see [#1771](https://github.com/protoLabsAI/protoAgent/issues/1771)) — so adopt it explicitly:
+   paste it into **Settings → Identity** (or your agent's `config/SOUL.md`) and rename the identity
+   line to your agent's name. Without it you still have the coaching *tools*; with it, the agent *is*
+   a coach.
+5. **Talk to your agent.** A few things to try:
    - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
    - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
 
@@ -128,6 +135,10 @@ Building this surfaced protoAgent SDK/DX feedback, filed as issues on the host r
   stubs (the import raises before `register()` can wire it). We guard for it here (`_register_subagents`),
   but the scaffolder encourages subagents, so the default stubs should include a permissive
   `SubagentConfig` (and `Knobs` / `make_knob_tools`). *(Filed as [protoAgent #1764](https://github.com/protoLabsAI/protoAgent/issues/1764).)*
+- **Missing seam** — this plugin ships a recommended persona ([`SOUL.md`](./SOUL.md)), but there's no
+  host mechanism to *offer* it: `register_*` has no persona hook and the manifest has no key, so adopting
+  it is a manual copy. The fix has to stay opt-in / load-on-demand (like `load_skill`) and must never
+  auto-clobber the user's own SOUL. *(Filed as [protoAgent #1771](https://github.com/protoLabsAI/protoAgent/issues/1771).)*
 
 If you find more, please open an issue on protoAgent — that feedback loop is half the point of this repo.
 
