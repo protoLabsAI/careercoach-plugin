@@ -24,7 +24,13 @@ def test_manifest_is_valid():
     assert m["id"] == "careercoach" and m["version"]
     assert m["config_section"] == "careercoach"
     assert "jobs_api_key" in m["secrets"]
-    assert {s["key"] for s in m["settings"]} >= {"full_name", "location", "target_roles", "render_format"}
+    assert {s["key"] for s in m["settings"]} >= {
+        "full_name",
+        "location",
+        "target_roles",
+        "render_format",
+        "packet_root",
+    }
     assert m["views"][0]["path"] == "/plugins/careercoach/view"
 
 
@@ -72,10 +78,84 @@ def test_state_roundtrip_and_dedupe(plugin, monkeypatch, tmp_path):
     assert len(state.load_applications(status="applied")) == 1
 
 
+# ── the role-packet workspace (folder-per-role artifact tree) ─────────────────
+def test_packet_paths_and_scaffold(plugin, tmp_path):
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+
+    # safe_name preserves human-readable names, strips only path-hostile chars.
+    assert packet.safe_name("Associate Director, Technical PM") == "Associate Director, Technical PM"
+    assert "/" not in packet.safe_name("Data/ML: Eng")
+    assert packet.role_dirname("Staff Engineer", "R407969") == "Staff Engineer - R407969"
+
+    p = packet.role_path(tmp_path, "Merck", "AD Technical PM", "R407969")
+    assert p == tmp_path / "Companies" / "Merck" / "Roles" / "AD Technical PM - R407969"
+
+    out = packet.scaffold_role(tmp_path, "Merck", "AD Technical PM", "R407969", raw_jd="Build the platform.")
+    assert out["existed"] is False
+    folder = tmp_path / "Companies" / "Merck" / "Roles" / "AD Technical PM - R407969"
+    assert (folder / "job description (raw).md").read_text().strip() == "Build the platform."
+    assert (folder / "process_log.md").exists()
+
+    # Idempotent: a second scaffold reuses the folder and never clobbers the raw JD.
+    again = packet.scaffold_role(tmp_path, "Merck", "AD Technical PM", "R407969", raw_jd="DIFFERENT")
+    assert again["existed"] is True
+    assert (folder / "job description (raw).md").read_text().strip() == "Build the platform."
+
+
+def test_packet_write_assemble_and_status(plugin, tmp_path):
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet.scaffold_role(tmp_path, "Acme", "ML Engineer")
+
+    packet.write_artifact(tmp_path, "Acme", "ML Engineer", "", "evidence-map", "## Map\nreq → proof")
+    res = packet.write_artifact(tmp_path, "Acme", "ML Engineer", "", "tailored-resume", "# CV")
+    folder = tmp_path / "Companies" / "Acme" / "Roles" / "ML Engineer"
+    assert (folder / "role evidence map.md").exists()
+    assert res["replaced"] is False
+    # The process log records each write.
+    assert "role evidence map.md" in (folder / "process_log.md").read_text()
+
+    # An unknown artifact slug is rejected, not silently written.
+    try:
+        packet.write_artifact(tmp_path, "Acme", "ML Engineer", "", "bogus", "x")
+        raise AssertionError("expected KeyError for unknown artifact")
+    except KeyError:
+        pass
+
+    status = packet.role_status(tmp_path, "Acme", "ML Engineer")
+    assert "evidence-map" in status["present"] and "cover-letter" in status["missing"]
+
+    asm = packet.assemble_packet(tmp_path, "Acme", "ML Engineer")
+    body = (folder / "role packet.md").read_text()
+    assert "evidence-map" in asm["present"] and "cover-letter" in asm["missing"]
+    assert "req → proof" in body  # present body artifact is concatenated in
+    assert "cover letter.md" in body  # missing artifacts listed under "Not yet produced"
+    assert (folder / "orchestration log.md").exists()
+
+    roles = packet.list_roles(tmp_path)
+    assert roles and roles[0]["company"] == "Acme" and roles[0]["artifacts"] >= 4
+
+
+def test_packet_init_workspace_never_clobbers(plugin, tmp_path):
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+    templates = ROOT / "templates"
+
+    first = packet.init_workspace(tmp_path, templates)
+    assert first["created"], "templates should be copied into a fresh workspace"
+    assert any(rel.endswith("SKILL.md") or "Experience" in rel for rel in first["created"])
+
+    # A candidate edit must survive a re-init.
+    exp = next(tmp_path.rglob("Experience.md"), None)
+    assert exp is not None
+    exp.write_text("MY REAL EXPERIENCE", encoding="utf-8")
+    second = packet.init_workspace(tmp_path, templates)
+    assert not second["created"] and second["skipped"]  # nothing new, all skipped
+    assert exp.read_text() == "MY REAL EXPERIENCE"
+
+
 # ── register() — host-free (guards skip host-only knobs + subagents) ──────────
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
-    assert len(registry.tools) == 3  # track + list + search; knobs skipped host-free
+    assert len(registry.tools) == 8  # 3 tracker/search + 5 packet tools; knobs skipped host-free
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
@@ -121,8 +201,8 @@ def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
 
     plugin.register(registry)
 
-    # 3 base tools (track, list, search) + 2 knob tools.
-    assert len(registry.tools) == 5
+    # 8 base tools (track, list, search + 5 packet) + 2 knob tools.
+    assert len(registry.tools) == 10
     assert any("careercoach_knobs" == str(t) for t in registry.tools)
     # The research → evaluate → write crew.
     names = {c.name for c in registry.subagents}
