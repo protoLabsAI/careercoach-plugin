@@ -71,7 +71,9 @@ Read `evidence-map.md`, then `job-application-assistant`'s `cv-guide.md` and **`
 (read before writing any bullet). First build the **`evidence-map`**: every JD requirement mapped to
 your proof from `Experience.md` / the story bank, with gaps and stretches flagged honestly. *Then*
 write the **`tailored-resume`**, drawing only on what the evidence map supports. Surface any stretch
-line for the user to keep, soften, or drop. Render per `render_format` if the user wants a PDF.
+line for the user to keep, soften, or drop. Render per `render_format` if the user wants a file —
+`html` → PDF, or `docx` → a real Word file saved as a versioned download-artifact (see `cv-guide.md`);
+the `.docx` is what most ATS forms want.
 
 ### Phase 4 — Application skills / ATS entry  ·  *gate: confirm*
 Read `ats-skills-entry.md`. Produce the **`skills-entry`** list — the discrete skills an ATS form asks

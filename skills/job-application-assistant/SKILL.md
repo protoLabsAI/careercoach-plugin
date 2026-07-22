@@ -44,7 +44,8 @@ that step (progressive disclosure), don't inline them all up front:
 - Start from the user's existing CV/profile; reframe *emphasis*, never fabricate (see the
   honesty test in `writing-style.md`).
 - Render per the operator's `render_format` (default `html` → the artifact plugin → PDF;
-  `latex` → moderncv `.tex`). Inspect the rendered result; iterate until it's clean.
+  `docx` → a real Word file via cowork's `docx` skill → `save_file_artifact`; `latex` → moderncv
+  `.tex`). See `cv-guide.md` for each path. Inspect the rendered result; iterate until it's clean.
 
 ### Step 3 — Write the cover letter (on request)
 - Read `cover-letter-guide.md` and `writing-style.md`.

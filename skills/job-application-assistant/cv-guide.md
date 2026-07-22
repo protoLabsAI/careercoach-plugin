@@ -13,6 +13,14 @@ Follow `writing-style.md` for tone and the honesty test **before** writing any b
 - **`html`** (default) — build a clean, semantic one-file HTML CV with print CSS, hand it to
   the **artifact plugin** to render, then export/print to PDF. The agent can *see* the rendered
   result (it's a real page), so the "render → inspect → fix" loop needs no LaTeX knowledge.
+- **`docx`** — a real, editable **Word file** (what many ATS forms and recruiters expect). Build
+  it with cowork's **`docx`** skill: `load_skill('docx')`, author the CV with `python-docx`
+  following the content discipline in this guide + `writing-style.md`, save it to disk, then
+  register it with **`save_file_artifact(path, title="<Name> — CV — <Role>")`** so it lands in the
+  Artifact panel as a **versioned, downloadable** file with a text preview. Needs the cowork plugin
+  + `execute_code` + a protoAgent **v0.107.0+** host (which bundles the doc stack). If any is
+  missing, **fall back to `html` and tell the user** — never silently skip. Save a revised CV as a
+  new version by passing the same `artifact_id`.
 - **`latex`** — produce a moderncv `.tex` (see the appendix). Use only if the user asks for it.
 
 ### HTML CV — house style
