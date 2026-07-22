@@ -34,6 +34,20 @@ def test_manifest_is_valid():
     assert m["views"][0]["path"] == "/plugins/careercoach/view"
 
 
+# ── the dashboard view honors the DS theme contract ──────────────────────────
+def test_dashboard_honors_theme_contract(plugin):
+    """The rail view must load the DS plugin-kit JS (not just its CSS) so the kit owns the
+    protoagent:init handshake and applies the console's live theme (data-theme on :root). A
+    CSS-only page with a hand-rolled, token-only listener renders dark in every theme — the
+    regression this guards. It must also not reference --pl-color-surface* tokens the kit
+    doesn't define (they'd fall back to hardcoded dark even once the theme is applied)."""
+    html = plugin._DASHBOARD_HTML
+    assert "/_ds/plugin-kit.css" in html  # tokens
+    assert "/_ds/plugin-kit.js" in html  # handshake + live theme (the fix)
+    assert "initPluginView" in html  # kit drives the handshake, not a hand-rolled message listener
+    assert "--pl-color-surface" not in html  # undefined token → hardcoded-dark fallback
+
+
 # ── the pure fit rubric ───────────────────────────────────────────────────────
 def test_rubric_defaults_and_presets_sum_to_100(plugin):
     rubric = importlib.import_module(plugin.__name__ + ".rubric")

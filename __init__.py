@@ -485,9 +485,10 @@ def _register_watch_verifier(registry) -> None:
     registry.register_goal_verifier("careercoach:new_matches", _verify)
 
 
-# The dashboard page. Self-contained: links the DS plugin-kit for theming, derives a
-# fleet-proxy-safe API base from its own iframe path, waits for the console's
-# `protoagent:init` handshake (bearer + theme), then fetches the gated /state route.
+# The dashboard page. Self-contained: loads the DS plugin-kit (CSS + JS) and lets it own the
+# `protoagent:init` handshake — it applies the console's LIVE theme (stamps data-theme on :root
+# so the --pl-* tokens follow light/dark) and hands back a slug-aware authed `apiFetch`, which we
+# use for the gated /state route. Base is derived fleet-proxy-safe from the iframe's own path.
 _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Career Coach</title>
@@ -506,7 +507,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   h1 { font-size: 20px; margin: 0 0 2px; color: var(--pl-color-accent, #9b87f2); }
   .sub { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin: 0 0 22px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); margin-bottom: 24px; }
-  .card { background: var(--pl-color-surface, #12181f); border: 1px solid var(--pl-color-border, #232b36);
+  .card { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
           border-radius: 12px; padding: 16px 18px; }
   .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
              color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 10px; font-weight: 600; }
@@ -515,7 +516,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--pl-color-border, #232b36); }
   th { color: var(--pl-color-fg-muted, #9aa0aa); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
-          background: var(--pl-color-surface-2, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa); }
+          background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa); }
   .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
   .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent, #9b87f2); }
   .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
@@ -524,7 +525,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .empty { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 14px; padding: 18px 0; }
   .coach { margin-top: 24px; padding: 16px 18px; border-radius: 12px;
            border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; line-height: 1.6; }
-  code { background: var(--pl-color-surface-2, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
+  code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
 </style></head>
 <body>
   <h1 id="title">Career Coach</h1>
@@ -549,12 +550,18 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     CV + cover letter. Tune how strictly it scores with <code>careercoach_preset growth-first</code>.
   </div>
 
-<script>
-  var TOKEN = null;
+<script type="module">
+  // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme: it stamps
+  // data-theme on :root so the --pl-* tokens track the console's light/dark theme (and re-theme
+  // live). Import it and let it drive; fall back to a plain fetch if it can't load (older host /
+  // offline) so the panel still renders — just without theme sync.
+  var kit;
+  try { kit = await import(BASE + '/_ds/plugin-kit.js'); }
+  catch (e) { kit = { initPluginView: function (cb) { cb(); },
+                      apiFetch: function (p, i) { return fetch(BASE + p, i); } }; }
+
   function api(path) {
-    var h = {};
-    if (TOKEN) h['Authorization'] = 'Bearer ' + TOKEN;
-    return fetch(BASE + '/api/plugins/careercoach' + path, { headers: h }).then(function (r) { return r.json(); });
+    return kit.apiFetch('/api/plugins/careercoach' + path).then(function (r) { return r.json(); });
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
@@ -604,12 +611,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function load() { api('/state').then(render).catch(function () {
     document.getElementById('sub').textContent = 'Could not load pipeline data.'; }); }
 
-  // Console handshake (ADR 0026): grab the bearer + theme, then load gated data.
-  window.addEventListener('message', function (e) {
-    var m = e.data || {};
-    if (m.type === 'protoagent:init') { TOKEN = m.token || null; load(); }
-  });
-  // Also try immediately (host context may not post an init) so the panel isn't blank.
-  load();
+  // initPluginView runs the console handshake (ADR 0026) — applies the theme and captures the
+  // bearer — then fires our callback once ready. The timer is a fallback for a host context that
+  // never posts an init, so the panel isn't left blank.
+  kit.initPluginView(load);
+  setTimeout(load, 800);
 </script>
 </body></html>"""
