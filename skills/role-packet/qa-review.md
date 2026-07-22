@@ -13,8 +13,9 @@ against it. Report a **pass/fail line per artifact**, quoting the specific offen
 - **Company claims sourced** — each is backed by a source in the recruiter brief, or it's cut.
 - **No inflation** — emphasis reframed, scope/level/metrics not upgraded.
 - **Guardrails honored** — nothing from the story bank's "do NOT claim" list appears.
-- **Voice** — reads in the candidate's register (apply `Skills/Humanize/SKILL.md` if a draft still
-  reads generic). No em-dashes, no clichés.
+- **Voice** — reads in the candidate's register: honors `Agent/experience-reviewer.md`'s voice rules and
+  the operator's learned `my-writing-style` voice (if that skill exists); apply `Skills/Humanize/SKILL.md`
+  if a draft still reads generic. No em-dashes, no clichés.
 - **Consistency** — resume, skills list, and cover letter agree; the same story isn't told two ways.
 - **Rendering** (if a PDF was produced) — resume ~2 pages, cover letter ~1 page, no layout breakage.
 
