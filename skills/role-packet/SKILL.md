@@ -79,8 +79,9 @@ you to enter, ranked to the posting, each with the exact phrasing and backed by 
 any the candidate can't substantiate rather than padding the list.
 
 ### Phase 5 — Cover letter  ·  *gate: confirm*
-Read `job-application-assistant`'s `cover-letter-guide.md` + `writing-style.md`, then
-`Skills/Humanize/SKILL.md` for the final de-slop pass. Write the **`cover-letter`** (forward-looking,
+Read `job-application-assistant`'s `cover-letter-guide.md` + `writing-style.md` (which layers in the
+operator's learned `my-writing-style` voice if it exists), then `Skills/Humanize/SKILL.md` for the
+final de-slop pass. Write the **`cover-letter`** (forward-looking,
 task-solving; verify every company-specific claim against the recruiter brief's sources). Capture the
 prompts/decisions you used in **`prompt-transcript`** so the packet is reproducible.
 
