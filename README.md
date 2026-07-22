@@ -27,6 +27,10 @@ forking core.
 - **Evaluate fit** against a weighted, tunable rubric, with sourced company research.
 - **Tailor a CV + cover letter** — reframing emphasis, never fabricating (the interview-backtrack test).
 - Run the whole thing with the **`apply` workflow**: `run_workflow("apply", {"posting": "<url or text>"})`.
+- **Work up a full, filed role packet** — the gated **`role-packet`** flow files a folder per role
+  (`Companies/<Co>/Roles/<Role - Req>/`) and produces each artifact — recruiter brief, evidence map,
+  tailored resume, ATS skills list, cover letter, assembled packet — **one human-approved step at a
+  time**, anchored to a per-candidate `Experience.md` source of truth. Say *"build the role packet."*
 
 **In the background (opt-in):** turn on the **job-watch** and it periodically searches your target
 roles, surfaces new matching postings on the dashboard, and lights the rail icon — or arm a **WATCH**
@@ -42,8 +46,9 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 4 skills; `job-application-assistant` uses **sub-files** (`writing-style.md`, `job-evaluation.md`, `cv-guide.md`, `cover-letter-guide.md`) read on demand |
-| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 5 skills; `job-application-assistant` + `role-packet` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-skills-entry.md`, …) read on demand |
+| **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
+| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
 | **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search) |
 | **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
@@ -68,13 +73,16 @@ careercoach-plugin/
 ├─ state.py                   # the application tracker — instance-scoped JSON, tested
 ├─ jobsource.py               # live job search (JSearch / Remotive) — parsers + prescore, tested
 ├─ watch.py                   # the background-watch matcher — pure, tested
+├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
 ├─ skills/
 │  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter
+│  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
 │  ├─ interview-coach/             # STAR bank + mock interviews with feedback
 │  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
 │  └─ upskill/                     # gap heatmap + learning plan
+├─ templates/                  # fill-in workspace starters (Experience source-of-truth, story bank, reviewer, Humanize, improvements)
 ├─ workflows/apply.yaml        # the autonomous research → evaluate → write pipeline
-└─ tests/                      # host-free (vendored testkit): rubric, state, register() surface
+└─ tests/                      # host-free (vendored testkit): rubric, state, packet, register() surface
 ```
 
 ---
@@ -97,8 +105,14 @@ careercoach-plugin/
 5. **Talk to your agent.** A few things to try:
    - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
    - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
+   - **Work up a full packet** — "Build the role packet for this posting." The coach files a folder per role and produces each artifact one approved step at a time (see the workspace note below).
 
 ### Optional
+- **Set up your role-packet workspace.** Ask the coach to `careercoach_init_workspace` (or set a folder
+  in **Settings → Career Coach → Role-packet workspace**; blank defaults to `~/CareerCoach`). It lays
+  down fill-in starters — `Resume/Experience.md` (your verified source of truth), `Agent/story-bank.md`,
+  reviewer + Humanize rules, an improvements log — and never clobbers your edits. Fill in `Experience.md`
+  first; everything the packet flow writes is anchored to it.
 - **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
   under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
   the keyless **Remotive** remote-jobs board — so it works out of the box.
@@ -116,6 +130,12 @@ careercoach-plugin/
   result — and keep `.tex`/moderncv as an option (with the upstream gotchas preserved, credited).
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
+- **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`
+  *workflow* runs research → evaluate → write autonomously (fast), while the `role-packet` *skill*
+  drives the same work with a **human-approval gate before every phase** and files the result as
+  editable artifacts. A static-DAG workflow can't pause between steps, so the gated flow is a
+  skill (which stops and asks) plus tested scaffolding tools (`packet.py`) for the file mechanics —
+  the artifacts are anchored to a per-candidate `Experience.md` so nothing unfounded reaches a resume.
 - **Two control surfaces, on purpose.** The candidate *profile* is operator config (Settings, ADR 0019);
   the rubric *weights* are agent-tunable **Knobs** — because "score these more on growth than raw
   skills" is a live retune, not a settings edit.

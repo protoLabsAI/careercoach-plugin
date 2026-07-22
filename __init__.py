@@ -47,13 +47,14 @@ def register(registry) -> None:
 
     _register_tracker_tools(registry)
     _register_jobsearch_tool(registry, cfg)
+    _register_packet_tools(registry, cfg)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_views(registry, cfg)
     _register_job_watch(registry, cfg)
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
-    log.info("[careercoach] registered: tracker + job-search tools, rubric knobs, crew, dashboard, watch")
+    log.info("[careercoach] registered: tracker + job-search + packet tools, rubric knobs, crew, dashboard, watch")
 
 
 def _as_bool(value) -> bool:
@@ -133,6 +134,107 @@ def _register_jobsearch_tool(registry, cfg) -> None:
         return f"Found {len(jobs)} role(s):\n" + "\n".join(lines) + "\n\nWant me to evaluate fit or track any of these?"
 
     registry.register_tool(careercoach_search_jobs)
+
+
+# ── the role-packet workspace: scaffold + write + assemble (the gated resume flow) ─
+# Deterministic file mechanics for the `role-packet` skill — create the folder-per-role tree,
+# write named artifacts into it, assemble the deliverable, and seed the workspace from the
+# fill-in templates/. Pure logic lives in packet.py (host-free, tested); these tools are the
+# thin agent surface. The *content* of each artifact is the agent's job (driven by the skill).
+def _register_packet_tools(registry, cfg) -> None:
+    from pathlib import Path
+
+    from . import packet
+
+    templates_dir = Path(__file__).resolve().parent / "templates"
+
+    def _root() -> str:
+        return cfg.get("packet_root", "") or ""
+
+    @tool
+    def careercoach_init_workspace() -> str:
+        """Seed your job-search workspace with the fill-in reference templates (Experience source
+        of truth, story bank, experience-reviewer rules, Humanize skill, improvements log). Safe to
+        re-run: it only adds files that are missing and never overwrites your edits. Run this once
+        before your first role packet, then fill in Resume/Experience.md."""
+        root = packet.resolve_root(_root())
+        res = packet.init_workspace(root, templates_dir)
+        if not res["created"]:
+            return f"Workspace at {res['root']} already seeded ({len(res['skipped'])} file(s) left untouched)."
+        made = "\n".join(f"  - {r}" for r in res["created"])
+        return (
+            f"Seeded your workspace at {res['root']}:\n{made}\n\n"
+            "Next: fill in Resume/Experience.md (your verified source of truth) — everything the "
+            "coach writes is anchored to it."
+        )
+
+    @tool
+    def careercoach_scaffold_role(company: str, role: str, req: str = "", raw_jd: str = "") -> str:
+        """Start a role packet: create Companies/<company>/Roles/<role - req>/ and seed the intake
+        files (raw job description + process log). `req` is the requisition id (optional); paste the
+        full posting as `raw_jd`. Idempotent. This is Phase 1 (Intake) of the gated role-packet flow;
+        after it, produce the artifacts one gate at a time with careercoach_write_artifact."""
+        root = packet.resolve_root(_root())
+        out = packet.scaffold_role(root, company, role, req, raw_jd=raw_jd)
+        checklist = "\n".join(f"  - {packet.ARTIFACTS[k]}" for k in packet.AUTHORED)
+        verb = "Reusing" if out["existed"] else "Created"
+        return (
+            f"{verb} role folder:\n  {out['path']}\n\n"
+            "Artifacts to produce (one human-approved gate each — write with "
+            "careercoach_write_artifact):\n"
+            f"{checklist}\n\n"
+            "Then run careercoach_assemble_packet to build 'role packet.md'."
+        )
+
+    @tool
+    def careercoach_write_artifact(company: str, role: str, artifact: str, content: str, req: str = "") -> str:
+        """Write one packet artifact into a role folder and log it. `artifact` must be one of:
+        recruiter-brief, hiring-manager-profile, evidence-map, tailored-resume, skills-entry,
+        cover-letter, prompt-transcript. Pass the finished markdown as `content`. Use only after the
+        user has approved that step (this flow gates each phase)."""
+        root = packet.resolve_root(_root())
+        try:
+            res = packet.write_artifact(root, company, role, req, artifact, content)
+        except KeyError as e:
+            return f"{e}"
+        return f"{'Updated' if res['replaced'] else 'Wrote'} {packet.ARTIFACTS[artifact]} → {res['path']}"
+
+    @tool
+    def careercoach_assemble_packet(company: str, role: str, req: str = "") -> str:
+        """Phase 6 (QA): concatenate the produced artifacts into 'role packet.md' and refresh
+        'orchestration log.md' with a completeness checklist. Reports which sections are present and
+        which are still missing so you can see the packet is (or isn't) ready to submit."""
+        root = packet.resolve_root(_root())
+        try:
+            res = packet.assemble_packet(root, company, role, req)
+        except FileNotFoundError as e:
+            return f"{e}"
+        present = ", ".join(res["present"]) or "none yet"
+        missing = ", ".join(res["missing"]) or "none"
+        try:
+            registry.emit("documents_generated", {"company": company, "role": role, "sections": len(res["present"])})
+        except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
+            pass
+        return f"Assembled {res['path']}\n  present: {present}\n  missing: {missing}"
+
+    @tool
+    def careercoach_list_roles() -> str:
+        """List the role packets in your workspace with how many artifacts each has, so you can see
+        what's in flight and what still needs work."""
+        rows = packet.list_roles(packet.resolve_root(_root()))
+        if not rows:
+            return "No role packets yet. Start one with careercoach_scaffold_role(company, role)."
+        return "\n".join(f"- {r['role']} @ {r['company']} — {r['artifacts']}/{r['total']} artifacts" for r in rows)
+
+    registry.register_tools(
+        [
+            careercoach_init_workspace,
+            careercoach_scaffold_role,
+            careercoach_write_artifact,
+            careercoach_assemble_packet,
+            careercoach_list_roles,
+        ]
+    )
 
 
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────
