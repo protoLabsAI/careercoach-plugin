@@ -142,6 +142,10 @@ careercoach-plugin/
 - **Honesty is enforced, not hoped for.** The writing-style discipline's interview-backtrack test
   and "verify every company claim against a source" rule are load-bearing — the candidate has to
   defend every line in an interview.
+- **Your voice, if you've taught it.** When the [cowork](https://github.com/protoLabsAI/cowork-plugin)
+  `writing-voice` skill has saved a `my-writing-style` profile, the coach layers it over the writing
+  discipline so drafts sound like *you* — detected at runtime via `list_skills`, ignored if absent
+  (the honesty rules still win on any conflict). A soft pairing: no dependency, works standalone.
 - **The job source is provider-abstracted + keyless by default.** Live search works out of the box via
   Remotive (remote jobs, no key); add a JSearch/RapidAPI key for Google-for-Jobs breadth. Only
   `jobsource.py` makes outbound calls, and the manifest declares exactly those two hosts.

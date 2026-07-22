@@ -42,6 +42,18 @@ reframing would be needed — that's a coaching moment, not a green light.
 - **First person, active voice.** "I built", not "a system was developed by the candidate".
 - **Demonstrate, don't state.** Replace "I am a strong communicator" with a specific example and its outcome.
 
+## Personal voice layer (optional)
+
+If the operator has taught the agent their own writing voice, drafts should sound like *them*, not a
+generic register. **Before drafting, check `list_skills` for a `my-writing-style` skill** (produced by
+the cowork `writing-voice` skill). If it exists, `load_skill` it and apply it as the voice *on top of*
+the rules here — and say once per session that you're using it, so the candidate knows drafts aren't
+generic. If it doesn't exist, draft in the warm-direct default above; never block on it.
+
+**Precedence on conflict:** the Critical rules (no em-dashes, the honesty test, no unverified company
+claims) always win — a learned voice never licenses a cliché, a stretch, or a claim the candidate can't
+defend in an interview. The learned voice governs register, rhythm, and word choice *within* those bounds.
+
 ## Cover-letter shape (forward-looking, task-solving)
 
 The cover letter is **not** a CV in prose. It answers: *which of the employer's problems can I
