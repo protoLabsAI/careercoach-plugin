@@ -45,7 +45,10 @@ that step (progressive disclosure), don't inline them all up front:
   honesty test in `writing-style.md`).
 - Render per the operator's `render_format` (default `html` → the artifact plugin → PDF;
   `docx` → a real Word file via cowork's `docx` skill → `save_file_artifact`; `latex` → moderncv
-  `.tex`). See `cv-guide.md` for each path. Inspect the rendered result; iterate until it's clean.
+  `.tex`). See `cv-guide.md` for each path. **For `docx`, the cowork `docx` skill and the
+  `execute_code` plugin must be enabled (it runs `python-docx`); if either is off, tell the user
+  exactly what to enable and fall back to `html` — don't silently switch.** Inspect the rendered
+  result; iterate until it's clean.
 
 ### Step 3 — Write the cover letter (on request)
 - Read `cover-letter-guide.md` and `writing-style.md`.
