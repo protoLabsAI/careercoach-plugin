@@ -128,6 +128,11 @@ careercoach-plugin/
 - **HTML → PDF, not LaTeX.** The upstream project's biggest tax is LaTeX page-break firefighting.
   We render via the **artifact plugin** (HTML → PDF) by default — the agent can *see* the rendered
   result — and keep `.tex`/moderncv as an option (with the upstream gotchas preserved, credited).
+- **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
+  real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
+  skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092,
+  protoAgent v0.107.0+) — what most ATS forms actually want. Needs cowork + `execute_code` + a
+  v0.107.0 host; falls back to HTML→PDF otherwise. A soft pairing: no hard dependency.
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
 - **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`

@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.3.2
+version: 0.4.0
 description: >-
   Your career coach and job-hunt copilot. Talk through strategy and positioning,
   run mock interviews with honest feedback, get a straight critique of your CV,
@@ -30,7 +30,7 @@ config:
   full_name: ""
   location: ""
   target_roles: ""
-  render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | latex
+  render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | docx (real Word file → save_file_artifact) | latex
   packet_root: ""           # workspace for the gated role-packet flow (Companies/<Co>/Roles/…); blank → ~/CareerCoach
   jobs_api_key: ""
   jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else remotive) | jsearch | remotive
@@ -42,7 +42,7 @@ settings:
   - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
   - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }
-  - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain) or 'latex' for the classic moderncv .tex export." }
+  - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain); 'docx' produces a real editable Word file via the cowork docx skill and saves it as a versioned download-artifact (needs cowork + execute_code + a protoAgent v0.107.0+ host; falls back to html otherwise); 'latex' for the classic moderncv .tex export." }
   - { key: packet_root, label: "Role-packet workspace", type: string, group: "Career Coach", description: "Folder where the gated role-packet flow files a folder per role (Companies/<Company>/Roles/<Role - Req>/) plus your Experience source-of-truth and story bank. Blank defaults to ~/CareerCoach. Point it at wherever you keep your job hunt so you can open and edit the artifacts directly." }
   - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A RapidAPI key for JSearch (Google-for-Jobs). With it, live job search + the watch use JSearch; without it they fall back to the keyless Remotive remote-jobs board. Stored in secrets.yaml." }
   - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job API to use: 'auto' (JSearch when a key is set, else Remotive), 'jsearch', or 'remotive'." }

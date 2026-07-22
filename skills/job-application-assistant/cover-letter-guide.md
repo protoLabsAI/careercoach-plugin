@@ -9,6 +9,11 @@
 
 - **`html`** (default) — one self-contained HTML letter with print CSS, rendered by the
   artifact plugin and exported to PDF. Match the CV's font + accent so the pair looks like a set.
+- **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
+  **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
+  **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
+  downloadable file. Same requirements + fallback as the CV (`cv-guide.md`): needs cowork +
+  `execute_code` + a v0.107.0+ host, else fall back to `html`.
 - **`latex`** — the custom `cover.cls` (Lato/Raleway, XeLaTeX); see the appendix.
 
 ### HTML letter — house style
