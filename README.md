@@ -113,6 +113,14 @@ careercoach-plugin/
   down fill-in starters — `Resume/Experience.md` (your verified source of truth), `Agent/story-bank.md`,
   reviewer + Humanize rules, an improvements log — and never clobbers your edits. Fill in `Experience.md`
   first; everything the packet flow writes is anchored to it.
+- **Native Word (`.docx`) export.** Set **Settings → Career Coach → Document format = `docx`** and the CV +
+  cover letter are produced as real, editable **Word files** (saved as versioned, downloadable artifacts)
+  instead of HTML→PDF. **This path builds the document by running Python (`python-docx`), so it requires:**
+  the [cowork](https://github.com/protoLabsAI/cowork-plugin) plugin (its `docx` skill), the **`execute_code`**
+  plugin **enabled** — ⚠️ **`execute_code` lets the agent run arbitrary code; enabling it is a deliberate
+  trust decision** — the `artifact` plugin, and a protoAgent **v0.107.0+** host (which bundles the doc
+  libraries). If any is missing, the coach **falls back to HTML→PDF and tells you what's absent**. Leave
+  `render_format` on `html` if you'd rather not enable code execution.
 - **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
   under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
   the keyless **Remotive** remote-jobs board — so it works out of the box.
@@ -131,8 +139,9 @@ careercoach-plugin/
 - **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
   real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
   skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092,
-  protoAgent v0.107.0+) — what most ATS forms actually want. Needs cowork + `execute_code` + a
-  v0.107.0 host; falls back to HTML→PDF otherwise. A soft pairing: no hard dependency.
+  protoAgent v0.107.0+) — what most ATS forms actually want. It runs `python-docx`, so it needs cowork +
+  the **`execute_code`** plugin enabled (which runs code — a trust decision) + a v0.107.0 host; falls back
+  to HTML→PDF (and says what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default.
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
 - **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`

@@ -73,7 +73,8 @@ your proof from `Experience.md` / the story bank, with gaps and stretches flagge
 write the **`tailored-resume`**, drawing only on what the evidence map supports. Surface any stretch
 line for the user to keep, soften, or drop. Render per `render_format` if the user wants a file —
 `html` → PDF, or `docx` → a real Word file saved as a versioned download-artifact (see `cv-guide.md`);
-the `.docx` is what most ATS forms want.
+the `.docx` is what most ATS forms want. **`docx` needs the cowork `docx` skill + the `execute_code`
+plugin enabled (it runs code); if either is off, say so and fall back to `html`.**
 
 ### Phase 4 — Application skills / ATS entry  ·  *gate: confirm*
 Read `ats-skills-entry.md`. Produce the **`skills-entry`** list — the discrete skills an ATS form asks
