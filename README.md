@@ -118,9 +118,15 @@ careercoach-plugin/
   instead of HTML→PDF. **This path builds the document by running Python (`python-docx`), so it requires:**
   the [cowork](https://github.com/protoLabsAI/cowork-plugin) plugin (its `docx` skill), the **`execute_code`**
   plugin **enabled** — ⚠️ **`execute_code` lets the agent run arbitrary code; enabling it is a deliberate
-  trust decision** — the `artifact` plugin, and a protoAgent **v0.107.0+** host (which bundles the doc
-  libraries). If any is missing, the coach **falls back to HTML→PDF and tells you what's absent**. Leave
-  `render_format` on `html` if you'd rather not enable code execution.
+  trust decision** — the `artifact` plugin, and a protoAgent **v0.108.0+** host. If any is missing, the
+  coach **falls back to HTML→PDF and tells you what's absent**. Leave `render_format` on `html` if you'd
+  rather not enable code execution.
+  > **On the desktop app, v0.108.0 is the floor — not v0.107.0.** 0.107.0 bundled the document libraries,
+  > but `execute_code` was hard-disabled on the packaged app (no standalone interpreter to spawn), so
+  > `.docx` generation could not run there at all. protoAgent **0.108.0** ships the **managed Python
+  > runtime** (ADR 0094): the first `execute_code` call provisions a pinned CPython plus the document
+  > libraries — **one consented download, once per machine** — after which the docx path works on desktop.
+  > On a server / Docker install there's nothing to provision.
 - **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
   under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
   the keyless **Remotive** remote-jobs board — so it works out of the box.
@@ -138,10 +144,12 @@ careercoach-plugin/
   result — and keep `.tex`/moderncv as an option (with the upstream gotchas preserved, credited).
 - **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
   real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
-  skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092,
-  protoAgent v0.107.0+) — what most ATS forms actually want. It runs `python-docx`, so it needs cowork +
-  the **`execute_code`** plugin enabled (which runs code — a trust decision) + a v0.107.0 host; falls back
-  to HTML→PDF (and says what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default.
+  skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092) — what
+  most ATS forms actually want. It runs `python-docx`, so it needs cowork + the **`execute_code`** plugin
+  enabled (which runs code — a trust decision) + a **v0.108.0+** host; falls back to HTML→PDF (and says
+  what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default. On desktop, 0.108.0
+  is the floor because that's where `execute_code` gained a **managed Python runtime** (ADR 0094) —
+  provisioned on first use; before it, code execution was unavailable on the packaged app entirely.
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
 - **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`
