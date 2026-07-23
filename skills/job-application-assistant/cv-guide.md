@@ -19,7 +19,10 @@ Follow `writing-style.md` for tone and the honesty test **before** writing any b
   register it with **`save_file_artifact(path, title="<Name> — CV — <Role>")`** so it lands in the
   Artifact panel as a **versioned, downloadable** file with a text preview. Needs the cowork plugin
   + the **`execute_code`** plugin (which runs the `python-docx` code — enabling it is a code-execution
-  trust decision) + a protoAgent **v0.107.0+** host (which bundles the doc stack). If any is missing,
+  trust decision) + a protoAgent **v0.108.0+** host. On the **desktop app** that's the floor: 0.108.0
+  ships the managed Python runtime (ADR 0094), so the first `execute_code` call provisions a pinned
+  CPython + the doc libraries (one consented download, once per machine); before it, code execution
+  couldn't run on the packaged app at all. On server/Docker there's nothing to provision. If any is missing,
   **name exactly what's absent and fall back to `html`** — never silently skip. Save a revised CV as a
   new version by passing the same `artifact_id`.
 - **`latex`** — produce a moderncv `.tex` (see the appendix). Use only if the user asks for it.

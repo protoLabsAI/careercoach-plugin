@@ -13,7 +13,8 @@
   **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
   downloadable file. Same requirements + fallback as the CV (`cv-guide.md`): needs cowork +
-  `execute_code` + a v0.107.0+ host, else fall back to `html`.
+  `execute_code` + a v0.108.0+ host (on desktop the managed Python runtime provisions on first use),
+  else fall back to `html`.
 - **`latex`** — the custom `cover.cls` (Lato/Raleway, XeLaTeX); see the appendix.
 
 ### HTML letter — house style
