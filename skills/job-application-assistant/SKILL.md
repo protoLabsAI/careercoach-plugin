@@ -7,7 +7,7 @@ description: >-
   The execution half of the Career Coach: score fit against the rubric, then draft
   tailored, honest, verified documents. For interview practice see interview-coach;
   for positioning / offers / negotiation see career-strategy; for skill gaps see upskill.
-tools: [careercoach_track_application, careercoach_list_applications, company_researcher]
+tools: [careercoach_track_application, careercoach_list_applications, careercoach_read_profile, company_researcher]
 ---
 
 # Job Application Assistant
@@ -41,8 +41,13 @@ that step (progressive disclosure), don't inline them all up front:
 
 ### Step 2 — Tailor the CV (on request)
 - Read `cv-guide.md` and `writing-style.md`.
-- Start from the user's existing CV/profile; reframe *emphasis*, never fabricate (see the
-  honesty test in `writing-style.md`).
+- Load the candidate's verified history with `careercoach_read_profile("experience")` (and
+  `"story-bank"` for proof stories + their do-not-claim guardrails). If it comes back as the
+  untouched template, say so and offer `/setup-coach` — tailoring against an empty source of
+  truth is just inventing a career. Fall back to whatever the user has shared in conversation
+  only if they decline.
+- Reframe *emphasis* from that history, never fabricate (see the honesty test in
+  `writing-style.md`).
 - Render per the operator's `render_format` (default `html` → the artifact plugin → PDF;
   `docx` → a real Word file via cowork's `docx` skill → `save_file_artifact`; `latex` → moderncv
   `.tex`). See `cv-guide.md` for each path. **For `docx`, the cowork `docx` skill and the

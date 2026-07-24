@@ -7,7 +7,7 @@ description: >-
   they can review and edit. A gated, human-approved pipeline that files a folder per role and
   produces each artifact one confirmed step at a time. For a quick fit read or a single document,
   use job-application-assistant instead; for the fast autonomous version, run the `apply` workflow.
-tools: [careercoach_init_workspace, careercoach_scaffold_role, careercoach_write_artifact, careercoach_assemble_packet, careercoach_list_roles, careercoach_track_application, company_researcher]
+tools: [careercoach_init_workspace, careercoach_read_profile, careercoach_write_profile, careercoach_scaffold_role, careercoach_write_artifact, careercoach_assemble_packet, careercoach_list_roles, careercoach_track_application, company_researcher]
 ---
 
 # Role packet — the gated application pipeline
@@ -40,13 +40,16 @@ The output is a real folder tree the user can open and edit:
 ## Before you start
 
 - **Workspace seeded?** If this is the user's first packet, run `careercoach_init_workspace` to lay
-  down the fill-in templates, and confirm `Resume/Experience.md` is filled in. Everything is anchored
-  to it, so if it's empty, stop and help the user populate it first (that's a coaching session, not a
-  drafting one).
-- The reference files live in two places: the **per-candidate** ones in the workspace
-  (`Resume/Experience.md`, `Agent/story-bank.md`, `Agent/experience-reviewer.md`,
-  `Skills/Humanize/SKILL.md`, `workflow-audit/improvements.md`) and the **discipline** ones in the
-  `job-application-assistant` skill (read via `load_skill`). Read each when its phase says to, not up front.
+  down the fill-in templates.
+- **Read the truth before drafting.** `careercoach_read_profile("experience")` — this is the only
+  path to the source of truth (the generic `read_file` reaches managed fs projects, which the
+  workspace is not). If it reports the file is still the untouched template, **stop**: run
+  `/setup-coach` (or interview the user yourself) and save it with `careercoach_write_profile`.
+  Drafting from an empty Experience file means inventing a career, which this flow forbids.
+- The reference files live in two places: the **per-candidate** ones in the workspace, read with
+  `careercoach_read_profile(doc)` — `experience`, `story-bank`, `reviewer`, `humanize`,
+  `improvements` — and the **discipline** ones in the `job-application-assistant` skill (read via
+  `load_skill`). Read each when its phase says to, not up front.
 
 ## The six phases
 

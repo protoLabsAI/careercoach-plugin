@@ -166,10 +166,83 @@ def test_packet_init_workspace_never_clobbers(plugin, tmp_path):
     assert exp.read_text() == "MY REAL EXPERIENCE"
 
 
+def test_packet_source_read_write_and_guards(plugin, tmp_path):
+    """The source-of-truth seam: the coach can reach Experience.md without a managed fs project,
+    can tell a seeded-but-untouched template from a filled-in one, and cannot rewrite the
+    discipline files that bind it."""
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+    templates = ROOT / "templates"
+
+    # Unseeded workspace — reported missing, not silently empty.
+    missing = packet.read_source(tmp_path, "experience", templates)
+    assert missing["exists"] is False and missing["text"] == ""
+
+    packet.init_workspace(tmp_path, templates)
+
+    # Seeded but untouched: the file exists and has plenty of text, but is NOT edited — this is
+    # the distinction that stops the coach drafting a career out of template hint text.
+    seeded = packet.read_source(tmp_path, "experience", templates)
+    assert seeded["exists"] is True
+    assert seeded["edited"] is False
+    assert "source of truth" in seeded["text"]
+
+    res = packet.write_source(tmp_path, "experience", "# Experience\n\n- Staff Eng @ Acme, 6y")
+    assert res["replaced"] is True  # the template counts as content being replaced
+    filled = packet.read_source(tmp_path, "experience", templates)
+    assert filled["edited"] is True and "Acme" in filled["text"]
+
+    # Story bank is writable too; the discipline files are not.
+    assert packet.write_source(tmp_path, "story-bank", "## Story: migration")["doc"] == "story-bank"
+    for readonly in ("reviewer", "humanize", "improvements"):
+        try:
+            packet.write_source(tmp_path, readonly, "rewriting my own guardrails")
+            raise AssertionError(f"expected PermissionError writing {readonly}")
+        except PermissionError:
+            pass
+        assert packet.read_source(tmp_path, readonly, templates)["exists"] is True  # still readable
+
+    # An unknown slug is rejected on both paths, not silently created.
+    for call in (lambda: packet.read_source(tmp_path, "nope"), lambda: packet.write_source(tmp_path, "nope", "x")):
+        try:
+            call()
+            raise AssertionError("expected KeyError for unknown source")
+        except KeyError:
+            pass
+
+    # Without a templates_dir there's nothing to compare against — an existing file reads as edited.
+    assert packet.read_source(tmp_path, "reviewer")["edited"] is True
+
+
+def test_skills_declare_real_tools(plugin, registry):
+    """Every ``careercoach_*`` tool a skill lists in its frontmatter must actually be registered.
+
+    Guards the failure mode this seam was built to fix: a skill instructing the agent to reach for
+    something the plugin never exposes, which fails silently at runtime as "the agent just didn't
+    do it". Also asserts each skill carries the frontmatter the host indexes on."""
+    plugin.register(registry)
+    registered = {getattr(t, "name", str(t)) for t in registry.tools}
+
+    skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
+    assert len(skills) >= 5, "skills should be discovered from skills/*/SKILL.md"
+
+    for path in skills:
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n"), f"{path.name} needs YAML frontmatter"
+        fm = yaml.safe_load(text.split("---\n", 2)[1])
+        assert fm.get("name") and fm.get("description"), f"{path.parent.name} needs name + description"
+        for name in fm.get("tools") or []:
+            if name.startswith("careercoach_"):
+                assert name in registered, f"{path.parent.name} declares unknown tool {name!r}"
+
+    # The onboarding skill is the entry point a fresh archetype lands on — it must be user-facing.
+    setup = yaml.safe_load((ROOT / "skills/setup-coach/SKILL.md").read_text().split("---\n", 2)[1])
+    assert setup["user_facing"] is True and setup["slash"] == "setup-coach"
+
+
 # ── register() — host-free (guards skip host-only knobs + subagents) ──────────
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
-    assert len(registry.tools) == 8  # 3 tracker/search + 5 packet tools; knobs skipped host-free
+    assert len(registry.tools) == 10  # 3 tracker/search + 7 packet/profile tools; knobs skipped host-free
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
@@ -215,8 +288,8 @@ def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
 
     plugin.register(registry)
 
-    # 8 base tools (track, list, search + 5 packet) + 2 knob tools.
-    assert len(registry.tools) == 10
+    # 10 base tools (track, list, search + 7 packet/profile) + 2 knob tools.
+    assert len(registry.tools) == 12
     assert any("careercoach_knobs" == str(t) for t in registry.tools)
     # The research → evaluate → write crew.
     names = {c.name for c in registry.subagents}

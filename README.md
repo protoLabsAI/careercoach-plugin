@@ -16,6 +16,11 @@ forking core.
 
 ## What it does
 
+**Setup (once):**
+- **`/setup-coach`** — one interview, and everything after it is grounded. Seeds your workspace, fills in
+  your `Experience.md` source of truth and story bank *by conversation*, captures your voice, distills the
+  lot into recallable memory, then proves it on a real posting. Every step skippable.
+
 **Coaching (the default):**
 - **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
 - **Interview practice** — a STAR answer bank and realistic **mock interviews with per-answer feedback** (skill: `interview-coach`).
@@ -46,11 +51,12 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 5 skills; `job-application-assistant` + `role-packet` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-skills-entry.md`, …) read on demand |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 6 skills; `job-application-assistant` + `role-packet` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-skills-entry.md`, …) read on demand |
+| **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
-| **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search) |
+| **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_read_profile` / `careercoach_write_profile` (the source-of-truth seam) |
 | **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
 | **Background surface + watchdog** (ADR 0018) | `register_surface` + `graph.sdk.supervise` | the opt-in job-watch — a supervised loop that scans, records new matches, and emits an event |
 | **Goal verifier** (ADR 0028/0067) | `register_goal_verifier` | `careercoach:new_matches` — arm a **WATCH** on your pipeline with `create_watch` |
@@ -102,17 +108,24 @@ careercoach-plugin/
    paste it into **Settings → Identity** (or your agent's `config/SOUL.md`) and rename the identity
    line to your agent's name. Without it you still have the coaching *tools*; with it, the agent *is*
    a coach.
-5. **Talk to your agent.** A few things to try:
+5. **Run `/setup-coach`.** The first-run interview: it seeds your workspace, walks you through filling in
+   your `Experience.md` source of truth and story bank, captures your writing voice, and distills the lot
+   into memory the coach recalls later. Everything downstream is anchored to what you say here, so this is
+   the difference between a coach that knows you and one that guesses. Every step is skippable, and you can
+   stop and resume any time.
+6. **Talk to your agent.** A few things to try:
    - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
    - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
    - **Work up a full packet** — "Build the role packet for this posting." The coach files a folder per role and produces each artifact one approved step at a time (see the workspace note below).
 
 ### Optional
-- **Set up your role-packet workspace.** Ask the coach to `careercoach_init_workspace` (or set a folder
-  in **Settings → Career Coach → Role-packet workspace**; blank defaults to `~/CareerCoach`). It lays
-  down fill-in starters — `Resume/Experience.md` (your verified source of truth), `Agent/story-bank.md`,
-  reviewer + Humanize rules, an improvements log — and never clobbers your edits. Fill in `Experience.md`
-  first; everything the packet flow writes is anchored to it.
+- **Choose where your workspace lives.** `/setup-coach` seeds it for you, but you can point it somewhere
+  specific first via **Settings → Career Coach → Role-packet workspace** (blank defaults to `~/CareerCoach`).
+  It lays down fill-in starters — `Resume/Experience.md` (your verified source of truth),
+  `Agent/story-bank.md`, reviewer + Humanize rules, an improvements log — and never clobbers your edits.
+  These are plain markdown: the coach reads and writes them through `careercoach_read_profile` /
+  `careercoach_write_profile`, and you can open and edit them directly at any time. If you'd rather fill
+  `Experience.md` in yourself, do that instead of the interview — the coach reads whichever you produce.
 - **Native Word (`.docx`) export.** Set **Settings → Career Coach → Document format = `docx`** and the CV +
   cover letter are produced as real, editable **Word files** (saved as versioned, downloadable artifacts)
   instead of HTML→PDF. **This path builds the document by running Python (`python-docx`), so it requires:**
@@ -150,6 +163,20 @@ careercoach-plugin/
   what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default. On desktop, 0.108.0
   is the floor because that's where `execute_code` gained a **managed Python runtime** (ADR 0094) —
   provisioned on first use; before it, code execution was unavailable on the packaged app entirely.
+- **Files are the truth; memory is a derived index.** The candidate's history lives in plain markdown
+  they own and can edit (`Resume/Experience.md`, `Agent/story-bank.md`); `/setup-coach` distils a compact
+  recall index from it into the `profile` / `abilities` / `voice` memory domains. Truth flows files →
+  memory, never back, so there's one write path and no divergence — if they disagree, the file wins and
+  the coach re-distils. The generic `read_file` only reaches *managed fs projects* and the workspace isn't
+  one, so the plugin ships its own read path (`careercoach_read_profile`) rather than leaving every skill's
+  "anchor to `Experience.md`" instruction unenforceable.
+- **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts `experience` and
+  `story-bank` — the candidate's own files. The discipline files it's *bound by* (experience-reviewer,
+  Humanize, the improvements log) are read-only to the agent by design.
+- **"Seeded" is not "filled in."** `read_source` compares the workspace copy against the shipped template
+  instead of sniffing for placeholder syntax — the templates are full of realistic-looking hint text, so
+  any "looks empty" heuristic gets it wrong. An untouched template reports as unfilled and the coach
+  refuses to draft from it, which is the whole anti-fabrication contract holding.
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
 - **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`

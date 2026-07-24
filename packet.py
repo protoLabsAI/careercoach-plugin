@@ -75,6 +75,22 @@ PACKET_BODY: tuple[str, ...] = (
     "cover-letter",
 )
 
+# The per-candidate reference files ``init_workspace`` seeds. Every claim the coach writes has
+# to trace back to one of these, so the agent needs its own read path — the generic ``read_file``
+# only reaches *managed fs projects*, and nothing registers the workspace as one.
+SOURCES: dict[str, str] = {
+    "experience": "Resume/Experience.md",
+    "story-bank": "Agent/story-bank.md",
+    "reviewer": "Agent/experience-reviewer.md",
+    "humanize": "Skills/Humanize/SKILL.md",
+    "improvements": "workflow-audit/improvements.md",
+}
+
+# Only the candidate's own two files are agent-writable (the onboarding interview fills them).
+# The rest are the discipline the agent is *bound by* — letting it rewrite those would quietly
+# move its own guardrails.
+WRITABLE_SOURCES: tuple[str, ...] = ("experience", "story-bank")
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -259,3 +275,49 @@ def init_workspace(root, templates_dir) -> dict:
         shutil.copyfile(src, dest)
         created.append(str(rel))
     return {"created": created, "skipped": skipped, "root": str(root)}
+
+
+def source_path(root, doc: str) -> Path:
+    """Absolute path to one per-candidate source file. Raises on an unknown slug."""
+    if doc not in SOURCES:
+        raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
+    return Path(root) / SOURCES[doc]
+
+
+def read_source(root, doc: str, templates_dir=None) -> dict:
+    """Read one source file, reporting whether the candidate has actually filled it in.
+
+    ``edited`` compares the workspace copy against the shipped template rather than sniffing for
+    placeholder syntax — the templates are full of realistic-looking hint text ("team size, budget,
+    remit"), so any guess at "looks empty" gets it wrong. Differing from the template is the honest
+    signal that someone typed into it. Without ``templates_dir`` an existing file is assumed edited.
+    """
+    path = source_path(root, doc)
+    if not path.exists():
+        return {"path": str(path), "doc": doc, "exists": False, "edited": False, "text": ""}
+    text = path.read_text(encoding="utf-8")
+    edited = True
+    if templates_dir is not None:
+        tpl = Path(templates_dir) / SOURCES[doc]
+        if tpl.exists():
+            edited = tpl.read_text(encoding="utf-8").strip() != text.strip()
+    return {"path": str(path), "doc": doc, "exists": True, "edited": edited, "text": text}
+
+
+def write_source(root, doc: str, content: str) -> dict:
+    """Overwrite one of the candidate's own source files (the onboarding interview's write path).
+
+    Refuses the read-only discipline files by design — see ``WRITABLE_SOURCES``. Whole-file write:
+    callers read first and pass the merged markdown, so a partial write can't silently truncate a
+    career history."""
+    if doc not in SOURCES:
+        raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
+    if doc not in WRITABLE_SOURCES:
+        raise PermissionError(
+            f"{doc!r} is a read-only reference; writable sources: {', '.join(WRITABLE_SOURCES)}"
+        )
+    path = source_path(root, doc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    replaced = path.exists() and bool(path.read_text(encoding="utf-8").strip())
+    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    return {"path": str(path), "doc": doc, "replaced": replaced}

@@ -169,6 +169,47 @@ def _register_packet_tools(registry, cfg) -> None:
         )
 
     @tool
+    def careercoach_read_profile(doc: str = "experience") -> str:
+        """Read one of the candidate's workspace source-of-truth files — the files every CV bullet,
+        evidence-map row and cover-letter claim must trace back to. `doc` is one of: `experience`
+        (their verified career history), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
+        guardrails), `reviewer` (the experience-reviewer discipline), `humanize` (anti-slop rules),
+        `improvements` (the workflow-audit log). Read `experience` BEFORE drafting anything in the
+        candidate's name — if it comes back unfilled, help them fill it in rather than inventing."""
+        root = packet.resolve_root(_root())
+        try:
+            res = packet.read_source(root, doc, templates_dir)
+        except KeyError as e:
+            return f"{e}"
+        if not res["exists"]:
+            return (
+                f"{doc} not found at {res['path']} — the workspace isn't seeded yet. "
+                "Run careercoach_init_workspace first."
+            )
+        if not res["edited"]:
+            return (
+                f"{doc} at {res['path']} is still the untouched template — the candidate hasn't "
+                "filled it in. Do NOT draft from it; run /setup-coach (or interview them) and save "
+                "the result with careercoach_write_profile.\n\n"
+                f"{res['text']}"
+            )
+        return res["text"]
+
+    @tool
+    def careercoach_write_profile(doc: str, content: str) -> str:
+        """Save the candidate's own source-of-truth file after THEY have confirmed the content.
+        `doc` is `experience` or `story-bank` only — the discipline files are read-only by design.
+        This overwrites the whole file, so read it first (careercoach_read_profile) and pass the
+        full merged markdown, never a fragment. Never write a claim the candidate didn't give you:
+        this file is the anti-fabrication anchor for everything downstream."""
+        root = packet.resolve_root(_root())
+        try:
+            res = packet.write_source(root, doc, content)
+        except (KeyError, PermissionError) as e:
+            return f"{e}"
+        return f"{'Updated' if res['replaced'] else 'Wrote'} {doc} → {res['path']}"
+
+    @tool
     def careercoach_scaffold_role(company: str, role: str, req: str = "", raw_jd: str = "") -> str:
         """Start a role packet: create Companies/<company>/Roles/<role - req>/ and seed the intake
         files (raw job description + process log). `req` is the requisition id (optional); paste the
@@ -229,6 +270,8 @@ def _register_packet_tools(registry, cfg) -> None:
     registry.register_tools(
         [
             careercoach_init_workspace,
+            careercoach_read_profile,
+            careercoach_write_profile,
             careercoach_scaffold_role,
             careercoach_write_artifact,
             careercoach_assemble_packet,
