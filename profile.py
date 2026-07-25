@@ -27,9 +27,19 @@ No host imports, so every function is unit-testable with nothing but a temp dir 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:  # POSIX advisory locking; absent on Windows, where we degrade to no cross-process lock.
+    import fcntl
+except ImportError:  # pragma: no cover — non-POSIX host
+    fcntl = None  # type: ignore[assignment]
+
+log = logging.getLogger("protoagent.plugins.careercoach")
 
 # Short scalar facts — injected verbatim every turn (cheap, and the ones most often re-asked).
 IDENTITY_FIELDS: dict[str, str] = {
@@ -90,6 +100,48 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+@contextmanager
+def _locked():
+    """Serialize read-modify-write on the profile.
+
+    Models emit tool calls in PARALLEL, so several ``update_field`` calls can be in flight at
+    once. Without this each one loads, edits its own field and saves the whole object, so the
+    last writer wins and every other field's edit is silently lost. Observed in the wild: a run
+    that recorded name, location, headlines and skills ended up with only the last two."""
+    lock = _dir() / ".profile.lock"
+    if fcntl is None:  # pragma: no cover — non-POSIX host
+        yield
+        return
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write via temp file + rename, so the store is never observed half-written.
+
+    ``write_text`` truncates then writes, which leaves a window where a concurrent writer can
+    interleave and a shorter write can strand the tail of a longer one — producing a file that is
+    valid JSON followed by garbage. ``os.replace`` is atomic within a filesystem, so a reader
+    sees either the old file or the new one, never a splice of both."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".profile-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def empty_profile() -> dict:
     """A well-formed, entirely unfilled profile — the shape every reader can rely on."""
     return {
@@ -103,11 +155,19 @@ def load_profile() -> dict:
     """The stored profile, normalized. A missing/corrupt file reads as empty rather than
     raising — an unreadable profile must degrade to "I know nothing yet", never break a turn."""
     prof = empty_profile()
+    path = _path()
     try:
-        raw = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return prof
+    except (OSError, ValueError) as exc:
+        # Degrade rather than raise — an unreadable profile must never break a turn. But say so
+        # LOUDLY: silence here once masked a torn file as "nothing recorded yet", which reads to
+        # the operator as the feature not working rather than their data being damaged.
+        log.warning("[careercoach] profile at %s is unreadable (%s) — treating as empty", path, exc)
         return prof
     if not isinstance(raw, dict):
+        log.warning("[careercoach] profile at %s is not an object — treating as empty", path)
         return prof
     for k in IDENTITY_FIELDS:
         v = (raw.get("identity") or {}).get(k, "")
@@ -127,7 +187,7 @@ def save_profile(profile: dict) -> dict:
     for k in SECTIONS:
         out["sections"][k] = str((profile.get("sections") or {}).get(k, "") or "").strip()
     out["updated"] = _now()
-    _path().write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+    _atomic_write(_path(), json.dumps(out, indent=2) + "\n")
     return out
 
 
@@ -140,13 +200,16 @@ def update_field(field: str, content: str) -> dict:
     if field not in IDENTITY_FIELDS and field not in SECTIONS:
         known = ", ".join(list(IDENTITY_FIELDS) + list(SECTIONS))
         raise KeyError(f"unknown profile field {field!r}; known: {known}")
-    prof = load_profile()
     text = (content or "").strip()
-    if field in IDENTITY_FIELDS:
-        prof["identity"][field] = text
-    else:
-        prof["sections"][field] = text
-    return save_profile(prof)
+    # Load → edit → save under one lock. Parallel tool calls make this a genuine race, not a
+    # theoretical one: without it, concurrent field writes silently drop each other's edits.
+    with _locked():
+        prof = load_profile()
+        if field in IDENTITY_FIELDS:
+            prof["identity"][field] = text
+        else:
+            prof["sections"][field] = text
+        return save_profile(prof)
 
 
 def completeness(profile: dict | None = None) -> dict:

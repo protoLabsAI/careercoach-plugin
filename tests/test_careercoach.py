@@ -276,6 +276,54 @@ def test_profile_store_completeness_and_context(plugin, monkeypatch, tmp_path):
     assert md.startswith("# Experience") and "Ada" in md and "_(not recorded)_" in md
 
 
+def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
+    """Parallel ``update_field`` calls must not drop each other's edits or tear the file.
+
+    Not theoretical: models emit tool calls in parallel, and a real run recorded five fields but
+    persisted two, leaving valid JSON with the tail of a longer write spliced onto the end. The
+    store is load-edit-save, so without a lock the last writer wins."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
+    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
+    profile = importlib.import_module(plugin.__name__ + ".profile")
+
+    import json as _json
+    import threading
+
+    # Long values make an interleaved write far likelier to strand a tail.
+    fields = {
+        "name": "Ada Lovelace",
+        "location": "London",
+        "work_auth": "UK citizen",
+        "contact": "ada@example.com · linkedin.com/in/ada",
+        "headlines": "Analyst · Mathematician · " + ("Engine specialist " * 40),
+        "roles": "### Analyst — Analytical Engine\n" + ("- Owned the notes\n" * 120),
+        "skills": "**Can lead on:** " + ("symbolic computation, " * 60),
+        "do_not_claim": "Never imply hands-on manufacture of the Engine.",
+    }
+    barrier = threading.Barrier(len(fields))
+
+    def write(k, v):
+        barrier.wait()  # maximize overlap
+        profile.update_field(k, v)
+
+    threads = [threading.Thread(target=write, args=kv) for kv in fields.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # The file must still parse — no tail of a longer write left behind.
+    text = (tmp_path / "profile.json").read_text(encoding="utf-8")
+    _json.loads(text)  # raises if torn
+
+    # And every field must have survived, not just the last writer's.
+    prof = profile.load_profile()
+    for k, v in fields.items():
+        got = prof["identity"].get(k) or prof["sections"].get(k)
+        assert got == v.strip(), f"{k} was lost to a concurrent write"
+    assert profile.completeness(prof)["filled"] == len(fields)
+
+
 def test_profile_middleware_appends_never_clobbers(plugin, registry, monkeypatch, tmp_path):
     """Plugin middleware runs AFTER KnowledgeMiddleware and ``context`` is a plain str channel
     with no reducer — so a bare ``{"context": ...}`` would wipe the memory digest, hot memory and
