@@ -17,9 +17,12 @@ forking core.
 ## What it does
 
 **Setup (once):**
-- **`/setup-coach`** — one interview, and everything after it is grounded. Seeds your workspace, fills in
-  your `Experience.md` source of truth and story bank *by conversation*, captures your voice, distills the
-  lot into recallable memory, then proves it on a real posting. Every step skippable.
+- **`/setup-coach`** — works out what it already knows about you, asks only about the real gaps, and records
+  the result as a profile it carries into every future turn. It harvests first (memory, saved artifacts, any
+  CV in your workspace, a resume PDF you've shared) so it never asks for what it already has.
+- **See what it knows.** The **Career Coach** console panel lists every field the coach holds, every one
+  still missing, and — behind a disclosure — the exact block it's told each turn. Your record, visible to you,
+  not a file you have to go find.
 
 **Coaching (the default):**
 - **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
@@ -56,7 +59,8 @@ Every protoAgent extension surface, in one plugin:
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
-| **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_read_profile` / `careercoach_write_profile` (the source-of-truth seam) |
+| **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_get_profile` / `careercoach_update_profile` / `careercoach_export_experience` (the operator profile) |
+| **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, appended to the turn's context tail without clobbering the host's own injection |
 | **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
 | **Background surface + watchdog** (ADR 0018) | `register_surface` + `graph.sdk.supervise` | the opt-in job-watch — a supervised loop that scans, records new matches, and emits an event |
 | **Goal verifier** (ADR 0028/0067) | `register_goal_verifier` | `careercoach:new_matches` — arm a **WATCH** on your pipeline with `create_watch` |
@@ -163,13 +167,27 @@ careercoach-plugin/
   what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default. On desktop, 0.108.0
   is the floor because that's where `execute_code` gained a **managed Python runtime** (ADR 0094) —
   provisioned on first use; before it, code execution was unavailable on the packaged app entirely.
-- **Files are the truth; memory is a derived index.** The candidate's history lives in plain markdown
-  they own and can edit (`Resume/Experience.md`, `Agent/story-bank.md`); `/setup-coach` distils a compact
-  recall index from it into the `profile` / `abilities` / `voice` memory domains. Truth flows files →
-  memory, never back, so there's one write path and no divergence — if they disagree, the file wins and
-  the coach re-distils. The generic `read_file` only reaches *managed fs projects* and the workspace isn't
-  one, so the plugin ships its own read path (`careercoach_read_profile`) rather than leaving every skill's
-  "anchor to `Experience.md`" instruction unenforceable.
+- **The operator profile is state, not a document — and it's always in front of the model.** Who the coach
+  works for lives in a structured `profile.json` (`profile.py`, same instance-scoped convention as the
+  tracker), injected every turn as an `<operator_profile>` block via plugin middleware (ADR 0032). It
+  carries an explicit **completeness** picture: what's known, what's missing, how much of the picture
+  exists. That's what stops the coach re-interviewing for facts it already holds — a real first run was
+  abandoned partway through for exactly that reason, because a recall tool can't help an agent that
+  doesn't already suspect there's something to recall. `Resume/Experience.md` is now a **generated export** you can hand to
+  anyone, written from the profile and never read back as truth.
+- **The injection appends; it never replaces.** `state["context"]` is a plain `str` channel with no reducer,
+  and plugin middleware runs *after* `KnowledgeMiddleware` — so returning a bare `{"context": …}` would
+  silently wipe the memory digest, hot memory, RAG hits and skill index. The middleware concatenates and
+  adds its own `context_sections` entry so the prompt viewer still attributes each part. There's a test
+  that fails if that regresses.
+- **Transparency is the differentiator.** The console panel shows every field held, every field missing, and
+  the verbatim block the agent receives. The person being described should never have to open a file in
+  Finder to see their own record.
+- **The voice gate is always-on, not a step in one skill.** The writing discipline used to live only inside
+  `job-application-assistant`, so a side-door request ("just convert my resume to a docx") produced a real
+  deliverable at 16 em-dashes per 1000 words against the operator's stated limit of 3, carrying a phrase
+  they'd explicitly retired. A rule that only binds when you enter through the front door isn't a rule, so
+  it now rides in the always-on block alongside the `do_not_claim` guardrails.
 - **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts `experience` and
   `story-bank` — the candidate's own files. The discipline files it's *bound by* (experience-reviewer,
   Humanize, the improvements log) are read-only to the agent by design.

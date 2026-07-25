@@ -213,6 +213,106 @@ def test_packet_source_read_write_and_guards(plugin, tmp_path):
     assert packet.read_source(tmp_path, "reviewer")["edited"] is True
 
 
+def test_profile_store_completeness_and_context(plugin, monkeypatch, tmp_path):
+    """The operator profile: field-at-a-time writes, an honest completeness picture, and a
+    context block that names what's missing — the thing that stops the agent re-interviewing."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
+    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
+    profile = importlib.import_module(plugin.__name__ + ".profile")
+
+    # Cold start: well-formed but empty, and it injects NOTHING (an empty block is noise).
+    cov = profile.completeness()
+    assert cov["empty"] is True and cov["filled"] == 0
+    assert set(cov["missing"]) == set(profile.IDENTITY_FIELDS) | set(profile.SECTIONS)
+    assert profile.context_block() == ""
+
+    profile.update_field("name", "Ada Lovelace")
+    profile.update_field("location", "London")
+    saved = profile.update_field("roles", "### Analyst — Analytical Engine\n- Owned the notes")
+
+    # Field-at-a-time must not disturb its neighbours — a long interview saves as it goes.
+    assert saved["identity"]["name"] == "Ada Lovelace"
+    assert saved["identity"]["location"] == "London"
+    assert "Analytical Engine" in saved["sections"]["roles"]
+
+    cov = profile.completeness()
+    assert cov["filled"] == 3 and cov["empty"] is False
+    assert set(cov["known"]) == {"name", "location", "roles"}
+    assert "work_auth" in cov["missing"] and "do_not_claim" in cov["missing"]
+
+    block = profile.context_block()
+    assert "Ada Lovelace" in block and "London" in block  # short facts inject verbatim…
+    assert "Owned the notes" not in block  # …long sections do NOT (always-on context stays cheap)
+    assert "recorded (" in block  # they appear as presence + size instead
+    assert "MISSING" in block and "work_auth" in block
+    assert "NEVER ask for anything listed under KNOWN" in block
+    assert f"{cov['filled']} of {cov['total']}" in block
+
+    # do_not_claim is a guardrail: short, load-bearing, and injected IN FULL every turn.
+    profile.update_field("do_not_claim", "Never imply production ML ownership.")
+    block = profile.context_block()
+    assert "Never imply production ML ownership." in block
+
+    # The write gate rides along on EVERY turn, so a side-door request ("just make me a docx")
+    # can't reach a deliverable without the voice discipline having been loaded first.
+    assert "BEFORE WRITING ANYTHING IN THEIR NAME" in block
+    assert "writing-style" in block and "my-writing-style" in block
+    assert "side door does not suspend the rules" in block
+
+    # Unknown fields are rejected rather than silently creating a slot.
+    try:
+        profile.update_field("favourite_colour", "green")
+        raise AssertionError("expected KeyError for unknown profile field")
+    except KeyError:
+        pass
+
+    # A corrupt store degrades to "I know nothing", never raises mid-turn.
+    (tmp_path / "profile.json").write_text("{not json", encoding="utf-8")
+    assert profile.completeness()["empty"] is True
+    assert profile.context_block() == ""
+
+    # The markdown export is generated FROM the profile (one write direction, no drift).
+    md = profile.to_markdown({"identity": {"name": "Ada"}, "sections": {"roles": "R"}, "updated": ""})
+    assert md.startswith("# Experience") and "Ada" in md and "_(not recorded)_" in md
+
+
+def test_profile_middleware_appends_never_clobbers(plugin, registry, monkeypatch, tmp_path):
+    """Plugin middleware runs AFTER KnowledgeMiddleware and ``context`` is a plain str channel
+    with no reducer — so a bare ``{"context": ...}`` would wipe the memory digest, hot memory and
+    skill index. It must concatenate onto whatever is already there."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
+    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
+    profile = importlib.import_module(plugin.__name__ + ".profile")
+
+    # Stub the langchain middleware base the same way the suite stubs graph.sdk — `langchain`
+    # isn't a dev dep, and without this the assertions below would silently never run.
+    mwmod = types.ModuleType("langchain.agents.middleware")
+    mwmod.AgentMiddleware = type("AgentMiddleware", (), {})
+    agents = types.ModuleType("langchain.agents")
+    agents.middleware = mwmod
+    lc = types.ModuleType("langchain")
+    lc.agents = agents
+    monkeypatch.setitem(sys.modules, "langchain", lc)
+    monkeypatch.setitem(sys.modules, "langchain.agents", agents)
+    monkeypatch.setitem(sys.modules, "langchain.agents.middleware", mwmod)
+
+    plugin.register(registry)
+    assert registry.middlewares, "profile middleware must register when the base is importable"
+    mw = registry.middlewares[0](None)
+
+    # Nothing known → no injection at all.
+    assert mw.before_model({"context": "PRIOR"}) is None
+
+    profile.update_field("name", "Ada Lovelace")
+    out = mw.before_model({"context": "PRIOR", "context_sections": [{"label": "Knowledge", "chars": 5}]})
+    assert out["context"].startswith("PRIOR")  # existing context survives…
+    assert "<operator_profile>" in out["context"]  # …and ours is appended
+    assert [s["label"] for s in out["context_sections"]] == ["Knowledge", "Operator profile"]
+
+    # Empty prior context must not leave a leading blank line.
+    assert mw.before_model({})["context"].startswith("<operator_profile>")
+
+
 def test_skills_declare_real_tools(plugin, registry):
     """Every ``careercoach_*`` tool a skill lists in its frontmatter must actually be registered.
 
@@ -242,7 +342,7 @@ def test_skills_declare_real_tools(plugin, registry):
 # ── register() — host-free (guards skip host-only knobs + subagents) ──────────
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
-    assert len(registry.tools) == 10  # 3 tracker/search + 7 packet/profile tools; knobs skipped host-free
+    assert len(registry.tools) == 13  # 3 tracker/search + 10 packet/profile tools; knobs skipped host-free
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
@@ -288,8 +388,8 @@ def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
 
     plugin.register(registry)
 
-    # 10 base tools (track, list, search + 7 packet/profile) + 2 knob tools.
-    assert len(registry.tools) == 12
+    # 13 base tools (track, list, search + 10 packet/profile) + 2 knob tools.
+    assert len(registry.tools) == 15
     assert any("careercoach_knobs" == str(t) for t in registry.tools)
     # The research → evaluate → write crew.
     names = {c.name for c in registry.subagents}

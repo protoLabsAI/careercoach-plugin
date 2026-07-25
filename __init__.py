@@ -50,11 +50,15 @@ def register(registry) -> None:
     _register_packet_tools(registry, cfg)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
+    _register_profile_middleware(registry)
     _register_views(registry, cfg)
     _register_job_watch(registry, cfg)
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
-    log.info("[careercoach] registered: tracker + job-search + packet tools, rubric knobs, crew, dashboard, watch")
+    log.info(
+        "[careercoach] registered: tracker + job-search + packet/profile tools, rubric knobs, "
+        "crew, profile injection, dashboard, watch"
+    )
 
 
 def _as_bool(value) -> bool:
@@ -144,7 +148,7 @@ def _register_jobsearch_tool(registry, cfg) -> None:
 def _register_packet_tools(registry, cfg) -> None:
     from pathlib import Path
 
-    from . import packet
+    from . import packet, profile
 
     templates_dir = Path(__file__).resolve().parent / "templates"
 
@@ -167,6 +171,64 @@ def _register_packet_tools(registry, cfg) -> None:
             "Next: fill in Resume/Experience.md (your verified source of truth) — everything the "
             "coach writes is anchored to it."
         )
+
+    @tool
+    def careercoach_get_profile(field: str = "") -> str:
+        """Read your operator's verified profile. With no `field`, returns the completeness
+        picture (what's known, what's missing) — the same index you already see in the
+        <operator_profile> block each turn. With a `field`, returns that section IN FULL:
+        `roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`, or an identity field
+        (`name`, `location`, `work_auth`, `contact`, `headlines`). Read the full section before
+        drafting anything from it — the always-on block is only an index."""
+        prof = profile.load_profile()
+        field = (field or "").strip()
+        if not field:
+            cov = profile.completeness(prof)
+            if cov["empty"]:
+                return (
+                    "No operator profile recorded yet. Run /setup-coach to build one — and "
+                    "harvest what already exists (memory, artifacts, any CV in the workspace) "
+                    "before asking the operator anything."
+                )
+            return (
+                f"Profile: {cov['filled']} of {cov['total']} fields"
+                + (f" (updated {cov['updated']})" if cov["updated"] else "")
+                + f"\n  known:   {', '.join(cov['known'])}"
+                + f"\n  missing: {', '.join(cov['missing']) or 'nothing'}"
+            )
+        if field in profile.IDENTITY_FIELDS:
+            return prof["identity"].get(field) or f"{field} is not recorded yet."
+        if field in profile.SECTIONS:
+            return prof["sections"].get(field) or f"{field} is not recorded yet."
+        known = ", ".join(list(profile.IDENTITY_FIELDS) + list(profile.SECTIONS))
+        return f"unknown profile field {field!r}; known: {known}"
+
+    @tool
+    def careercoach_update_profile(field: str, content: str) -> str:
+        """Record one field of your operator's profile, after THEY have confirmed it. `field` is
+        an identity fact (`name`, `location`, `work_auth`, `contact`, `headlines`) or a section
+        (`roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`). Saves one field at
+        a time so a long interview never loses work and no write truncates a career history.
+        Never record anything the operator didn't tell you or confirm: this profile is the
+        anti-fabrication anchor for every CV, letter and interview answer you produce."""
+        try:
+            saved = profile.update_field(field, content)
+        except KeyError as e:
+            return f"{e}"
+        cov = profile.completeness(saved)
+        return (
+            f"Recorded {field}. Profile now {cov['filled']}/{cov['total']} fields"
+            + (f"; still missing: {', '.join(cov['missing'])}" if cov["missing"] else " — complete.")
+        )
+
+    @tool
+    def careercoach_export_experience() -> str:
+        """Write the operator's profile out as a portable `Resume/Experience.md` in their
+        workspace — readable, diffable, and handable to anyone. The profile stays the source of
+        truth; this is a generated export, so re-run it after updating the profile."""
+        root = packet.resolve_root(_root())
+        res = packet.write_source(root, "experience", profile.to_markdown())
+        return f"Exported profile → {res['path']}"
 
     @tool
     def careercoach_read_profile(doc: str = "experience") -> str:
@@ -270,6 +332,9 @@ def _register_packet_tools(registry, cfg) -> None:
     registry.register_tools(
         [
             careercoach_init_workspace,
+            careercoach_get_profile,
+            careercoach_update_profile,
+            careercoach_export_experience,
             careercoach_read_profile,
             careercoach_write_profile,
             careercoach_scaffold_role,
@@ -380,6 +445,56 @@ def _register_subagents(registry) -> None:
         registry.register_subagent(cfg)
 
 
+# ── always-on context: the operator profile, injected every turn (ADR 0032) ───
+def _register_profile_middleware(registry) -> None:
+    """Put the operator's profile in front of the model on every turn.
+
+    Without this the agent has no cheap way to know what it already knows, so it re-interviews
+    for facts it holds — the failure that made a real first run collapse into "stop the 21
+    questions". A recall tool can't fix that: the agent has to already suspect there's something
+    to recall. Always-on completeness removes the guess.
+
+    Guarded like every other host seam: if ``AgentMiddleware`` isn't importable (host-free
+    tests, older host), the plugin still registers and simply doesn't inject."""
+    try:
+        from langchain.agents.middleware import AgentMiddleware
+    except ImportError:  # pragma: no cover — host-free / older host
+        log.debug("[careercoach] AgentMiddleware unavailable; profile injection skipped")
+        return
+
+    from . import profile
+
+    class _ProfileMiddleware(AgentMiddleware):
+        """Append ``<operator_profile>`` to the turn's context tail.
+
+        Read fresh each call (never cached) so an edit in the console view — or a field the agent
+        just recorded — is visible on the very next turn.
+
+        **Appends, never replaces.** ``state["context"]`` is a plain ``str`` channel with no
+        reducer (``graph/state.py``), and plugin middleware runs *after* ``KnowledgeMiddleware``,
+        so returning a bare ``{"context": block}`` would silently wipe the memory digest, hot
+        memory, RAG hits and skill index. We concatenate onto whatever is already there and add a
+        matching ``context_sections`` entry so the prompt viewer still attributes each part."""
+
+        def before_model(self, state, runtime=None) -> dict | None:
+            try:
+                block = profile.context_block()
+            except Exception as exc:  # noqa: BLE001 — context injection must never break a turn
+                log.debug("[careercoach] profile injection failed: %s", exc)
+                return None
+            if not block:
+                return None  # nothing known yet; /setup-coach owns the cold start
+            existing = (state or {}).get("context") or ""
+            sections = list((state or {}).get("context_sections") or [])
+            sections.append({"label": "Operator profile", "chars": len(block)})
+            return {
+                "context": f"{existing}\n\n{block}" if existing else block,
+                "context_sections": sections,
+            }
+
+    registry.register_middleware(lambda config: _ProfileMiddleware())
+
+
 # ── console rail view: the Career Coach dashboard (ADR 0026) ──────────────────
 def _register_views(registry, cfg) -> None:
     """Serve the dashboard PAGE (public, un-gated — an iframe load can't carry a bearer)
@@ -388,20 +503,28 @@ def _register_views(registry, cfg) -> None:
     from fastapi import APIRouter
     from fastapi.responses import HTMLResponse, JSONResponse
 
-    from . import state
+    from . import profile, state
     from .rubric import DEFAULT_WEIGHTS
 
     data = APIRouter()
 
     @data.get("/state")
     async def _state():
+        prof = profile.load_profile()
         return JSONResponse(
             {
-                "profile": {
+                "settings": {
                     "name": cfg.get("full_name", ""),
                     "location": cfg.get("location", ""),
                     "target_roles": cfg.get("target_roles", ""),
                 },
+                # The operator profile, verbatim + its completeness, so the panel shows exactly
+                # what the agent is told each turn. Transparency is the point: the person being
+                # described should never have to open a file to see their own record.
+                "profile": prof,
+                "completeness": profile.completeness(prof),
+                "field_labels": {**profile.IDENTITY_FIELDS, **profile.SECTIONS},
+                "context_block": profile.context_block(prof),
                 "weights": DEFAULT_WEIGHTS,  # the rubric defaults; the agent tunes live via knobs
                 "applications": state.load_applications(),
             }
@@ -569,6 +692,14 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .coach { margin-top: 24px; padding: 16px 18px; border-radius: 12px;
            border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; line-height: 1.6; }
   code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
+  /* Profile panel: wider labels than the rubric rows, and unrecorded fields read as muted
+     rather than absent — a gap you can see is a gap the operator can close. */
+  #profile .row { align-items: baseline; gap: 12px; }
+  #profile .row .name { width: 190px; flex: none; text-transform: none; }
+  #profile .row .empty { padding: 0; font-size: 13px; font-style: italic; }
+  #profile-ctx { margin: 10px 0 0; padding: 12px; border-radius: 8px; overflow-x: auto;
+                 background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa);
+                 font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
 </style></head>
 <body>
   <h1 id="title">Career Coach</h1>
@@ -577,6 +708,18 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <div class="grid" id="stats"></div>
 
   <div class="card">
+    <h2>What your coach knows about you</h2>
+    <p class="sub" id="profile-cov">Loading…</p>
+    <div id="profile"></div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
+        Exactly what it&rsquo;s told each turn
+      </summary>
+      <pre id="profile-ctx"></pre>
+    </details>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <h2>Pipeline</h2>
     <div id="pipeline"><p class="empty">Loading…</p></div>
   </div>
@@ -609,12 +752,40 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
+  // The transparency panel: every field the coach holds, and every one it doesn't. The
+  // operator should never have to open a file to see their own record.
+  function renderProfile(d) {
+    var prof = d.profile || { identity: {}, sections: {} };
+    var cov = d.completeness || { known: [], missing: [], filled: 0, total: 0 };
+    var labels = d.field_labels || {};
+
+    document.getElementById('profile-cov').textContent = cov.filled
+      ? (cov.filled + ' of ' + cov.total + ' recorded'
+         + (cov.updated ? ' · updated ' + cov.updated : ''))
+      : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';
+
+    var rows = Object.keys(labels).map(function (k) {
+      var v = (prof.identity && prof.identity[k]) || (prof.sections && prof.sections[k]) || '';
+      var body = v
+        ? '<span>' + esc(v.length > 220 ? v.slice(0, 220) + '…' : v) + '</span>'
+        : '<span class="empty">not recorded</span>';
+      return '<div class="row"><span class="name">' + esc(labels[k]) + '</span>' + body + '</div>';
+    });
+    document.getElementById('profile').innerHTML = rows.join('');
+    document.getElementById('profile-ctx').textContent =
+      d.context_block || '(nothing injected — no profile recorded yet)';
+  }
+
   function render(d) {
     var apps = d.applications || [];
-    var name = (d.profile && d.profile.name) || '';
+    var st = d.settings || {};
+    var prof = d.profile || { identity: {}, sections: {} };
+    var name = (prof.identity && prof.identity.name) || st.name || '';
     document.getElementById('title').textContent = name ? ('Career Coach — ' + name) : 'Career Coach';
-    document.getElementById('sub').textContent = (d.profile && d.profile.target_roles)
-      ? ('Targeting: ' + d.profile.target_roles) : 'Set your profile in Settings › Career Coach.';
+    document.getElementById('sub').textContent = st.target_roles
+      ? ('Targeting: ' + st.target_roles) : 'Set your profile in Settings › Career Coach.';
+
+    renderProfile(d);
 
     var byStatus = {};
     apps.forEach(function (a) { byStatus[a.status] = (byStatus[a.status] || 0) + 1; });
