@@ -296,7 +296,7 @@ def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
         "location": "London",
         "work_auth": "UK citizen",
         "contact": "ada@example.com · linkedin.com/in/ada",
-        "headlines": "Analyst · Mathematician · " + ("Engine specialist " * 40),
+        "headlines": "Analyst · Mathematician · Engine specialist",
         "roles": "### Analyst — Analytical Engine\n" + ("- Owned the notes\n" * 120),
         "skills": "**Can lead on:** " + ("symbolic computation, " * 60),
         "do_not_claim": "Never imply hands-on manufacture of the Engine.",

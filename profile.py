@@ -10,11 +10,11 @@ the always-on block, ``careercoach_read_profile("experience")``, the drafting an
 reads *this*. A workspace ``Resume/Experience.md`` is never a competing read source; it takes part
 in two explicit, one-way moves:
 
-  ``Experience.md``  --import (``parse_experience`` + ``import_fields``, on request)-->  ``profile.json``
+  ``Experience.md``  --import (``parse_experience`` → ``plan_import`` → ``apply_import``)-->  ``profile.json``
   ``profile.json``   --export (``to_markdown``)-->  ``Resume/Experience (profile export).md``
 
-and every other write goes through ``update_field``, so an import obeys the same append/replace
-and ``do_not_claim`` rules as the agent does.
+and every write — the agent's (``update_field``) and an import's — is planned by the same
+``_plan``, so an import obeys the same append/replace, size-cap and ``do_not_claim`` rules.
 
 Two design rules earn their keep:
 
@@ -41,6 +41,7 @@ but a temp dir (set ``CAREERCOACH_DIR``), and this file loads on its own, outsid
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -91,10 +92,11 @@ ALWAYS_INJECT_SECTIONS: tuple[str, ...] = ("do_not_claim",)
 # agent's to remove.
 GUARDED_SECTIONS: tuple[str, ...] = ("do_not_claim",)
 
-# How a write to a section lands. ``append`` (the default) adds to what's there, so recording
-# roles one at a time keeps every one; ``replace`` rewrites the section and is how a CORRECTION is
-# made — read the section, fix it, write the whole thing back (appending a correction would leave
-# the wrong line beside it). Identity fields are single values and are always set outright.
+# How a write to a section lands. ``append`` (the default) merges in only the lines the section
+# doesn't have yet, each after the line it follows in what was written — so recording roles one
+# at a time keeps every one, and re-recording is a no-op. ``replace`` rewrites the section and is
+# how a CORRECTION is made — read the section, fix it, write the whole thing back (appending a
+# correction would leave the wrong line beside it). Identity fields are single values, set outright.
 UPDATE_MODES: tuple[str, ...] = ("append", "replace")
 
 TOTAL_FIELDS = len(IDENTITY_FIELDS) + len(SECTIONS)
@@ -114,6 +116,16 @@ WRITE_GATE = (
     'bare "make me a resume" exactly as much as to a tailored application: entering through a\n'
     "side door does not suspend the rules."
 )
+
+# Size caps, in characters. ``do_not_claim`` goes in front of the model IN FULL on every call, so
+# it's held to what a list of hard stops needs; identity facts are one line each; the narrative
+# sections are read whole before every draft. A write past a cap is refused with the reason, and
+# ``context_block`` bounds whatever an older version may have stored. (The live jobCoach profile's
+# largest values: identity 253, do_not_claim 251, roles 4,160.)
+IDENTITY_LIMIT = 500
+FIELD_LIMITS: dict[str, int] = {"do_not_claim": 3_000}
+SECTION_LIMIT = 20_000
+_IDENTITY_SHOWN = 300  # what the always-on block shows of one identity fact
 
 # The files this store holds — the set copied forward from the pre-0.7 location.
 STORE_FILES: tuple[str, ...] = ("profile.json", "applications.json")
@@ -441,21 +453,96 @@ def save_profile(profile: dict) -> dict:
     return out
 
 
+def _limit(field: str) -> int:
+    return IDENTITY_LIMIT if field in IDENTITY_FIELDS else FIELD_LIMITS.get(field, SECTION_LIMIT)
+
+
+_BULLET = re.compile(r"^[-*+]\s+")
+
+
+def _norm(line: str) -> str:
+    """A line for comparison: whitespace collapsed and any bullet marker spelled ``- ``, so the same
+    fact typed with ``*`` in one editor and ``-`` in another is still the same fact."""
+    return _BULLET.sub("- ", " ".join((line or "").split()))
+
+
 def _lines(text: str) -> list[str]:
-    return [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return [n for n in (_norm(ln) for ln in (text or "").splitlines()) if n]
 
 
-def _appended(existing: str, addition: str) -> str:
-    """``addition`` added to a section as a new paragraph — unless every line of it is already
-    there (re-recording a settled fact is a no-op, not a duplicate)."""
-    if not addition:
-        return existing
-    if not existing:
-        return addition
-    have = set(_lines(existing))
-    if all(ln in have for ln in _lines(addition)):
-        return existing
-    return f"{existing}\n\n{addition}"
+def _keys(lines: list[str]) -> list:
+    """Each line's identity for merging: a heading is itself; any other line is (the heading it
+    sits under, the line) — so "- Python" under two different roles is two different lines."""
+    ctx, out = "", []
+    for ln in lines:
+        s = _norm(ln)
+        if not s:
+            out.append(None)
+        elif s.startswith("#"):
+            ctx = s
+            out.append(("", s))
+        else:
+            out.append((ctx, s))
+    return out
+
+
+def _merge(existing: str, addition: str) -> tuple[str, list[str]]:
+    """``addition`` merged into a section line by line: ``(merged_text, lines_added)``.
+
+    Only lines ``existing`` doesn't already have are added, each right after the line it follows
+    in ``addition`` — so a bullet added under one role lands under that role, a role added at the
+    top lands at the top, and re-recording what's already there adds nothing. ``lines_added`` is
+    exactly what the merge wrote, which is what an import's preview reports."""
+    add_lines = (addition or "").strip().splitlines()
+    if not add_lines:
+        return existing, []
+    if not (existing or "").strip():
+        return "\n".join(add_lines), [ln for ln in add_lines if ln.strip()]
+    out = existing.splitlines()
+    keys = _keys(out)
+    have = {k for k in keys if k}
+    added: list[str] = []
+    pending: list[tuple] = []  # new lines seen before the first line `existing` already has
+    cursor: int | None = None
+    for key, line in zip(_keys(add_lines), add_lines):
+        if key is None:
+            continue
+        if key in have:
+            start = 0 if cursor is None else cursor + 1
+            idx = next((i for i in range(start, len(keys)) if keys[i] == key), None)
+            if idx is None:
+                idx = next((i for i, k in enumerate(keys) if k == key), None)
+            if idx is None:
+                continue  # a repeat of a line still waiting to be placed
+            if pending:
+                block = pending + ([(None, "")] if key[0] == "" else [])
+                out[idx:idx] = [ln for _, ln in block]
+                keys[idx:idx] = [k for k, _ in block]
+                idx += len(block)
+                pending = []
+            cursor = idx
+            continue
+        have.add(key)
+        added.append(line)
+        if cursor is None:
+            pending.append((key, line))
+            continue
+        block = [(None, ""), (key, line)] if key[0] == "" and out[cursor].strip() else [(key, line)]
+        out[cursor + 1 : cursor + 1] = [ln for _, ln in block]
+        keys[cursor + 1 : cursor + 1] = [k for k, _ in block]
+        cursor += len(block)
+    if pending:
+        out += ([""] if out and out[-1].strip() else []) + [ln for _, ln in pending]
+    return "\n".join(out).strip(), added
+
+
+def _same(a: str, b: str) -> bool:
+    """Equal as text, ignoring trailing spaces and runs of blank lines."""
+
+    def canon(t: str) -> str:
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(ln.rstrip() for ln in (t or "").splitlines())).strip()
+
+    return canon(a) == canon(b)
 
 
 def _dropped(old: str, new: str) -> list[str]:
@@ -473,19 +560,67 @@ def _refuse_removal(field: str, dropped: list[str]) -> PermissionError:
     )
 
 
+def _too_long(field: str, size: int) -> ValueError:
+    if field in ALWAYS_INJECT_SECTIONS:
+        why = "it goes in front of the model in full on every call"
+    elif field in SECTIONS:
+        why = "the whole record is read before every draft"
+    else:
+        why = "it's a single fact shown on every call"
+    return ValueError(
+        f"Refused: {field} would be {size:,} characters; the cap is {_limit(field):,} because {why}. "
+        "Nothing was saved — keep what matters and ask the operator to trim the rest."
+    )
+
+
+def _plan(prof: dict, field: str, text: str, mode: str, confirm_removal: bool) -> dict:
+    """What writing ``text`` to ``field`` would do to ``prof`` — the one place the write rules live,
+    used by ``update_field`` and by the import alike. Returns ``{"field", "outcome", "old", "new",
+    "added", "dropped", "error"}``; ``outcome`` is set · appended · replaced · unchanged · refused
+    (a hard stop would go) · too long (past the cap), and ``error`` is what to raise for the last two."""
+    slot = "identity" if field in IDENTITY_FIELDS else "sections"
+    old = prof[slot][field]
+    if slot == "identity" or mode == "replace":
+        have = set(_lines(old))
+        new, added = text, [ln for ln in text.splitlines() if _norm(ln) and _norm(ln) not in have]
+    else:
+        new, added = _merge(old, text)
+    row = {"field": field, "old": old, "new": new, "added": added, "dropped": _dropped(old, new), "error": None}
+    if _same(new, old):
+        return {**row, "outcome": "unchanged", "new": old, "added": [], "dropped": []}
+    if len(new) > _limit(field):
+        return {**row, "outcome": "too long", "error": _too_long(field, len(new))}
+    if field in GUARDED_SECTIONS and row["dropped"] and not confirm_removal:
+        return {**row, "outcome": "refused", "error": _refuse_removal(field, row["dropped"])}
+    outcome = "set" if not old else ("appended" if slot == "sections" and mode == "append" else "replaced")
+    return {**row, "outcome": outcome}
+
+
+def _load_strict() -> dict:
+    """The stored profile for a writer or planner: an unreadable store raises ``StoreUnreadable``."""
+    path = _path()
+    raw, err = _read_json(path)
+    if not err and raw is not None and not isinstance(raw, dict):
+        err = "not a JSON object"
+    if err:
+        raise StoreUnreadable(path, err)
+    return _normalize(raw) if raw else empty_profile()
+
+
 def update_field(field: str, content: str, *, mode: str = "append", confirm_removal: bool = False) -> dict:
     """Record one identity field or one section, leaving every other field untouched.
 
     Field-at-a-time is the point: a long onboarding interview saves as it goes, so nothing is lost
     if it's abandoned. Identity fields are single values and are set outright (for the multi-part
-    ones — ``contact``, ``headlines`` — pass the whole line). Sections **append** by default, so
-    recording roles one at a time keeps every role — no ordinary write truncates a career history.
-    ``mode="replace"`` rewrites a section: it's how a correction is made, by a caller that has just
-    read the section in full and passes the whole fixed text.
+    ones — ``contact``, ``headlines`` — pass the whole line). Sections **append** by default: only
+    the lines not already there are merged in, each under the line it follows in ``content`` — so
+    recording roles one at a time keeps every role, and no ordinary write truncates a career
+    history. ``mode="replace"`` rewrites a section: it's how a correction is made, by a caller that
+    has just read the section in full and passes the whole fixed text.
 
     Refuses rather than guesses:
 
-    * an unknown field → ``KeyError``; an unknown mode → ``ValueError``;
+    * an unknown field → ``KeyError``; an unknown mode, or a value past its size cap → ``ValueError``;
     * an unreadable store → ``StoreUnreadable`` (writing one field would erase the rest);
     * dropping or rewording any line of a ``GUARDED_SECTIONS`` section without
       ``confirm_removal=True`` → ``PermissionError``.
@@ -498,28 +633,17 @@ def update_field(field: str, content: str, *, mode: str = "append", confirm_remo
     if mode not in UPDATE_MODES:
         raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
     text = (content or "").strip()
-    # Load → edit → save under one lock. Parallel tool calls make this a genuine race, not a
+    # Load → plan → save under one lock. Parallel tool calls make this a genuine race, not a
     # theoretical one: without it, concurrent field writes silently drop each other's edits.
     with _locked():
-        path = _path()
-        raw, err = _read_json(path)
-        if not err and raw is not None and not isinstance(raw, dict):
-            err = "not a JSON object"
-        if err:
-            raise StoreUnreadable(path, err)
-        prof = _normalize(raw) if raw else empty_profile()
-        slot = "identity" if field in IDENTITY_FIELDS else "sections"
-        old = prof[slot][field]
-        new = text if slot == "identity" or mode == "replace" else _appended(old, text)
-        if field in GUARDED_SECTIONS and not confirm_removal:
-            dropped = _dropped(old, new)
-            if dropped:
-                raise _refuse_removal(field, dropped)
-        if new == old:
+        prof = _load_strict()
+        row = _plan(prof, field, text, mode, confirm_removal)
+        if row["error"]:
+            raise row["error"]
+        if row["outcome"] == "unchanged":
             return {**prof, "change": "unchanged"}
-        prof[slot][field] = new
-        change = "set" if not old else ("appended" if slot == "sections" and mode == "append" else "replaced")
-        return {**save_profile(prof), "change": change}
+        prof["identity" if field in IDENTITY_FIELDS else "sections"][field] = row["new"]
+        return {**save_profile(prof), "change": row["outcome"]}
 
 
 def completeness(profile: dict | None = None) -> dict:
@@ -566,7 +690,8 @@ def _summarize(text: str) -> str:
 # NFKC-normalizing the whole value (which would also turn "10⁶" into "106" in a hard stop).
 _DELIMITER_LOOKALIKES = str.maketrans({"﹤": "<", "＜": "<", "﹥": ">", "＞": ">", "／": "/"})
 # Anything shaped like a tag opener — ``<operator_profile>``, ``</injected_context>``, ``<system>``.
-_TAG_OPENER = re.compile(r"<(?=\s*/?\s*[A-Za-z_!?])")
+# (No two adjacent ambiguous whitespace runs, so a "<" before a long run of spaces stays linear.)
+_TAG_OPENER = re.compile(r"<(?=\s*(?:/\s*)?[A-Za-z_!?])")
 
 
 def _defang(text: str) -> str:
@@ -579,9 +704,11 @@ def _defang(text: str) -> str:
     return _TAG_OPENER.sub("&lt;", text.translate(_DELIMITER_LOOKALIKES))
 
 
-def _one_line(text: str) -> str:
-    """An identity value on one line: a scalar fact has no business adding lines to the block."""
-    return " ".join(_defang(text).split())
+def _one_line(text: str, limit: int = _IDENTITY_SHOWN) -> str:
+    """An identity value on one line, clipped: a scalar fact has no business adding lines (or pages)
+    to the block."""
+    flat = " ".join(_defang(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
 def unreadable_block(reason: str) -> str:
@@ -650,9 +777,16 @@ def context_block(profile: dict | None = None) -> str:
     for k in ALWAYS_INJECT_SECTIONS:
         body = prof["sections"].get(k)
         if body:
+            cap = _limit(k)
+            shown = body if len(body) <= cap else body[:cap].rsplit("\n", 1)[0]
             lines.append("")
             lines.append(f"{SECTIONS[k].upper()} — hard stops when writing in their name:")
-            lines += [f"  {ln}" if ln.strip() else "" for ln in _defang(body).splitlines()]
+            lines += [f"  {ln}" if ln.strip() else "" for ln in _defang(shown).splitlines()]
+            if len(shown) < len(body):  # stored by an older version, before the cap existed
+                lines.append(
+                    f"  … {len(body) - len(shown):,} more characters: read them with "
+                    f"careercoach_get_profile('{k}'), and ask the operator to trim this list."
+                )
 
     lines += ["", WRITE_GATE, "</operator_profile>"]
     return "\n".join(lines)
@@ -691,17 +825,18 @@ def to_markdown(profile: dict | None = None) -> str:
 
 # ── Experience.md → profile: the explicit import ──────────────────────────────────────
 # An H2 heading in the operator's file → the profile field it feeds. First match wins, so the
-# specific patterns come first ("Lines never to claim" is do_not_claim, not roles).
+# specific patterns come first ("Lines never to claim" is do_not_claim, not roles). Matched on the
+# first 200 characters of a heading only.
 _HEADING_FIELDS: tuple[tuple[str, re.Pattern], ...] = (
-    ("do_not_claim", re.compile(r"\b(do not|don't|never)\b.*\bclaim", re.I)),
-    ("stories", re.compile(r"\bstor(y|ies)\b|\bstar\b", re.I)),
+    ("do_not_claim", re.compile(r"\b(?:do not|don't|never)\b[^\n]{0,120}?\bclaim", re.I)),
+    ("stories", re.compile(r"\bstor(?:y|ies)\b|\bstar\b", re.I)),
     ("education", re.compile(r"\beducation\b|\bcertific|\bcredential|\bdegree|\bqualification", re.I)),
     ("skills", re.compile(r"\bskill", re.I)),
     ("notes", re.compile(r"\bnotes?\b", re.I)),
     ("roles", re.compile(r"\broles?\b|\bexperience\b|\bemployment\b|\bwork history\b|\bcareer\b|\bpositions?\b", re.I)),
     ("identity", re.compile(r"\bidentity\b|\bcontact\b|\babout\b|\bpersonal\b", re.I)),
 )
-# A "- **Label:** value" / "Label: value" line in the identity section → the identity field.
+# A "- **Label:** value" / "Label: value" line in the identity section → the identity field(s).
 _IDENTITY_LABELS: tuple[tuple[str, re.Pattern], ...] = (
     ("name", re.compile(r"\bname\b", re.I)),
     ("location", re.compile(r"\blocation\b|\bbased\b|\bcity\b", re.I)),
@@ -711,6 +846,35 @@ _IDENTITY_LABELS: tuple[tuple[str, re.Pattern], ...] = (
 )
 _LABELLED = re.compile(r"^\s*(?:[-*+]\s+)?(?:\*\*(?P<b>[^*]+?):?\*\*:?|(?P<p>[A-Za-z][^:*]{0,48}):)\s*(?P<value>.*)$")
 _NOT_RECORDED = "_(not recorded)_"
+# The export's own headings: these always map to their field, whatever the file is.
+_EXPORT_HEADINGS: dict[str, str] = {"identity": "identity", **{label.lower(): f for f, label in SECTIONS.items()}}
+# How a copy of the export announces itself (``to_markdown``, and the pre-0.7 export too). This is
+# NOT the retired "who wins" sniffing: it decides only that the shipped template's hint text can't
+# be in play (every line came from the profile) and that a heading the export didn't write is body
+# text — the two things that made export → import lose or move content.
+EXPORT_TITLE = "# Experience (profile export)"
+EXPORT_BANNER = "> Generated from the Career Coach operator profile"
+# Template lines from before 0.7 split these slots — still hint text in an older seeded copy.
+LEGACY_TEMPLATE_LINES: tuple[str, ...] = (
+    "- **Location / work authorization:**",
+    "- **Explicitly do NOT claim:** _(guards against overreach in tailoring)_",
+)
+
+
+def _h2(line: str) -> str | None:
+    """The text of a level-2 markdown heading, else ``None``. Plain string work, no regex: a
+    heading with a long whitespace run once took seconds to parse (catastrophic backtracking)."""
+    if not line.startswith("##") or line.startswith("###") or line[2:3] not in (" ", "\t"):
+        return None
+    return line[2:].strip().rstrip("#").strip()
+
+
+def _heading_field(heading: str, export_shaped: bool) -> str | None:
+    field = _EXPORT_HEADINGS.get(heading.lower())
+    if field or export_shaped:
+        return field
+    head = heading[:200]
+    return next((f for f, pat in _HEADING_FIELDS if pat.search(head)), None)
 
 
 def _labelled(line: str) -> tuple[str, str] | None:
@@ -720,30 +884,55 @@ def _labelled(line: str) -> tuple[str, str] | None:
     return (m.group("b") or m.group("p") or "").strip(), m.group("value").strip()
 
 
-def parse_experience(text: str, template_text: str = "") -> tuple[dict[str, str], list[str]]:
-    """Read an operator-written ``Experience.md`` into profile fields: ``(fields, unmapped)``.
+def _split_location(value: str) -> tuple[str, str]:
+    """A combined "Location / work authorization" value → (location, work_auth). Split on the first
+    separator; with none, the one value answers both (better than the agent asking again)."""
+    for sep in (" · ", ";", " | ", " / ", " — ", " - "):
+        left, _, right = value.partition(sep)
+        if left.strip() and right.strip():
+            return left.strip(), right.strip()
+    return value, value
 
-    Sections are found by their ``##`` heading (the template's, the export's, or a plain "Skills" /
-    "Experience"), identity facts by ``Label: value`` lines. Every line that is still the shipped
-    template's hint text is dropped — so a file where only the Name line was filled in yields just
-    the name, never the template's example bullets — as are ``_(not recorded)_`` placeholders and
-    the preamble (title and banner). Anything that doesn't map to a field comes back in ``unmapped``
-    for the agent to raise, rather than being guessed into one."""
-    template = {ln.strip() for ln in (template_text or "").splitlines() if ln.strip()}
+
+def parse_experience(text: str, template_text: str = "") -> tuple[dict[str, str], list[str], list[str]]:
+    """Read an operator-written ``Experience.md`` into profile fields: ``(fields, unmapped, notes)``.
+
+    Sections are found by their ``##`` heading — an export's own labels, else the template's or a
+    plain "Skills" / "Experience" — and a ``##`` that matches no field stays part of the section it
+    sits in (``notes`` says so). Identity facts come from ``Label: value`` lines; the template's
+    combined "Location / work authorization" line feeds both fields. Every line that's still the
+    shipped template's hint text is dropped (not in an export, whose lines all came from the
+    profile), as are ``_(not recorded)_`` placeholders and the preamble. Anything that can't be
+    placed comes back in ``unmapped`` for the agent to raise, rather than being guessed into a field.
+    Nothing is moved between sections: a "do NOT claim" line under skills stays in skills."""
+    lines = (text or "").splitlines()
+    head = [ln.strip() for ln in lines[:8]]
+    export_shaped = EXPORT_TITLE in head or any(ln.startswith(EXPORT_BANNER) for ln in head)
+    template = (
+        set()
+        if export_shaped
+        else {ln.strip() for ln in (template_text or "").splitlines() if ln.strip()} | set(LEGACY_TEMPLATE_LINES)
+    )
     fields: dict[str, list[str]] = {}
     unmapped: list[str] = []
-    heading, target = "", None  # None = preamble; "" = an unmapped section
+    notes: list[str] = []
+    heading, target = "", None  # None = preamble; "" = a section with no matching field
 
     def keep(line: str) -> bool:
         s = line.strip()
         return bool(s) and s not in template and s != _NOT_RECORDED
 
-    for raw in (text or "").splitlines():
+    for raw in lines:
         line = raw.rstrip()
-        h2 = re.match(r"^##\s+(.*?)\s*#*\s*$", line)
-        if h2 and not line.startswith("###"):
-            heading = h2.group(1)
-            target = next((f for f, pat in _HEADING_FIELDS if pat.search(heading)), "")
+        h2 = _h2(line)
+        if h2 is not None:
+            field = _heading_field(h2, export_shaped)
+            if field is None and target in SECTIONS:
+                fields.setdefault(target, []).append(line)
+                if not export_shaped:
+                    notes.append(f"'## {h2[:80]}' matches no profile field, so it stays part of {target}")
+                continue
+            heading, target = h2, (field or "")
             if target in SECTIONS and fields.get(target):
                 fields[target].append("")  # a second heading feeding the same field starts a new paragraph
             continue
@@ -760,82 +949,109 @@ def parse_experience(text: str, template_text: str = "") -> tuple[dict[str, str]
             value = pair[1] if pair and pair[1] != _NOT_RECORDED else ""
             if pair and not value:
                 continue  # "Label:" with nothing after it is an unfilled slot, not content
-            field = next((f for f, pat in _IDENTITY_LABELS if pair and pat.search(pair[0])), None)
-            if field:
-                fields.setdefault(field, []).append(value)
+            label = pair[0][:120] if pair else ""
+            matched = [f for f, pat in _IDENTITY_LABELS if pair and pat.search(label)]
+            if "location" in matched and "work_auth" in matched:
+                location, work_auth = _split_location(value)
+                fields.setdefault("location", []).append(location)
+                fields.setdefault("work_auth", []).append(work_auth)
+            elif matched:
+                fields.setdefault(matched[0], []).append(value)
             else:
                 unmapped.append(f"{heading}: {line.strip()}")
             continue
-        if target == "skills":
-            pair = _labelled(line)
-            if pair and _HEADING_FIELDS[0][1].search(pair[0]):  # the template's "Explicitly do NOT claim:"
-                if pair[1] and pair[1] != _NOT_RECORDED:
-                    fields.setdefault("do_not_claim", []).append(pair[1])
-                continue
         if target == "":
             unmapped.append(f"{heading}: {line.strip()}")
             continue
+        if target == "skills" and not export_shaped:
+            pair = _labelled(line)
+            if pair and _HEADING_FIELDS[0][1].search(pair[0][:120]):
+                notes.append(
+                    "skills has a line labelled 'do NOT claim'; it stays in skills — if it's a hard stop, "
+                    "ask the operator and record it in do_not_claim"
+                )
         fields.setdefault(target, []).append(line)
 
     out: dict[str, str] = {}
-    for field, lines in fields.items():
+    for field, got in fields.items():
         if field in IDENTITY_FIELDS:
-            out[field] = " · ".join(dict.fromkeys(lines))
+            out[field] = " · ".join(dict.fromkeys(got))
         else:
-            body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+            body = re.sub(r"\n{3,}", "\n\n", "\n".join(got)).strip()
             if body:
                 out[field] = body
-    return out, unmapped
+    return out, unmapped, notes
 
 
-def import_fields(
-    fields: dict[str, str], *, mode: str = "append", confirm_removal: bool = False, apply: bool = False
-) -> list[dict]:
-    """What importing ``fields`` would do to the profile — and, with ``apply=True``, do it — one
-    row per field: ``{"field", "outcome", "detail"}``.
+class ImportChanged(ValueError):
+    """``apply_import`` was handed a preview that no longer matches what the import would do."""
 
-    Everything goes through ``update_field``, so the import obeys the agent's own rules: sections
-    append (or replace, when asked), dropping a ``do_not_claim`` line needs ``confirm_removal``, an
-    unreadable store raises ``StoreUnreadable``. Identity facts are filled in where the profile has
-    none; one that differs from the profile is kept as-is unless ``mode="replace"``."""
-    if mode not in UPDATE_MODES:
-        raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
-    path = _path()
-    raw, err = _read_json(path)
-    if err or (raw is not None and not isinstance(raw, dict)):
-        raise StoreUnreadable(path, err or "not a JSON object")
-    prof = _normalize(raw) if raw else empty_profile()
+
+def _import_rows(prof: dict, fields: dict[str, str], mode: str, confirm_removal: bool) -> list[dict]:
     rows: list[dict] = []
     for field in list(IDENTITY_FIELDS) + list(SECTIONS):
         text = (fields.get(field) or "").strip()
         if not text:
             continue
-        if field in IDENTITY_FIELDS:
-            old = prof["identity"][field]
-            if old == text:
-                rows.append({"field": field, "outcome": "unchanged", "detail": ""})
-                continue
-            if old and mode == "append":
-                rows.append({"field": field, "outcome": "kept", "detail": f"file says {text!r}, profile keeps {old!r}"})
-                continue
-            outcome, detail = ("replaced" if old else "set"), repr(text)
-        else:
-            old = prof["sections"][field]
-            new = text if mode == "replace" else _appended(old, text)
-            if new == old:
-                rows.append({"field": field, "outcome": "unchanged", "detail": ""})
-                continue
-            dropped = _dropped(old, new)
-            if field in GUARDED_SECTIONS and dropped and not confirm_removal:
-                rows.append(
-                    {"field": field, "outcome": "refused", "detail": f"would remove {len(dropped)} hard stop(s)"}
-                )
-                continue
-            had = set(_lines(old))
-            added = len([ln for ln in _lines(new) if ln not in had])
-            outcome = "set" if not old else ("replaced" if mode == "replace" else "appended")
-            detail = f"{added} new line(s)" + (f", {len(dropped)} removed" if dropped else "")
-        if apply:
-            outcome = update_field(field, text, mode=mode, confirm_removal=confirm_removal)["change"]
-        rows.append({"field": field, "outcome": outcome, "detail": detail})
+        old = prof["identity"].get(field, "") if field in IDENTITY_FIELDS else ""
+        if old and mode == "append" and not _same(old, text):
+            # Append never overwrites an identity fact the profile already holds.
+            rows.append(
+                {
+                    "field": field,
+                    "outcome": "kept",
+                    "old": old,
+                    "new": old,
+                    "added": [],
+                    "dropped": [],
+                    "error": None,
+                    "file": text,
+                }
+            )
+            continue
+        rows.append(_plan(prof, field, text, mode, confirm_removal))
     return rows
+
+
+def _preview_id(source: str, mode: str, confirm_removal: bool, rows: list[dict]) -> str:
+    """Binds an apply to the preview the operator saw: the file's content, the options, and every
+    field's exact outcome and resulting value."""
+    payload = json.dumps([source, mode, bool(confirm_removal), [[r["field"], r["outcome"], r["new"]] for r in rows]])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def plan_import(
+    fields: dict[str, str], *, mode: str = "append", confirm_removal: bool = False, source: str = ""
+) -> tuple[list[dict], str]:
+    """What importing ``fields`` would do, field by field, plus the ``preview_id`` that
+    ``apply_import`` needs to do exactly that. Writes nothing. ``source`` identifies the file's
+    content (a hash), so an edit to the file after the preview invalidates it."""
+    if mode not in UPDATE_MODES:
+        raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
+    rows = _import_rows(_load_strict(), fields, mode, confirm_removal)
+    return rows, _preview_id(source, mode, confirm_removal, rows)
+
+
+def apply_import(
+    fields: dict[str, str], *, preview_id: str, mode: str = "append", confirm_removal: bool = False, source: str = ""
+) -> list[dict]:
+    """Do exactly what the preview ``preview_id`` showed — or nothing. Re-plans under the profile
+    lock and raises ``ImportChanged`` if the file, the profile, ``mode`` or ``confirm_removal`` no
+    longer give the same result; otherwise writes every planned field in ONE save, so the ``.bak``
+    it leaves is the whole pre-import profile and one restore undoes the import."""
+    if mode not in UPDATE_MODES:
+        raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
+    with _locked():
+        prof = _load_strict()
+        rows = _import_rows(prof, fields, mode, confirm_removal)
+        if not preview_id or _preview_id(source, mode, confirm_removal, rows) != preview_id:
+            raise ImportChanged(
+                "the file, the profile, mode or confirm_removal changed since that preview, so nothing was "
+                "written — preview again and show the operator what it would do now."
+            )
+        writes = [r for r in rows if r["outcome"] in ("set", "appended", "replaced")]
+        for r in writes:
+            prof["identity" if r["field"] in IDENTITY_FIELDS else "sections"][r["field"]] = r["new"]
+        if writes:
+            save_profile(prof)
+        return rows

@@ -174,7 +174,8 @@ careercoach-plugin/
   `applications.json` — so the dev sandbox, each fleet member and a container's volume keep their own.
   (v0.6 used `~/.protoagent/careercoach/<instance>/`; a store found there is copied forward once and the
   old folder gets a `MIGRATED-TO` note. The old files stay put for a rollback, but they're never adopted
-  again, so wiping the new store really does start over.) It reaches the model every call as an
+  again, so wiping the new store really does start over — and if you restore the machine from a pre-0.7
+  backup, that note is already there, so copy those files across by hand, or delete the note.) It reaches the model every call as an
   `<operator_profile>` block
   via plugin middleware (ADR 0032), carrying an explicit **completeness** picture: what's known, what's
   missing, how much of the picture exists. That's what stops the coach re-interviewing for facts it already
@@ -183,10 +184,21 @@ careercoach-plugin/
 - **One rule for the career record: the profile is the single source of truth.** Everything that reads
   your history — the always-on block, `careercoach_read_profile("experience")`, the drafting and scoring
   crew — reads the profile, and nothing reads `Resume/Experience.md` as a source. That file takes part in
-  two explicit, one-way moves: **import** (`careercoach_import_experience` parses what you wrote, skipping
-  the template's hint text, previews it, and records it through the same append/replace and `do_not_claim`
-  rules as the agent once you confirm) and **export** (`careercoach_export_experience` writes a snapshot to
-  `Resume/Experience (profile export).md`). The coach never writes `Experience.md` itself.
+  two explicit, one-way moves: **import** and **export** (`careercoach_export_experience` writes a snapshot
+  to `Resume/Experience (profile export).md`). The coach never writes `Experience.md` itself.
+- **The import is previewed, then bound to that preview.** `careercoach_import_experience` parses what you
+  wrote (by its headings, skipping the template's hint text and anything already recorded), shows the exact
+  lines it would add or remove, and hands back a `preview_id`. Applying takes that id and is refused if the
+  file, the profile or the options changed since — so what you approve is what gets written. It writes
+  through the profile's own rules: sections merge line by line (a bullet you added under a role lands under
+  that role, and re-importing an unedited file changes nothing), a `do_not_claim` line can't be dropped
+  without your say-so, and everything lands in one save, so one `.bak` restore undoes the whole import.
+  Nothing is moved between sections: a heading the profile doesn't know stays in the section it sits in, and
+  the import says so.
+- **Nothing can quietly fill every model call.** `do_not_claim` rides in front of the model in full, so it's
+  capped (3,000 characters), identity facts are one line each (500), and the narrative sections are capped
+  too (20,000) — a write past a cap is refused with the reason, and the always-on block clips anything an
+  older version stored. One import of a pasted job posting used to put ~80k tokens in every turn.
 - **The block is a per-call frame, never state.** It's appended to the request with `wrap_model_call` —
   the host's own contract for derived context (ADR 0108 D2) — so it's never checkpointed and there's exactly
   one copy per call. The system prompt is untouched and the frame sits after the host's cache breakpoints,
@@ -208,8 +220,9 @@ careercoach-plugin/
   deliverable at 16 em-dashes per 1000 words against the operator's stated limit of 3, carrying a phrase
   they'd explicitly retired. A rule that only binds when you enter through the front door isn't a rule, so
   it now rides in the always-on block alongside the `do_not_claim` guardrails.
-- **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts `experience` and
-  `story-bank` — the candidate's own files. The discipline files it's *bound by* (experience-reviewer,
+- **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts only `story-bank`
+  (`Experience.md` is the operator's own, and reaches the profile by import). The discipline files it's
+  *bound by* (experience-reviewer,
   Humanize, the improvements log) are read-only to the agent by design, and the profile's `do_not_claim`
   hard stops can be added to freely but not dropped or reworded without `confirm_removal=true` — the
   operator's explicit say-so. Profile values are defanged before injection, so recorded text can't close

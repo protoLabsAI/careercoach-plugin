@@ -8,7 +8,8 @@
 
 ## Identity
 - **Name:**
-- **Location / work authorization:**
+- **Location:**
+- **Work authorization:**
 - **Contact:** email · phone · LinkedIn · portfolio/GitHub
 - **Headline(s):** 2-3 role-type framings you'd accept (e.g. "Technical PM", "ML Eng")
 
@@ -34,7 +35,9 @@ _(Duplicate the block above per role. Older roles can be terser.)_
 - **Expert / can lead on:**
 - **Proficient / independent:**
 - **Familiar / supervised:**
-- **Explicitly do NOT claim:** _(guards against overreach in tailoring)_
+
+## Never claim on my behalf
+- _(the lines that would fail an interview backtrack — e.g. "never imply I managed people")_
 
 ## Notes for tailoring
 - Roles you're targeting; industries to lean into / avoid.

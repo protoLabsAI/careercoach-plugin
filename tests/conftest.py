@@ -69,16 +69,17 @@ def iso(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def profile(plugin):
-    """The plugin's ``profile`` module (fresh per test — ``load_plugin`` purges submodules)."""
+def profile(plugin, iso):
+    """The plugin's ``profile`` module (fresh per test — ``load_plugin`` purges submodules), with
+    ``iso`` in force so a test can never resolve the real store."""
     import importlib
 
     return importlib.import_module(plugin.__name__ + ".profile")
 
 
 @pytest.fixture
-def state(plugin):
-    """The plugin's ``state`` module (the application tracker)."""
+def state(plugin, iso):
+    """The plugin's ``state`` module (the application tracker), isolated by ``iso``."""
     import importlib
 
     return importlib.import_module(plugin.__name__ + ".state")

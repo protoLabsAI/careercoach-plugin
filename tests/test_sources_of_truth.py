@@ -10,7 +10,7 @@ second review are ported here to that rule.
 
 from __future__ import annotations
 
-import shutil
+import re
 from pathlib import Path
 
 import yaml
@@ -37,7 +37,18 @@ def _seed_profile(profile):
 
 
 def _experience(iso) -> Path:
-    return iso / "ws" / "Resume" / "Experience.md"
+    path = iso / "ws" / "Resume" / "Experience.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _import(tools, **kw) -> tuple[str, str]:
+    """Preview, then apply exactly that preview — the flow the tool documents. ``(preview, applied)``."""
+    preview = tools["careercoach_import_experience"].invoke(dict(kw))
+    found = re.search(r"preview_id='([0-9a-f]+)'", preview)
+    if not found:
+        return preview, ""
+    return preview, tools["careercoach_import_experience"].invoke({**kw, "apply": True, "preview_id": found.group(1)})
 
 
 # ── reading: always the profile ───────────────────────────────────────────────────────
@@ -73,7 +84,7 @@ def test_a_profile_update_reaches_the_drafting_read_path(tools, profile, iso):
     tools["careercoach_init_workspace"].invoke({})
     _seed_profile(profile)
     _experience(iso).write_text(RICH, encoding="utf-8")
-    tools["careercoach_import_experience"].invoke({"apply": True})
+    _import(tools)
 
     profile.update_field("roles", "### Staff Engineer, Initech 2024-now")  # a new job, recorded in chat
 
@@ -110,109 +121,8 @@ def test_an_empty_profile_is_never_papered_over_with_the_file(tools, iso):
     assert "840ms" not in out and "careercoach_import_experience" in out  # it points at the import instead
 
 
-# ── the import: Experience.md → profile, previewed, under the profile's own rules ─────
-TEMPLATE_FILLED = """# Experience — source of truth
-
-> An old banner.
-
-## Identity
-- **Name:** Grace Hopper
-- **Location / work authorization:** Arlington, VA
-- **Contact:** grace@navy.example
-- **Headline(s):** 2-3 role-type framings you'd accept (e.g. "Technical PM", "ML Eng")
-
-## Roles (most recent first)
-
-### Rear Admiral — US Navy · 1983–1986
-- **Scope:** Navy-wide data automation.
-- **Tools / methods:** the stack, frameworks, and practices you actually used hands-on.
-
-_(Duplicate the block above per role. Older roles can be terser.)_
-
-## Education
-- **PhD, Mathematics** — Yale, 1934.
-
-## Certifications & credentials
-- <Cert> — <issuer>, <year>. (Link if verifiable.)
-
-## Skills inventory (be honest about level)
-- **Expert / can lead on:** COBOL, compilers
-- **Proficient / independent:**
-- **Explicitly do NOT claim:** Never claim hardware design.
-
-## Publications
-- A Manual of Operation for the Automatic Sequence Controlled Calculator (1946)
-"""
-
-
-def test_import_previews_then_applies_only_what_the_operator_wrote(tools, profile, iso):
-    tools["careercoach_init_workspace"].invoke({})
-    _experience(iso).write_text(TEMPLATE_FILLED, encoding="utf-8")
-
-    preview = tools["careercoach_import_experience"].invoke({})
-    assert preview.startswith("Import preview — nothing written yet") and "apply=true" in preview
-    assert profile.completeness()["empty"], "a preview must not write"
-    assert "A Manual of Operation" in preview  # an unmapped section is raised, not guessed into a field
-
-    applied = tools["careercoach_import_experience"].invoke({"apply": True})
-    assert applied.startswith("Imported")
-    prof = profile.load_profile()
-    assert prof["identity"]["name"] == "Grace Hopper"
-    assert prof["identity"]["location"] == "Arlington, VA"
-    assert prof["identity"]["contact"] == "grace@navy.example"
-    assert prof["identity"]["headlines"] == ""  # still the template's hint text: not the operator's
-    assert "### Rear Admiral — US Navy" in prof["sections"]["roles"] and "Navy-wide" in prof["sections"]["roles"]
-    assert "actually used hands-on" not in prof["sections"]["roles"]  # template hint lines dropped
-    assert prof["sections"]["education"] == "- **PhD, Mathematics** — Yale, 1934."
-    assert "COBOL" in prof["sections"]["skills"] and "do NOT" not in prof["sections"]["skills"]
-    assert prof["sections"]["do_not_claim"] == "Never claim hardware design."  # the template's DNC slot
-
-
-def test_import_obeys_append_replace_and_the_hard_stops(tools, profile, iso):
-    tools["careercoach_init_workspace"].invoke({})
-    _seed_profile(profile)
-    exp = _experience(iso)
-    exp.write_text(
-        "## Identity\n- **Name:** Ada King\n\n## Roles\n### Analyst, Engine Co 1842-1843\n- Wrote Note G, corrected\n\n"
-        "## Lines never to claim\n- No Nobel\n",
-        encoding="utf-8",
-    )
-
-    # append (default): the differing name is kept, roles and hard stops only grow.
-    tools["careercoach_import_experience"].invoke({"apply": True})
-    prof = profile.load_profile()
-    assert prof["identity"]["name"] == "Ada Lovelace"
-    assert "- Wrote Note G\n" in prof["sections"]["roles"] + "\n" and "corrected" in prof["sections"]["roles"]
-    assert prof["sections"]["do_not_claim"] == "- No PhD\n\n- No Nobel"
-
-    # replace: sections match the file — except a hard stop still needs the operator's say-so.
-    out = tools["careercoach_import_experience"].invoke({"apply": True, "mode": "replace"})
-    prof = profile.load_profile()
-    assert prof["identity"]["name"] == "Ada King"
-    assert prof["sections"]["roles"] == "### Analyst, Engine Co 1842-1843\n- Wrote Note G, corrected"
-    assert "do_not_claim: refused" in out and "No PhD" in prof["sections"]["do_not_claim"]
-    tools["careercoach_import_experience"].invoke({"apply": True, "mode": "replace", "confirm_removal": True})
-    assert profile.load_profile()["sections"]["do_not_claim"] == "- No Nobel"
-
-
-def test_importing_the_export_back_changes_nothing(tools, profile, iso):
-    """A copy of the export dropped into Experience.md is recognised by content, not by banner:
-    everything in it is already in the profile."""
-    _seed_profile(profile)
-    tools["careercoach_export_experience"].invoke({})
-    export = iso / "ws" / "Resume" / "Experience (profile export).md"
-    shutil.copyfile(export, _experience(iso))
-    before = profile._path().read_bytes()
-
-    out = tools["careercoach_import_experience"].invoke({"apply": True})
-
-    assert "Nothing new to import" in out and profile._path().read_bytes() == before
-
-
-def test_import_with_nothing_to_import(tools, iso):
-    assert "nothing to import" in tools["careercoach_import_experience"].invoke({})
-    tools["careercoach_init_workspace"].invoke({})
-    assert "untouched template" in tools["careercoach_import_experience"].invoke({})
+# (The import's own mechanics — preview/apply, the parser, the caps — are in
+# tests/test_import_experience.py.)
 
 
 # ── the export: profile → its own file, never over Experience.md ──────────────────────

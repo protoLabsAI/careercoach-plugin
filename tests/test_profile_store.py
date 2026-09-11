@@ -361,7 +361,7 @@ def test_a_reader_never_sees_a_torn_profile(profile, iso, monkeypatch):
     def writer():
         i = 0
         while not stop.is_set():
-            profile.update_field("roles", ("- line\n" * 4000) + str(i), mode="replace")
+            profile.update_field("roles", ("- line\n" * 2000) + str(i), mode="replace")  # big, under the cap
             i += 1
 
     def reader():

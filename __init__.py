@@ -29,6 +29,7 @@ the core register anyway).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from langchain_core.tools import tool
@@ -143,6 +144,20 @@ def _register_jobsearch_tool(registry, cfg) -> None:
         return f"Found {len(jobs)} role(s):\n" + "\n".join(lines) + "\n\nWant me to evaluate fit or track any of these?"
 
     registry.register_tool(careercoach_search_jobs)
+
+
+def _import_detail(row: dict) -> str:
+    """One line saying what an import row would do — the numbers come from the same plan that
+    writes, so the preview can't promise one thing and write another."""
+    if row["outcome"] == "kept":
+        return f"file says {row['file']!r}, profile keeps {row['old']!r}"
+    if row["error"] is not None:
+        return str(row["error"]).split("\n", 1)[0]
+    if row["outcome"] == "unchanged":
+        return ""
+    if row["field"] in ("name", "location", "work_auth", "contact", "headlines"):
+        return f"{row['new']!r}" + (f" (was {row['old']!r})" if row["old"] else "")
+    return f"{len(row['added'])} new line(s)" + (f", {len(row['dropped'])} removed" if row["dropped"] else "")
 
 
 # ── the role-packet workspace: scaffold + write + assemble (the gated resume flow) ─
@@ -285,7 +300,7 @@ def _register_packet_tools(registry, cfg) -> None:
             res = packet.read_source(root, "experience", templates_dir)
             if res["exists"]:
                 tpl = templates_dir / packet.SOURCES["experience"]
-                fields, _ = profile.parse_experience(
+                fields, _, _ = profile.parse_experience(
                     res["text"], tpl.read_text(encoding="utf-8") if tpl.is_file() else ""
                 )
                 if fields:
@@ -317,42 +332,63 @@ def _register_packet_tools(registry, cfg) -> None:
         return res["text"]
 
     @tool
-    def careercoach_import_experience(apply: bool = False, mode: str = "append", confirm_removal: bool = False) -> str:
+    def careercoach_import_experience(
+        apply: bool = False, preview_id: str = "", mode: str = "append", confirm_removal: bool = False
+    ) -> str:
         """Bring the operator's own Resume/Experience.md into their profile — the only way that
         file's content reaches you (the profile is the single source of truth; nothing reads
         Experience.md directly). Use it in /setup-coach when they already keep one, and whenever
-        they say they've edited it. Call it first WITHOUT `apply`: it previews, field by field, what
-        would change (the template's hint text, and anything already in the profile, is skipped).
-        Show the operator the preview, and only after they confirm call again with `apply=true`.
-        Sections append by default; `mode="replace"` makes each imported section match the file
-        (for corrections they made there). Dropping a `do_not_claim` line still needs
-        `confirm_removal=true`, and only on their explicit say-so."""
+        they say they've edited it.
+
+        Call it first WITHOUT `apply`: it writes nothing and shows, field by field, the exact lines
+        it would add or remove (the template's hint text, and anything already in the profile, is
+        skipped), ending with a `preview_id`. Show that to the operator. Only after they confirm,
+        call again with `apply=true` and that `preview_id` — the apply does exactly what they saw,
+        and refuses if the file, the profile, `mode` or `confirm_removal` changed since. Sections
+        append by default, merging in only the lines that are missing; `mode="replace"` makes each
+        imported section match the file (for corrections they made there). Dropping a
+        `do_not_claim` line still needs `confirm_removal=true`, on their explicit say-so."""
         root = packet.resolve_root(_root())
         res = packet.read_source(root, "experience", templates_dir)
         if not res["exists"]:
             return f"No Resume/Experience.md at {res['path']} — nothing to import."
         tpl = templates_dir / packet.SOURCES["experience"]
-        fields, unmapped = profile.parse_experience(
+        fields, unmapped, notes = profile.parse_experience(
             res["text"], tpl.read_text(encoding="utf-8") if tpl.is_file() else ""
         )
         if not fields and not unmapped:
             return f"{res['path']} is still the untouched template — nothing to import."
+        source = hashlib.sha256(res["text"].encode("utf-8")).hexdigest()
+        pid = ""
         try:
-            rows = profile.import_fields(fields, mode=mode, confirm_removal=confirm_removal, apply=apply)
+            if apply:
+                if not preview_id:
+                    return (
+                        "Not imported: an apply needs the preview_id from a preview the operator has seen. "
+                        "Call this without apply, show them what it would change, and pass the preview_id it gives."
+                    )
+                rows = profile.apply_import(
+                    fields, preview_id=preview_id, mode=mode, confirm_removal=confirm_removal, source=source
+                )
+            else:
+                rows, pid = profile.plan_import(fields, mode=mode, confirm_removal=confirm_removal, source=source)
         except (ValueError, PermissionError, profile.StoreUnreadable) as e:
             return f"Not imported: {e}"
+
         head = "Imported" if apply else "Import preview — nothing written yet"
         lines = [f"{head} (mode={mode}) from {res['path']}:"]
-        lines += [f"  {r['field']}: {r['outcome']}" + (f" — {r['detail']}" if r["detail"] else "") for r in rows]
+        for r in rows:
+            lines.append(f"  {r['field']}: {r['outcome']}" + (f" — {_import_detail(r)}" if _import_detail(r) else ""))
+            lines += [f"      + {ln.strip()[:160]}" for ln in r["added"][:8]]
+            lines += [f"      - {ln[:160]}" for ln in r["dropped"][:8]] if r["outcome"] == "replaced" else []
+            if len(r["added"]) > 8 or (r["outcome"] == "replaced" and len(r["dropped"]) > 8):
+                lines.append("      …")
         if not rows:
             lines.append("  (nothing in it maps to a profile field)")
+        lines += [f"  note: {n}" for n in dict.fromkeys(notes)]
         outcomes = {r["outcome"] for r in rows}
         if "kept" in outcomes:
             lines.append("'kept' = the file differs from the profile; mode='replace' takes the file's version.")
-        if "refused" in outcomes:
-            lines.append(
-                "'refused' = it would drop do_not_claim hard stops: only with their explicit say-so (confirm_removal=true)."
-            )
         if unmapped:
             lines.append(
                 f"Not imported — {len(unmapped)} line(s) match no profile field; raise them with the operator "
@@ -362,7 +398,9 @@ def _register_packet_tools(registry, cfg) -> None:
         if outcomes == {"unchanged"}:
             lines.append("Nothing new to import: the profile already has everything the file says.")
         elif not apply and outcomes & {"set", "appended", "replaced"}:
-            lines.append("Show the operator this preview; if they confirm, call again with apply=true.")
+            lines.append(
+                f"Show the operator this preview; if they confirm, call again with apply=true, preview_id={pid!r}."
+            )
         if apply:
             cov = profile.completeness()
             lines.append(f"Profile now {cov['filled']}/{cov['total']} fields.")

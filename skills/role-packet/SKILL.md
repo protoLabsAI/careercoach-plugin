@@ -48,7 +48,8 @@ The output is a real folder tree the user can open and edit:
   workspace is not). It always returns the operator profile, never the workspace
   `Resume/Experience.md`. If it says no profile is recorded, **stop**: run `/setup-coach` (or
   interview the user yourself), and if they keep their own Experience.md, bring it in with
-  `careercoach_import_experience` (preview, then `apply=true` once they confirm). Drafting from an
+  `careercoach_import_experience` (preview, then `apply=true` with its `preview_id` once they
+  confirm). Drafting from an
   empty record means inventing a career, which this flow forbids. A fact they give you mid-packet
   goes into the profile with `careercoach_update_profile` before you use it.
 - The reference files live in two places: the **per-candidate** ones, read with
