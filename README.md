@@ -22,7 +22,7 @@ forking core.
   CV in your workspace, a resume PDF you've shared) so it never asks for what it already has.
 - **See what it knows.** The **Career Coach** console panel lists every field the coach holds, every one
   still missing, and — behind a disclosure — the exact block it's told each turn. Your record, visible to you,
-  not a file you have to go find.
+  not a file you have to go find. The panel is read-only: to change anything, tell the coach in chat.
 
 **Coaching (the default):**
 - **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
@@ -60,7 +60,7 @@ Every protoAgent extension surface, in one plugin:
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
 | **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_get_profile` / `careercoach_update_profile` / `careercoach_export_experience` (the operator profile) |
-| **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, appended to the turn's context tail without clobbering the host's own injection |
+| **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, delivered on every model call as an ephemeral context frame (`wrap_model_call`, the host's ADR 0108 D2 contract) |
 | **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
 | **Background surface + watchdog** (ADR 0018) | `register_surface` + `graph.sdk.supervise` | the opt-in job-watch — a supervised loop that scans, records new matches, and emits an event |
 | **Goal verifier** (ADR 0028/0067) | `register_goal_verifier` | `careercoach:new_matches` — arm a **WATCH** on your pipeline with `create_watch` |
@@ -81,6 +81,7 @@ careercoach-plugin/
 ├─ __init__.py                # register(): tools + knobs + crew + dashboard + the job-watch
 ├─ rubric.py                  # the weighted fit rubric — pure, tested
 ├─ state.py                   # the application tracker — instance-scoped JSON, tested
+├─ profile.py                 # the operator profile + the shared store (instance root, lock, atomic write)
 ├─ jobsource.py               # live job search (JSearch / Remotive) — parsers + prescore, tested
 ├─ watch.py                   # the background-watch matcher — pure, tested
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
@@ -129,7 +130,8 @@ careercoach-plugin/
   `Agent/story-bank.md`, reviewer + Humanize rules, an improvements log — and never clobbers your edits.
   These are plain markdown: the coach reads and writes them through `careercoach_read_profile` /
   `careercoach_write_profile`, and you can open and edit them directly at any time. If you'd rather fill
-  `Experience.md` in yourself, do that instead of the interview — the coach reads whichever you produce.
+  `Experience.md` in yourself, do that instead of the interview — once it's filled in it's what the coach
+  reads (it wins over the profile), and nothing the coach generates ever writes over it.
 - **Native Word (`.docx`) export.** Set **Settings → Career Coach → Document format = `docx`** and the CV +
   cover letter are produced as real, editable **Word files** (saved as versioned, downloadable artifacts)
   instead of HTML→PDF. **This path builds the document by running Python (`python-docx`), so it requires:**
@@ -168,18 +170,32 @@ careercoach-plugin/
   is the floor because that's where `execute_code` gained a **managed Python runtime** (ADR 0094) —
   provisioned on first use; before it, code execution was unavailable on the packaged app entirely.
 - **The operator profile is state, not a document — and it's always in front of the model.** Who the coach
-  works for lives in a structured `profile.json` (`profile.py`, same instance-scoped convention as the
-  tracker), injected every turn as an `<operator_profile>` block via plugin middleware (ADR 0032). It
-  carries an explicit **completeness** picture: what's known, what's missing, how much of the picture
-  exists. That's what stops the coach re-interviewing for facts it already holds — a real first run was
-  abandoned partway through for exactly that reason, because a recall tool can't help an agent that
-  doesn't already suspect there's something to recall. `Resume/Experience.md` is now a **generated export** you can hand to
-  anyone, written from the profile and never read back as truth.
-- **The injection appends; it never replaces.** `state["context"]` is a plain `str` channel with no reducer,
-  and plugin middleware runs *after* `KnowledgeMiddleware` — so returning a bare `{"context": …}` would
-  silently wipe the memory digest, hot memory, RAG hits and skill index. The middleware concatenates and
-  adds its own `context_sections` entry so the prompt viewer still attributes each part. There's a test
-  that fails if that regresses.
+  works for lives in a structured `profile.json` (`profile.py`) in the plugin's per-instance store —
+  `<instance_root>/careercoach/`, via the host's `graph.sdk.plugin_store`, beside the tracker's
+  `applications.json` — so the dev sandbox, each fleet member and a container's volume keep their own.
+  (v0.6 used `~/.protoagent/careercoach/<instance>/`; a store found only there is copied forward on first
+  load, and the old file is left in place.) It reaches the model every call as an `<operator_profile>` block
+  via plugin middleware (ADR 0032), carrying an explicit **completeness** picture: what's known, what's
+  missing, how much of the picture exists. That's what stops the coach re-interviewing for facts it already
+  holds — a real first run was abandoned partway through for exactly that reason, because a recall tool
+  can't help an agent that doesn't already suspect there's something to recall.
+- **One rule for the career record: generated output never overwrites yours.** `Resume/Experience.md` is
+  your document — only you, or `careercoach_write_profile` with your confirmation, write it.
+  `careercoach_export_experience` writes its snapshot to `Resume/Experience (profile export).md`, never over
+  Experience.md. `careercoach_read_profile("experience")` returns your Experience.md once you've filled it in
+  (it wins where it and the profile differ) and the profile until then — so a filled-in profile never reads
+  as "run /setup-coach".
+- **The block is a per-call frame, never state.** It's appended to the request with `wrap_model_call` —
+  the host's own contract for derived context (ADR 0108 D2) — so it's never checkpointed and there's exactly
+  one copy per call. The system prompt is untouched and the frame sits after the host's cache breakpoints,
+  so it can't cost prompt caching. (v0.6 wrote it to a `context` state channel that protoAgent v0.155.0
+  removed, so it silently stopped arriving — the test now drives a real `create_agent` and asserts on what
+  the model receives.) The subagents the host builds without plugin middleware — `job_evaluator` and
+  `application_writer` — read the profile through the profile tools instead.
+- **The profile can't be lost to one bad write.** Writes are serialized (a thread lock everywhere, plus
+  `flock` across processes on POSIX) and atomic; every successful write also refreshes `profile.json.bak`.
+  A write that finds the file unreadable refuses instead of saving one field over everything else, and the
+  agent and panel say why. Sections append by default, so recording roles one at a time keeps them all.
 - **Transparency is the differentiator.** The console panel shows every field held, every field missing, and
   the verbatim block the agent receives. The person being described should never have to open a file in
   Finder to see their own record.
@@ -190,7 +206,10 @@ careercoach-plugin/
   it now rides in the always-on block alongside the `do_not_claim` guardrails.
 - **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts `experience` and
   `story-bank` — the candidate's own files. The discipline files it's *bound by* (experience-reviewer,
-  Humanize, the improvements log) are read-only to the agent by design.
+  Humanize, the improvements log) are read-only to the agent by design, and the profile's `do_not_claim`
+  hard stops can be added to freely but not dropped or reworded without `confirm_removal=true` — the
+  operator's explicit say-so. Profile values are defanged before injection, so recorded text can't close
+  the `<operator_profile>` block and speak as it.
 - **"Seeded" is not "filled in."** `read_source` compares the workspace copy against the shipped template
   instead of sniffing for placeholder syntax — the templates are full of realistic-looking hint text, so
   any "looks empty" heuristic gets it wrong. An untouched template reports as unfilled and the coach
@@ -225,7 +244,8 @@ Building this surfaced protoAgent SDK/DX feedback, filed as issues on the host r
   smoke test, because `graph.subagents.config.SubagentConfig` isn't in the testkit's default host
   stubs (the import raises before `register()` can wire it). We guard for it here (`_register_subagents`),
   but the scaffolder encourages subagents, so the default stubs should include a permissive
-  `SubagentConfig` (and `Knobs` / `make_knob_tools`). *(Filed as [protoAgent #1764](https://github.com/protoLabsAI/protoAgent/issues/1764).)*
+  `SubagentConfig` (and `Knobs` / `make_knob_tools`). *(Filed as [protoAgent #1764](https://github.com/protoLabsAI/protoAgent/issues/1764),
+  since fixed: the testkit ships record-only stand-ins for both, and this repo's vendored copy has them.)*
 - **Missing seam** — this plugin ships a recommended persona ([`SOUL.md`](./SOUL.md)), but there's no
   host mechanism to *offer* it: `register_*` has no persona hook and the manifest has no key, so adopting
   it is a manual copy. The fix has to stay opt-in / load-on-demand (like `load_skill`) and must never

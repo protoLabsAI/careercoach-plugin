@@ -109,18 +109,83 @@ class _StubModule(types.ModuleType):
         return _raise_unpatched(f"{self.__name__}.{item}")
 
 
+# Some host seams a plugin doesn't just IMPORT but CALLS at register() time — it constructs a
+# ``SubagentConfig`` and builds knob tools while wiring the registry. Those can't be the
+# raise-when-called placeholder (that turns a scaffolded plugin's own smoke test red before it
+# writes a line — #1764); they need permissive, RECORD-ONLY stand-ins that run host-free while
+# keeping the contribution assertable.
+
+
+class _StubSubagentConfig:
+    """Stand-in for ``graph.subagents.config.SubagentConfig`` — stores every kwarg as an
+    attribute, so ``registry.register_subagent(SubagentConfig(name=..., ...))`` runs with no
+    host and the captured config stays assertable (``reg.subagents[0].name``)."""
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class _StubKnobs:
+    """Chainable no-op stand-in for ``graph.knobs.Knobs`` (re-exported from ``graph.sdk``):
+    ``define``/``preset`` record the declaration and return ``self`` so a plugin's fluent knob
+    setup runs host-free; the reads mirror the real surface so an engine that reads a default
+    back at register() time still works (and the record stays assertable)."""
+
+    def __init__(self, *_a, **_k):
+        self.defined: dict = {}
+        self.defined_presets: dict = {}
+
+    def define(self, name=None, default=None, **_k) -> "_StubKnobs":
+        if name is not None:
+            self.defined[name] = default
+        return self
+
+    def preset(self, name=None, overrides=None, **_k) -> "_StubKnobs":
+        if name is not None:
+            self.defined_presets[name] = dict(overrides or {})
+        return self
+
+    def get(self, name):
+        return self.defined.get(name)
+
+    def values(self) -> dict:
+        return dict(self.defined)
+
+    def presets(self) -> dict:
+        return dict(self.defined_presets)
+
+
+def _make_knob_tools(
+    knobs=None, *, prefix: str = "knobs", show: bool = True, tune: bool = True, presets: bool = True, **_k
+) -> list:
+    """Stand-in for ``graph.knobs.make_knob_tools`` — returns one harmless, record-only stub
+    tool per enabled control, named like the real ``<prefix>_knobs`` / ``_tune`` / ``_preset``,
+    so a plugin can ``registry.register_tools(make_knob_tools(...))`` with no host and the tool
+    contribution stays assertable (instead of the old raise-when-called placeholder)."""
+    made: list = []
+    for enabled, suffix in ((show, "knobs"), (tune, "tune"), (presets, "preset")):
+        if enabled:
+            made.append(types.SimpleNamespace(name=f"{prefix}_{suffix}"))
+    return made
+
+
 # Default host surface, derived from what real plugins import (spacetraders, project_board,
 # notes, …). `extra` lets a plugin add its own; anything already importable is left alone.
 def _default_stubs() -> dict:
     return {
         "graph": {},
-        "graph.sdk": {},  # run_subagent / subagent_types / config / complete
+        # Knobs/make_knob_tools are CALLED at register() time, so they're real stand-ins (not
+        # raise-when-called); the rest (run_subagent / subagent_types / config / complete) stay
+        # raise-unpatched placeholders — patch them in a test that exercises the model seam.
+        "graph.sdk": {"Knobs": _StubKnobs, "make_knob_tools": _make_knob_tools},
         "graph.config": {"LangGraphConfig": type("LangGraphConfig", (), {})},
         "graph.config_io": {"secrets_yaml_path": lambda: Path("config/secrets.yaml")},
         "graph.goals": {},
         "graph.goals.types": {
             "VerifyResult": type("VerifyResult", (), {"__init__": lambda self, **kw: self.__dict__.update(kw)})
         },
+        "graph.subagents": {},
+        "graph.subagents.config": {"SubagentConfig": _StubSubagentConfig},
         "knowledge": {},
         "knowledge.store": {"KnowledgeStore": type("KnowledgeStore", (), {})},
     }
@@ -198,6 +263,7 @@ class FakeRegistry:
         self.tools: list = []
         self.routers: list = []
         self.surfaces: list = []
+        self.surface_specs: dict = {}  # name -> (start, stop, reload) — assert lifecycle wiring
         self.subagents: list = []
         self.middlewares: list = []
         self.mcp_servers: list = []
@@ -205,21 +271,43 @@ class FakeRegistry:
         self.skill_dirs: list = []
         self.workflow_dirs: list = []
         self.verifiers: dict = {}
+        self.verifier_meta: dict = {}
+        self.work_providers: dict = {}
+        self.work_provider_meta: dict = {}
         self.goal_hooks: list = []
         self.watch_hooks: list = []
+        self.lifecycle_hooks: list = []
         self.knowledge_stores: dict = {}
         self.embedders: dict = {}
         self.chat_commands: dict = {}  # slugified token -> handler
         self.late_tool_factories: list = []
+        self.saved_media: list = []  # (data, mime, meta) — save_media captures (#1929)
         self.handlers: dict = {}  # topic -> [handlers]
         self.emitted: list = []  # (topic, data)
         self.navigations: list = []
         self.thread_id_resolver = None
+        self.setup_gaps: dict[str, str] = {}  # key -> message reported via report_setup_gap
+        self.setup_gap_actions: dict = {}  # key -> raw action passed alongside a gap (unvalidated capture)
 
     def live_config(self) -> dict:
         """The real registry re-reads host state here; with no host that falls back to
         the register-time snapshot — which is all the fake has."""
         return self.config
+
+    def report_setup_gap(self, key: str, message: str | None, *, label: str | None = None, action=None) -> None:
+        """Records what the plugin reported (``self.setup_gaps[key]``; ``None`` clears) so a
+        smoke test can assert a preflight found — or cleared — its gap. The real
+        registry forwards to the operator-status warnings seam. ``action`` mirrors the host
+        signature (a declarative remediation hint); the raw value is captured on
+        ``self.setup_gap_actions[key]`` so a plugin test can assert it passed one, while the
+        host does the real bounds/allowlist validation."""
+        if message is None or not str(message).strip():
+            self.setup_gaps.pop(key, None)
+            self.setup_gap_actions.pop(key, None)
+        else:
+            self.setup_gaps[key] = str(message).strip()
+            if action is not None:
+                self.setup_gap_actions[key] = action
 
     # contributions
     def register_tool(self, tool) -> None:
@@ -231,13 +319,13 @@ class FakeRegistry:
     def register_chat_command(self, name: str, handler) -> None:
         """Capture a user-only ``/<name>`` control command — with the real registry's
         slugify + validation, so a registration the host would refuse (empty/unslugifiable
-        name, non-callable handler, the reserved core token ``goal``, a duplicate token)
-        fails the test instead of shipping green. Live those are warn-and-skip; here they
-        raise (see the class docstring)."""
+        name, non-callable handler, a reserved core token ``goal``/``lifecycle``, a
+        duplicate token) fails the test instead of shipping green. Live those are
+        warn-and-skip; here they raise (see the class docstring)."""
         token = _slugify_slash(name)
         if not token or not callable(handler):
             raise ValueError(f"register_chat_command needs a name + callable: {name!r} / {handler!r}")
-        if token == "goal":  # reserved core token — mirrors PluginRegistry
+        if token in ("goal", "lifecycle"):  # reserved core tokens — mirrors PluginRegistry (ADR 0074)
             raise ValueError(f"chat command /{token} is reserved")
         if token in self.chat_commands:
             raise ValueError(f"chat command /{token} registered twice")
@@ -247,7 +335,12 @@ class FakeRegistry:
         self.routers.append((prefix, router))
 
     def register_surface(self, start, stop=None, name: str | None = None, reload=None) -> None:
+        # Keep `surfaces` (names) for existing name-only assertions, AND capture the
+        # start/stop/reload callables so a smoke test can actually exercise a surface's
+        # lifecycle wiring (#1729) — e.g. call `start` and assert it armed its watches.
+        # Keyed by the effective name (name or plugin_id), mirroring the real registry.
         self.surfaces.append(name)
+        self.surface_specs[name or self.plugin_id] = (start, stop, reload)
 
     def register_subagent(self, config) -> None:
         self.subagents.append(config)
@@ -270,14 +363,22 @@ class FakeRegistry:
     def register_workflow_dir(self, path) -> None:
         self.workflow_dirs.append(str(path))
 
-    def register_goal_verifier(self, name: str, fn) -> None:
+    def register_goal_verifier(self, name: str, fn, description: str = "") -> None:
         self.verifiers[name] = fn
+        self.verifier_meta[name] = {"plugin_id": getattr(self, "plugin_id", ""), "description": description}
+
+    def register_work_provider(self, name: str, fn, label: str = "") -> None:
+        self.work_providers[name] = fn
+        self.work_provider_meta[name] = {"plugin_id": getattr(self, "plugin_id", ""), "label": label}
 
     def register_goal_hook(self, *, on_achieved=None, on_failed=None) -> None:
         self.goal_hooks.append((on_achieved, on_failed))
 
-    def register_watch_hook(self, *, on_met=None, on_expired=None, on_stalled=None) -> None:
-        self.watch_hooks.append((on_met, on_expired, on_stalled))
+    def register_watch_hook(self, *, on_met=None, on_expired=None, on_stalled=None, on_changed=None) -> None:
+        self.watch_hooks.append((on_met, on_expired, on_stalled, on_changed))
+
+    def register_lifecycle_hook(self, *, on_app_loaded=None, on_agent_active=None, on_system_wake=None) -> None:
+        self.lifecycle_hooks.append((on_app_loaded, on_agent_active, on_system_wake))
 
     def register_knowledge_store(self, name: str, factory) -> None:
         self.knowledge_stores[name] = factory
@@ -288,9 +389,37 @@ class FakeRegistry:
     def register_thread_id_resolver(self, fn) -> None:
         self.thread_id_resolver = fn
 
+    def save_media(self, data, mime: str, meta: dict | None = None):
+        """Capture a media save (#1929) WITHOUT touching the real instance store —
+        stdlib-only, like the rest of the testkit. Returns a MediaRef-shaped
+        namespace (``id``/``url``/``path``/``mime``) so a tool that embeds
+        ``ref.url`` in its returned markdown runs unchanged; assert against
+        ``self.saved_media`` (``(data, mime, meta)`` tuples, in call order)."""
+        import mimetypes
+        import types as _types
+
+        self.saved_media.append((data, mime, meta))
+        media_id = f"fake-media-{len(self.saved_media)}"
+        ext = mimetypes.guess_extension(mime or "") or ".bin"
+        name = f"{media_id}{ext}"
+        return _types.SimpleNamespace(
+            id=media_id, url=f"/media/{name}?sig=fake", path=self.plugin_dir / name, mime=mime
+        )
+
     # bus / nav (no-op capture)
     def emit(self, topic: str, data: dict | None = None) -> None:
-        self.emitted.append((topic, data))
+        """Capture the topic AS THE BUS WOULD PUBLISH IT — namespaced to the plugin.
+
+        The real registry auto-prefixes (``emit("created")`` publishes
+        ``"<plugin_id>.created"``), and a fake that recorded the raw string let a plugin
+        assert the wrong wire topic and ship green: every subscriber keyed on the
+        documented ``<plugin>.<event>`` would then hear nothing. Same reasoning as the
+        slugify duplication above — behaviour a plugin asserts against has to match.
+        Host-free by contract, so the two lines are duplicated rather than imported."""
+        pid = getattr(self, "plugin_id", "") or ""
+        if pid and topic != pid and not topic.startswith(f"{pid}."):
+            topic = f"{pid}.{topic}"
+        self.emitted.append((topic, data or {}))  # the bus publishes {} for a bare emit
 
     def on(self, topic: str, handler) -> None:
         self.handlers.setdefault(topic, []).append(handler)

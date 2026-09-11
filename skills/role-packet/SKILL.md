@@ -33,9 +33,11 @@ The output is a real folder tree the user can open and edit:
    ask the user to confirm. Do not chain phases silently. This is the whole point of this flow — it
    is a coach working *with* the user, not an autopilot.
 2. **Anchor everything to the truth.** Every claim in the evidence map, resume, skills list, and
-   cover letter must trace to `Resume/Experience.md` (the source of truth) or `Agent/story-bank.md`,
-   and pass the interview-backtrack test in `job-application-assistant/writing-style.md`. If it isn't
-   there and true, it doesn't ship. Honor the story bank's "do NOT claim" guardrails.
+   cover letter must trace to the career history `careercoach_read_profile("experience")` returns
+   (their `Resume/Experience.md`, or their operator profile until they've filled that in) or
+   `Agent/story-bank.md`, and pass the interview-backtrack test in
+   `job-application-assistant/writing-style.md`. If it isn't there and true, it doesn't ship. Honor
+   the "do NOT claim" guardrails — the story bank's and the profile's `do_not_claim`.
 
 ## Before you start
 
@@ -43,9 +45,11 @@ The output is a real folder tree the user can open and edit:
   down the fill-in templates.
 - **Read the truth before drafting.** `careercoach_read_profile("experience")` — this is the only
   path to the source of truth (the generic `read_file` reaches managed fs projects, which the
-  workspace is not). If it reports the file is still the untouched template, **stop**: run
-  `/setup-coach` (or interview the user yourself) and save it with `careercoach_write_profile`.
-  Drafting from an empty Experience file means inventing a career, which this flow forbids.
+  workspace is not). It returns their own `Resume/Experience.md` once they've filled it in, and
+  their operator profile until then — both are real records, so draft from whichever comes back.
+  Only if it reports the file is still the untouched template (which means the profile is empty
+  too), **stop**: run `/setup-coach` (or interview the user yourself). Drafting from an empty
+  record means inventing a career, which this flow forbids.
 - The reference files live in two places: the **per-candidate** ones in the workspace, read with
   `careercoach_read_profile(doc)` — `experience`, `story-bank`, `reviewer`, `humanize`,
   `improvements` — and the **discipline** ones in the `job-application-assistant` skill (read via

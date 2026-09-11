@@ -84,9 +84,12 @@ def _register_tracker_tools(registry) -> None:
         """Record or update a job in your pipeline: company, role, the 0-100 fit score from
         the evaluation, status (considering/applied/interviewing/offer/rejected/passed),
         free-text notes, and the posting URL. Feeds the Career Coach dashboard and /upskill."""
-        state.track_application(
-            company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
-        )
+        try:
+            state.track_application(
+                company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
+            )
+        except state.StoreUnreadable as e:
+            return f"Not tracked: {e}"
         try:
             registry.emit("application_tracked", {"company": company, "role": role, "status": status})
         except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
@@ -98,7 +101,9 @@ def _register_tracker_tools(registry) -> None:
     def careercoach_list_applications(status: str = "") -> str:
         """List the jobs in your pipeline, optionally filtered by status. Use it to review
         where things stand or pick what to prepare for next."""
-        rows = state.load_applications(status=status or None)
+        rows, err = state.load_applications_checked(status=status or None)
+        if err:
+            return f"Your pipeline file {state._path()} is unreadable ({err}), so I can't list it — tell the operator."
         if not rows:
             return "Your pipeline is empty — paste me a posting, or track a role with careercoach_track_application."
         return "\n".join(
@@ -180,7 +185,9 @@ def _register_packet_tools(registry, cfg) -> None:
         `roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`, or an identity field
         (`name`, `location`, `work_auth`, `contact`, `headlines`). Read the full section before
         drafting anything from it — the always-on block is only an index."""
-        prof = profile.load_profile()
+        prof, err = profile.load_profile_checked()
+        if err:
+            return profile.unreadable_block(err)
         field = (field or "").strip()
         if not field:
             cov = profile.completeness(prof)
@@ -204,37 +211,57 @@ def _register_packet_tools(registry, cfg) -> None:
         return f"unknown profile field {field!r}; known: {known}"
 
     @tool
-    def careercoach_update_profile(field: str, content: str) -> str:
+    def careercoach_update_profile(
+        field: str, content: str, mode: str = "append", confirm_removal: bool = False
+    ) -> str:
         """Record one field of your operator's profile, after THEY have confirmed it. `field` is
-        an identity fact (`name`, `location`, `work_auth`, `contact`, `headlines`) or a section
-        (`roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`). Saves one field at
-        a time so a long interview never loses work and no write truncates a career history.
-        Never record anything the operator didn't tell you or confirm: this profile is the
-        anti-fabrication anchor for every CV, letter and interview answer you produce."""
+        an identity fact (`name`, `location`, `work_auth`, `contact`, `headlines` — each set to
+        `content`) or a section (`roles`, `education`, `skills`, `do_not_claim`, `stories`,
+        `notes`). Sections APPEND by default, so recording roles one at a time keeps every one and
+        no ordinary write truncates a career history. Pass `mode="replace"` only to rewrite a
+        section you've just read in full with careercoach_get_profile, giving the whole merged
+        text. Dropping or rewording any `do_not_claim` line is refused unless
+        `confirm_removal=true` — set that only after the operator explicitly asked you to remove
+        that hard stop. Never record anything the operator didn't tell you or confirm: this
+        profile is the anti-fabrication anchor for every CV, letter and interview answer."""
         try:
-            saved = profile.update_field(field, content)
-        except KeyError as e:
-            return f"{e}"
+            saved = profile.update_field(field, content, mode=mode, confirm_removal=confirm_removal)
+        except (KeyError, ValueError, PermissionError, profile.StoreUnreadable) as e:
+            return str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
         cov = profile.completeness(saved)
-        return (
-            f"Recorded {field}. Profile now {cov['filled']}/{cov['total']} fields"
-            + (f"; still missing: {', '.join(cov['missing'])}" if cov["missing"] else " — complete.")
+        coverage = f"Profile now {cov['filled']}/{cov['total']} fields" + (
+            f"; still missing: {', '.join(cov['missing'])}" if cov["missing"] else " — complete."
         )
+        change = saved.get("change")
+        if change == "unchanged":
+            if not (content or "").strip() and mode == "append":
+                return f"Nothing recorded: content was empty (sections append; to clear one, use mode='replace'). {coverage}"
+            return f"{field} already holds that — nothing changed. {coverage}"
+        verb = {"appended": "Added to", "replaced": "Replaced"}.get(change, "Recorded")
+        return f"{verb} {field}. {coverage}"
 
     @tool
     def careercoach_export_experience() -> str:
-        """Write the operator's profile out as a portable `Resume/Experience.md` in their
-        workspace — readable, diffable, and handable to anyone. The profile stays the source of
-        truth; this is a generated export, so re-run it after updating the profile."""
+        """Write a portable markdown snapshot of the operator's profile to
+        `Resume/Experience (profile export).md` in their workspace — readable, diffable, and
+        handable to anyone. It never touches their own `Resume/Experience.md`; each run regenerates
+        the snapshot from the current profile."""
+        prof, err = profile.load_profile_checked()
+        if err:
+            return f"Not exported: {profile.unreadable_block(err)}"
+        if profile.completeness(prof)["empty"]:
+            return "Nothing to export yet — no operator profile has been recorded."
         root = packet.resolve_root(_root())
-        res = packet.write_source(root, "experience", profile.to_markdown())
-        return f"Exported profile → {res['path']}"
+        res = packet.write_export(root, profile.to_markdown(prof))
+        return f"Exported the profile → {res['path']} (their own Resume/Experience.md is untouched)."
 
     @tool
     def careercoach_read_profile(doc: str = "experience") -> str:
         """Read one of the candidate's workspace source-of-truth files — the files every CV bullet,
         evidence-map row and cover-letter claim must trace back to. `doc` is one of: `experience`
-        (their verified career history), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
+        (their verified career history: their own Resume/Experience.md once they've filled it in,
+        which wins over the profile where the two differ; until then, their operator profile
+        rendered as markdown), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
         guardrails), `reviewer` (the experience-reviewer discipline), `humanize` (anti-slop rules),
         `improvements` (the workflow-audit log). Read `experience` BEFORE drafting anything in the
         candidate's name — if it comes back unfilled, help them fill it in rather than inventing."""
@@ -243,6 +270,21 @@ def _register_packet_tools(registry, cfg) -> None:
             res = packet.read_source(root, doc, templates_dir)
         except KeyError as e:
             return f"{e}"
+        operator_filled = res["exists"] and res["edited"] and not profile.is_generated_export(res["text"])
+        if doc == "experience" and not operator_filled:
+            # The operator hasn't written Experience.md (missing, the template, or a pre-0.7 export
+            # that went over it) — so the profile IS their record. Serve it, rather than sending a
+            # filled-in profile round the "run /setup-coach" loop.
+            prof, err = profile.load_profile_checked()
+            if err:
+                return profile.unreadable_block(err)
+            if not profile.completeness(prof)["empty"]:
+                return (
+                    f"The operator hasn't filled in Resume/Experience.md ({res['path']}), so this is "
+                    "their operator profile — the record careercoach_get_profile reads — rendered as "
+                    "markdown. Draft from it. If they later fill in Experience.md, that file wins.\n\n"
+                    + profile.to_markdown(prof)
+                )
         if not res["exists"]:
             return (
                 f"{doc} not found at {res['path']} — the workspace isn't seeded yet. "
@@ -373,13 +415,18 @@ def _register_rubric_knobs(registry) -> None:
 # Three purpose-built subagents that the `apply` workflow chains (ADR 0002). Each carries a
 # COMPACT prompt and is granted `load_skill` so it can pull the full discipline from the
 # job-application-assistant skill (the source of truth) rather than duplicating it here.
+#
+# The host builds subagents WITHOUT plugin middleware (graph/agent.py's subagent stack), so the
+# always-on <operator_profile> block never reaches them. The two that judge or write about the
+# candidate get the profile READ tools instead, and their prompts say to read before working.
+PROFILE_READ_TOOLS = ["careercoach_get_profile", "careercoach_read_profile"]
+
+
 def _register_subagents(registry) -> None:
     try:
         from graph.subagents.config import SubagentConfig
     except Exception as e:  # noqa: BLE001
-        # graph.subagents.config isn't in the host-free testkit's default stubs, so this
-        # import fails there. The guard keeps register() green host-free; see README §
-        # "Found while building" (filed upstream as an SDK papercut).
+        # An older host (or a test harness without the stand-in) — keep register() green.
         log.info("[careercoach] subagent registration skipped (host-free?): %s", e)
         return
 
@@ -412,13 +459,25 @@ def _register_subagents(registry) -> None:
             "You are job_evaluator, the Career Coach's fit assessor. Score a posting on four "
             "dimensions (defaults: technical 30, experience 25, behavioral 15, career 30) plus a "
             "location pass/fail gate, then take the weighted overall and map it to a verdict band. "
+            "Score the REAL candidate: before scoring, read their verified history with "
+            "careercoach_read_profile('experience') and their skills with "
+            "careercoach_get_profile('skills'); if both come back empty, say the score can't be "
+            "grounded rather than scoring an imagined background. "
             "For the full rubric, bands, and exact output format, call load_skill('job-application-"
             "assistant') and read its job-evaluation.md. Use web_search/fetch_url for missing context. "
             "Output the evaluation table, weighted overall, verdict, strengths, gaps, and a clear "
             "apply/apply-with-caveats/skip recommendation, then record it with "
             "careercoach_track_application. Be honest: a weak fit is a weak fit — never inflate a score."
         ),
-        tools=["load_skill", "list_skills", "web_search", "fetch_url", "current_time", "careercoach_track_application"],
+        tools=[
+            "load_skill",
+            "list_skills",
+            "web_search",
+            "fetch_url",
+            "current_time",
+            "careercoach_track_application",
+            *PROFILE_READ_TOOLS,
+        ],
     )
 
     application_writer = SubagentConfig(
@@ -429,68 +488,133 @@ def _register_subagents(registry) -> None:
         ),
         system_prompt=(
             "You are application_writer, the Career Coach's drafter. Given a fit evaluation and a "
-            "company-research brief, produce a tailored CV and a cover letter. Follow the writing-style "
+            "company-research brief, produce a tailored CV and a cover letter. FIRST read what is true "
+            "about the candidate: careercoach_read_profile('experience') for their verified career "
+            "history and careercoach_get_profile('do_not_claim') for the lines you must never claim "
+            "(plus careercoach_get_profile('skills') and ('stories') as needed). Draft only from what "
+            "those return, and treat every do_not_claim line as a hard stop. If the history comes back "
+            "empty, say so and stop: never invent a career. Follow the writing-style "
             "discipline: no em-dashes, no clichés, and the interview-backtrack honesty test (reframe "
             "emphasis, NEVER claim experience the candidate lacks). For the full guidance call "
             "load_skill('job-application-assistant') and read writing-style.md, cv-guide.md, and "
             "cover-letter-guide.md. Verify every company-specific claim against the research brief's "
             "sources before including it. If the verdict was Weak or Poor Fit, say so and stop rather "
-            "than forcing a draft. End with a verification checklist (factual accuracy, targeting, "
-            "company claims verified, style)."
+            "than forcing a draft. End with a verification checklist (factual accuracy against the "
+            "profile, do_not_claim respected, targeting, company claims verified, style)."
         ),
-        tools=["load_skill", "list_skills", "careercoach_track_application", "current_time"],
+        tools=["load_skill", "list_skills", *PROFILE_READ_TOOLS, "careercoach_track_application", "current_time"],
     )
 
     for cfg in (company_researcher, job_evaluator, application_writer):
         registry.register_subagent(cfg)
 
 
-# ── always-on context: the operator profile, injected every turn (ADR 0032) ───
+# ── always-on context: the operator profile, in front of every model call (ADR 0032) ───
+def _context_frame(text: str):
+    """``text`` as the host's injected-context frame (``graph.context_frame``: a tagged
+    ``HumanMessage`` in an ``<injected_context>`` envelope), or the same shape built here on a host
+    that predates the module — tagged identically, so the host still recognises it as a frame."""
+    try:
+        from graph.context_frame import context_frame_message
+
+        return context_frame_message(text)
+    except Exception:  # noqa: BLE001 — older host / host-free
+        from langchain_core.messages import HumanMessage
+
+        return HumanMessage(
+            content=f"<injected_context>\n{text}\n</injected_context>",
+            additional_kwargs={"protoagent_injected_context": True},
+        )
+
+
+def _stash_for_prompt_capture(text: str) -> None:
+    """Hand the block to the host's prompt capture (ADR 0108 D5) so the prompt viewer shows what
+    this call really carried. A no-op on a host without the seam or with capture off."""
+    try:
+        from graph.context_frame import stash_projected_context
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        stash_projected_context(text)
+    except Exception:  # noqa: BLE001 — observability must never break a turn
+        log.debug("[careercoach] prompt-capture stash failed", exc_info=True)
+
+
 def _register_profile_middleware(registry) -> None:
-    """Put the operator's profile in front of the model on every turn.
+    """Put the operator's profile in front of the model on every call.
 
     Without this the agent has no cheap way to know what it already knows, so it re-interviews
     for facts it holds — the failure that made a real first run collapse into "stop the 21
     questions". A recall tool can't fix that: the agent has to already suspect there's something
     to recall. Always-on completeness removes the guess.
 
-    Guarded like every other host seam: if ``AgentMiddleware`` isn't importable (host-free
-    tests, older host), the plugin still registers and simply doesn't inject."""
+    Guarded like every other host seam: if ``AgentMiddleware`` isn't importable (older host),
+    the plugin still registers and simply doesn't inject."""
     try:
         from langchain.agents.middleware import AgentMiddleware
-    except ImportError:  # pragma: no cover — host-free / older host
+    except ImportError:  # pragma: no cover — no langchain agents
         log.debug("[careercoach] AgentMiddleware unavailable; profile injection skipped")
         return
 
     from . import profile
 
     class _ProfileMiddleware(AgentMiddleware):
-        """Append ``<operator_profile>`` to the turn's context tail.
+        """Deliver ``<operator_profile>`` as an ephemeral frame on every model call — the host's
+        own contract for derived context (ADR 0108 D2; ``graph/middleware/tool_delta.py``).
 
-        Read fresh each call (never cached) so an edit in the console view — or a field the agent
-        just recorded — is visible on the very next turn.
+        **Why not the ``context`` state channel.** v0.6 returned ``{"context": …}`` from
+        ``before_model``. protoAgent #3234 (v0.155.0) removed that channel and its last reader, and
+        LangGraph drops an update for a key the state doesn't declare — so the block silently never
+        reached the model. It also re-read its own previous block from that channel and appended
+        another each call. Now the block is composed from the profile file and appended to the
+        request's messages via ``request.override``: never returned as state, never checkpointed,
+        exactly one copy per call.
 
-        **Appends, never replaces.** ``state["context"]`` is a plain ``str`` channel with no
-        reducer (``graph/state.py``), and plugin middleware runs *after* ``KnowledgeMiddleware``,
-        so returning a bare ``{"context": block}`` would silently wipe the memory digest, hot
-        memory, RAG hits and skill index. We concatenate onto whatever is already there and add a
-        matching ``context_sections`` entry so the prompt viewer still attributes each part."""
+        **Cache-stable.** The system prompt is untouched, and the frame goes at the tail, where the
+        host's knowledge frame goes. ``PromptCacheMiddleware`` sits outside every plugin middleware,
+        so its breakpoints (system prefix + newest history messages) are placed before this frame
+        is added: the block never displaces them.
 
-        def before_model(self, state, runtime=None) -> dict | None:
+        **Fresh without re-reading.** Composed at turn entry (``before_agent``) and recomposed only
+        when the profile file actually changes, so a field recorded mid-turn shows on the next
+        call while an unchanged profile costs one ``stat`` per call."""
+
+        def __init__(self):
+            super().__init__()
+            self._block: str = ""
+            self._sig: object = False  # sentinel: nothing composed yet
+
+        def _current(self, *, force: bool = False) -> str:
             try:
-                block = profile.context_block()
+                sig = profile.store_signature()
+                if force or sig != self._sig:
+                    self._block = profile.context_block()
+                    self._sig = sig
             except Exception as exc:  # noqa: BLE001 — context injection must never break a turn
                 log.debug("[careercoach] profile injection failed: %s", exc)
-                return None
+            return self._block
+
+        def before_agent(self, state, runtime) -> dict | None:  # type: ignore[override]
+            self._current(force=True)
+            return None
+
+        async def abefore_agent(self, state, runtime) -> dict | None:  # type: ignore[override]
+            return self.before_agent(state, runtime)
+
+        def _with_profile(self, request):
+            block = self._current()
             if not block:
-                return None  # nothing known yet; /setup-coach owns the cold start
-            existing = (state or {}).get("context") or ""
-            sections = list((state or {}).get("context_sections") or [])
-            sections.append({"label": "Operator profile", "chars": len(block)})
-            return {
-                "context": f"{existing}\n\n{block}" if existing else block,
-                "context_sections": sections,
-            }
+                return request  # nothing known yet; /setup-coach owns the cold start
+            msgs = list(getattr(request, "messages", None) or [])
+            msgs.append(_context_frame(block))
+            _stash_for_prompt_capture(block)
+            return request.override(messages=msgs)
+
+        def wrap_model_call(self, request, handler):
+            return handler(self._with_profile(request))
+
+        async def awrap_model_call(self, request, handler):
+            return await handler(self._with_profile(request))
 
     registry.register_middleware(lambda config: _ProfileMiddleware())
 
@@ -510,7 +634,7 @@ def _register_views(registry, cfg) -> None:
 
     @data.get("/state")
     async def _state():
-        prof = profile.load_profile()
+        prof, profile_error = profile.load_profile_checked()
         return JSONResponse(
             {
                 "settings": {
@@ -522,9 +646,10 @@ def _register_views(registry, cfg) -> None:
                 # what the agent is told each turn. Transparency is the point: the person being
                 # described should never have to open a file to see their own record.
                 "profile": prof,
+                "profile_error": profile_error,  # why profile.json can't be read ("" when fine)
                 "completeness": profile.completeness(prof),
                 "field_labels": {**profile.IDENTITY_FIELDS, **profile.SECTIONS},
-                "context_block": profile.context_block(prof),
+                "context_block": profile.context_block(),
                 "weights": DEFAULT_WEIGHTS,  # the rubric defaults; the agent tunes live via knobs
                 "applications": state.load_applications(),
             }
@@ -580,15 +705,19 @@ def _register_job_watch(registry, cfg) -> None:
             (r.get("company", "").strip().lower(), r.get("role", "").strip().lower()) for r in state.load_applications()
         }
         matches = watchmod.find_new_matches(jobs, roles, seen, min_score)
-        for m in matches:
-            state.track_application(
-                company=m["company"],
-                role=m["title"],
-                fit_score=m["score"],
-                status="considering",
-                source=m["url"],
-                notes=f"auto-surfaced by watch · prescore {m['score']}",
-            )
+        try:
+            for m in matches:
+                state.track_application(
+                    company=m["company"],
+                    role=m["title"],
+                    fit_score=m["score"],
+                    status="considering",
+                    source=m["url"],
+                    notes=f"auto-surfaced by watch · prescore {m['score']}",
+                )
+        except state.StoreUnreadable as e:
+            log.warning("[careercoach] watch scan recorded nothing: %s", e)
+            return
         if matches:
             try:
                 registry.emit(
@@ -710,6 +839,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <div class="card">
     <h2>What your coach knows about you</h2>
     <p class="sub" id="profile-cov">Loading…</p>
+    <p class="sub">A read-only view. To change anything, tell your coach in chat.</p>
     <div id="profile"></div>
     <details style="margin-top:12px">
       <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
@@ -759,7 +889,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var cov = d.completeness || { known: [], missing: [], filled: 0, total: 0 };
     var labels = d.field_labels || {};
 
-    document.getElementById('profile-cov').textContent = cov.filled
+    document.getElementById('profile-cov').textContent = d.profile_error
+      ? ('Your profile file is unreadable (' + d.profile_error + '). Nothing new will be saved '
+         + 'until it is fixed — ask your coach where it is.')
+      : cov.filled
       ? (cov.filled + ' of ' + cov.total + ' recorded'
          + (cov.updated ? ' · updated ' + cov.updated : ''))
       : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';

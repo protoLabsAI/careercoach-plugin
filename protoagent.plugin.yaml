@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.6.1
+version: 0.7.0
 description: >-
   Your career coach and job-hunt copilot. Talk through strategy and positioning,
   run mock interviews with honest feedback, get a straight critique of your CV,
@@ -18,7 +18,10 @@ min_protoagent_version: "0.34.0"
 # background job-watch call two job APIs directly, so `network` lists exactly those hosts.
 capabilities:
   network: ["jsearch.p.rapidapi.com", "remotive.com"]
-  filesystem: scoped        # a small application tracker under the instance data dir
+  # the operator profile + application tracker live under the instance root
+  # (<instance_root>/careercoach); role-packet files go to the configured workspace
+  # (packet_root, default ~/CareerCoach).
+  filesystem: scoped
 enabled: false              # author default — operators opt in via plugins.enabled
 
 # Config + secrets + Settings (ADR 0019). The profile basics render in

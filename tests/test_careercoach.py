@@ -9,7 +9,6 @@ Two layers:
 from __future__ import annotations
 
 import importlib
-import sys
 import types
 from pathlib import Path
 
@@ -266,10 +265,13 @@ def test_profile_store_completeness_and_context(plugin, monkeypatch, tmp_path):
     except KeyError:
         pass
 
-    # A corrupt store degrades to "I know nothing", never raises mid-turn.
+    # A corrupt store never raises mid-turn: readers see nothing from it — but the block SAYS it's
+    # unreadable instead of reading as a fresh start, so the agent neither re-interviews nor drafts
+    # without the hard stops. (The write-side refusal is in test_profile_store.py.)
     (tmp_path / "profile.json").write_text("{not json", encoding="utf-8")
     assert profile.completeness()["empty"] is True
-    assert profile.context_block() == ""
+    block = profile.context_block()
+    assert "unreadable" in block and "DO NOT CLAIM" in block and "Ada Lovelace" not in block
 
     # The markdown export is generated FROM the profile (one write direction, no drift).
     md = profile.to_markdown({"identity": {"name": "Ada"}, "sections": {"roles": "R"}, "updated": ""})
@@ -324,43 +326,6 @@ def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
     assert profile.completeness(prof)["filled"] == len(fields)
 
 
-def test_profile_middleware_appends_never_clobbers(plugin, registry, monkeypatch, tmp_path):
-    """Plugin middleware runs AFTER KnowledgeMiddleware and ``context`` is a plain str channel
-    with no reducer — so a bare ``{"context": ...}`` would wipe the memory digest, hot memory and
-    skill index. It must concatenate onto whatever is already there."""
-    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
-    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
-    profile = importlib.import_module(plugin.__name__ + ".profile")
-
-    # Stub the langchain middleware base the same way the suite stubs graph.sdk — `langchain`
-    # isn't a dev dep, and without this the assertions below would silently never run.
-    mwmod = types.ModuleType("langchain.agents.middleware")
-    mwmod.AgentMiddleware = type("AgentMiddleware", (), {})
-    agents = types.ModuleType("langchain.agents")
-    agents.middleware = mwmod
-    lc = types.ModuleType("langchain")
-    lc.agents = agents
-    monkeypatch.setitem(sys.modules, "langchain", lc)
-    monkeypatch.setitem(sys.modules, "langchain.agents", agents)
-    monkeypatch.setitem(sys.modules, "langchain.agents.middleware", mwmod)
-
-    plugin.register(registry)
-    assert registry.middlewares, "profile middleware must register when the base is importable"
-    mw = registry.middlewares[0](None)
-
-    # Nothing known → no injection at all.
-    assert mw.before_model({"context": "PRIOR"}) is None
-
-    profile.update_field("name", "Ada Lovelace")
-    out = mw.before_model({"context": "PRIOR", "context_sections": [{"label": "Knowledge", "chars": 5}]})
-    assert out["context"].startswith("PRIOR")  # existing context survives…
-    assert "<operator_profile>" in out["context"]  # …and ours is appended
-    assert [s["label"] for s in out["context_sections"]] == ["Knowledge", "Operator profile"]
-
-    # Empty prior context must not leave a leading blank line.
-    assert mw.before_model({})["context"].startswith("<operator_profile>")
-
-
 def test_skills_declare_real_tools(plugin, registry):
     """Every ``careercoach_*`` tool a skill lists in its frontmatter must actually be registered.
 
@@ -387,61 +352,59 @@ def test_skills_declare_real_tools(plugin, registry):
     assert setup["user_facing"] is True and setup["slash"] == "setup-coach"
 
 
-# ── register() — host-free (guards skip host-only knobs + subagents) ──────────
+# ── register() — host-free (the testkit's record-only stand-ins let every guarded path run) ──
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
-    assert len(registry.tools) == 13  # 3 tracker/search + 10 packet/profile tools; knobs skipped host-free
+    names = [t.name for t in registry.tools]
+    # 3 tracker/search + 10 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
+    # stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
+    assert len(names) == 16 and len(set(names)) == 16
+    assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
-    assert registry.subagents == []  # subagent registration skipped without the host
+    # The research → evaluate → write crew (graph.subagents.config is stood in by the testkit too).
+    assert {c.name for c in registry.subagents} == {"company_researcher", "job_evaluator", "application_writer"}
+    assert len(registry.middlewares) == 1  # the operator-profile frame (langchain is a dev dep)
     assert "careercoach:new_matches" in registry.verifiers  # goal verifier wired (VerifyResult is stubbed)
     assert "careercoach-watch" not in registry.surfaces  # auto-scan off by default
 
 
-# ── register() — full surface with lightweight host stubs ─────────────────────
+# ── register() — the rubric knobs, with the host seam recorded ─────────────────
 def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
-    """With graph.sdk (Knobs) + graph.subagents.config (SubagentConfig) present, the guarded
-    paths wire up: the rubric knobs become tools and the 3-subagent crew registers."""
+    """With graph.sdk's Knobs patched to a recording fake, the guarded knob path defines one knob
+    per rubric weight at its default (plus every preset), and the crew can pull the full skill."""
     import graph.sdk  # the testkit stub module
 
-    class _FakeKnobs:
+    rubric = importlib.import_module(plugin.__name__ + ".rubric")
+    made = {}
+
+    class _RecordingKnobs:
         def __init__(self):
-            self.defined = {}
+            self.defined, self.presets = {}, {}
+            made["knobs"] = self
 
         def define(self, key, value, **_):
             self.defined[key] = value
             return self
 
-        def preset(self, *_a, **_k):
+        def preset(self, name, overrides, **_):
+            self.presets[name] = overrides
             return self
 
-    monkeypatch.setattr(graph.sdk, "Knobs", _FakeKnobs, raising=False)
+    monkeypatch.setattr(graph.sdk, "Knobs", _RecordingKnobs, raising=False)
     monkeypatch.setattr(
-        graph.sdk, "make_knob_tools", lambda knobs, prefix: [f"{prefix}_knobs", f"{prefix}_tune"], raising=False
+        graph.sdk,
+        "make_knob_tools",
+        lambda knobs, prefix: [types.SimpleNamespace(name=f"{prefix}_tune")],
+        raising=False,
     )
-
-    # Stand in for graph.subagents.config (not in the testkit's default stubs).
-    subpkg = types.ModuleType("graph.subagents")
-    subpkg.__path__ = []  # type: ignore[attr-defined]
-    cfgmod = types.ModuleType("graph.subagents.config")
-
-    class _FakeSubagentConfig:
-        def __init__(self, **kw):
-            self.__dict__.update(kw)
-
-    cfgmod.SubagentConfig = _FakeSubagentConfig
-    monkeypatch.setitem(sys.modules, "graph.subagents", subpkg)
-    monkeypatch.setitem(sys.modules, "graph.subagents.config", cfgmod)
 
     plugin.register(registry)
 
-    # 13 base tools (track, list, search + 10 packet/profile) + 2 knob tools.
-    assert len(registry.tools) == 15
-    assert any("careercoach_knobs" == str(t) for t in registry.tools)
-    # The research → evaluate → write crew.
-    names = {c.name for c in registry.subagents}
-    assert names == {"company_researcher", "job_evaluator", "application_writer"}
+    assert made["knobs"].defined == {f"weight_{d}": v for d, v in rubric.DEFAULT_WEIGHTS.items()}
+    assert set(made["knobs"].presets) == set(rubric.PRESETS)
+    assert "careercoach_tune" in {t.name for t in registry.tools}
     for c in registry.subagents:
         assert "load_skill" in c.tools or c.name == "company_researcher"
 

@@ -44,3 +44,50 @@ def plugin():
 def registry():
     """A fake registry that records what ``register()`` contributes (assert against it)."""
     return FakeRegistry()
+
+
+# Every env var that decides where the plugin reads and writes.
+PATH_ENV = (
+    "CAREERCOACH_DIR",
+    "CAREERCOACH_PACKET_DIR",
+    "PROTOAGENT_INSTANCE",
+    "PROTOAGENT_HOME",
+    "PROTOAGENT_BOX_ROOT",
+)
+
+
+@pytest.fixture
+def iso(monkeypatch, tmp_path):
+    """Isolate every path the plugin can touch: HOME → a temp dir, and no path env vars — so the
+    store resolves the way the host would on a fresh machine, entirely inside ``tmp_path``."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    for var in PATH_ENV:
+        monkeypatch.delenv(var, raising=False)
+    return tmp_path
+
+
+@pytest.fixture
+def profile(plugin):
+    """The plugin's ``profile`` module (fresh per test — ``load_plugin`` purges submodules)."""
+    import importlib
+
+    return importlib.import_module(plugin.__name__ + ".profile")
+
+
+@pytest.fixture
+def state(plugin):
+    """The plugin's ``state`` module (the application tracker)."""
+    import importlib
+
+    return importlib.import_module(plugin.__name__ + ".state")
+
+
+@pytest.fixture
+def tools(plugin, iso, monkeypatch):
+    """The registered agent tools by name, with an isolated store and workspace."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    reg = FakeRegistry({"packet_root": str(iso / "ws")})
+    plugin.register(reg)
+    return {t.name: t for t in reg.tools}

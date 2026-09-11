@@ -17,6 +17,7 @@ real job hunt is filed:
         role packet.md                 (the assembled deliverable)
         orchestration log.md
       Resume/Experience.md             (per-candidate source of truth — from templates/)
+      Resume/Experience (profile export).md  (generated from the operator profile, on request)
       Agent/story-bank.md · Agent/experience-reviewer.md
       Skills/Humanize/SKILL.md · workflow-audit/improvements.md
 
@@ -34,7 +35,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # The packet artifacts: slug (what tools accept + validate) → human filename (what's written).
@@ -91,9 +92,14 @@ SOURCES: dict[str, str] = {
 # move its own guardrails.
 WRITABLE_SOURCES: tuple[str, ...] = ("experience", "story-bank")
 
+# Where the operator-profile export lands: its OWN file, beside ``Resume/Experience.md`` and never
+# over it. Experience.md is the operator's document (only they, or ``write_source`` with their
+# confirmation, write it); the export is a regenerated snapshot, so overwriting *it* loses nothing.
+EXPERIENCE_EXPORT = "Resume/Experience (profile export).md"
+
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def safe_name(text: str) -> str:
@@ -313,11 +319,18 @@ def write_source(root, doc: str, content: str) -> dict:
     if doc not in SOURCES:
         raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
     if doc not in WRITABLE_SOURCES:
-        raise PermissionError(
-            f"{doc!r} is a read-only reference; writable sources: {', '.join(WRITABLE_SOURCES)}"
-        )
+        raise PermissionError(f"{doc!r} is a read-only reference; writable sources: {', '.join(WRITABLE_SOURCES)}")
     path = source_path(root, doc)
     path.parent.mkdir(parents=True, exist_ok=True)
     replaced = path.exists() and bool(path.read_text(encoding="utf-8").strip())
     path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
     return {"path": str(path), "doc": doc, "replaced": replaced}
+
+
+def write_export(root, content: str) -> dict:
+    """Write the generated operator-profile snapshot to ``EXPERIENCE_EXPORT`` — never to
+    ``Resume/Experience.md``, whatever state that file is in. Regenerated on every export."""
+    path = Path(root) / EXPERIENCE_EXPORT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    return {"path": str(path)}
