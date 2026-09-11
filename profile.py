@@ -405,13 +405,37 @@ def empty_profile() -> dict:
     }
 
 
+def _obj(value: object) -> dict:
+    """A nested JSON object, or ``{}`` for anything that isn't one. ``(x or {})`` isn't enough: a
+    truthy non-dict (``{"identity": "corrupted"}``) sails through it and then raises AttributeError
+    on ``.get`` — a damaged file must read as empty, never break a turn."""
+    return value if isinstance(value, dict) else {}
+
+
+def _shape_error(raw: object) -> str:
+    """Why this parsed JSON can't be read as a profile, or ``""``.
+
+    A nested value that isn't an object holds data this code can't interpret. Normalizing it away
+    would read to the operator as "nothing recorded yet" and the next write would erase it, so the
+    store counts as unreadable: reported to the agent, and writes refused."""
+    if raw is None:
+        return ""
+    if not isinstance(raw, dict):
+        return "not a JSON object"
+    for key in ("identity", "sections"):
+        value = raw.get(key)
+        if value is not None and not isinstance(value, dict):
+            return f"{key!r} is not a JSON object"
+    return ""
+
+
 def _normalize(raw: dict) -> dict:
     prof = empty_profile()
     for k in IDENTITY_FIELDS:
-        v = (raw.get("identity") or {}).get(k, "")
+        v = _obj(raw.get("identity")).get(k, "")
         prof["identity"][k] = str(v).strip() if v is not None else ""
     for k in SECTIONS:
-        v = (raw.get("sections") or {}).get(k, "")
+        v = _obj(raw.get("sections")).get(k, "")
         prof["sections"][k] = str(v).strip() if v is not None else ""
     prof["updated"] = str(raw.get("updated", "") or "")
     return prof
@@ -422,8 +446,7 @@ def load_profile_checked() -> tuple[dict, str]:
     unreadable — in which case ``profile`` is empty. Readers that can say so to the agent use this."""
     path = _path()
     raw, err = _read_json(path)
-    if not err and raw is not None and not isinstance(raw, dict):
-        err = "not a JSON object"
+    err = err or _shape_error(raw)
     if err:
         # Degrade rather than raise — an unreadable profile must never break a turn. But say so
         # LOUDLY: silence here once masked a torn file as "nothing recorded yet", which reads to
@@ -445,9 +468,9 @@ def save_profile(profile: dict) -> dict:
     overwrite: callers go through ``update_field``, which holds the lock and checks the store."""
     out = empty_profile()
     for k in IDENTITY_FIELDS:
-        out["identity"][k] = str((profile.get("identity") or {}).get(k, "") or "").strip()
+        out["identity"][k] = str(_obj(profile.get("identity")).get(k, "") or "").strip()
     for k in SECTIONS:
-        out["sections"][k] = str((profile.get("sections") or {}).get(k, "") or "").strip()
+        out["sections"][k] = str(_obj(profile.get("sections")).get(k, "") or "").strip()
     out["updated"] = _now()
     _write_store(_path(), json.dumps(out, indent=2) + "\n")
     return out
@@ -600,8 +623,7 @@ def _load_strict() -> dict:
     """The stored profile for a writer or planner: an unreadable store raises ``StoreUnreadable``."""
     path = _path()
     raw, err = _read_json(path)
-    if not err and raw is not None and not isinstance(raw, dict):
-        err = "not a JSON object"
+    err = err or _shape_error(raw)
     if err:
         raise StoreUnreadable(path, err)
     return _normalize(raw) if raw else empty_profile()

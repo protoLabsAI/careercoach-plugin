@@ -200,6 +200,24 @@ def test_an_unreadable_profile_is_never_written_over(profile, tools, iso):
     assert path.read_bytes() == broken
 
 
+def test_a_nested_value_that_is_not_an_object_counts_as_unreadable(profile, tools, iso):
+    """`{"identity": "corrupted"}` parses as JSON but holds data this code can't read. Normalizing
+    it away would report "nothing recorded yet" and the next write would erase it — and `(x or {})`
+    let a truthy non-dict through to raise AttributeError mid-turn instead."""
+    profile.update_field("name", "Ada")
+    path = profile._path()
+    for broken in ('{"identity": "corrupted"}', '{"identity": {}, "sections": ["roles"]}'):
+        path.write_text(broken, encoding="utf-8")
+
+        assert profile.load_profile() == profile.empty_profile()  # reads as empty, never raises
+        assert "not a JSON object" in profile.load_profile_checked()[1]
+        with pytest.raises(profile.StoreUnreadable):
+            profile.update_field("location", "London")
+        assert path.read_text(encoding="utf-8") == broken  # the damaged file is left alone
+        assert "unreadable" in tools["careercoach_get_profile"].invoke({})
+        assert "unreadable" in profile.context_block()  # the model is told, not silently given ""
+
+
 def test_an_unreadable_tracker_is_never_written_over(state, tools):
     state.track_application(company="Acme", role="Eng", fit_score=80)
     path = state._path()
