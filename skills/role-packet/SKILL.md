@@ -7,7 +7,7 @@ description: >-
   they can review and edit. A gated, human-approved pipeline that files a folder per role and
   produces each artifact one confirmed step at a time. For a quick fit read or a single document,
   use job-application-assistant instead; for the fast autonomous version, run the `apply` workflow.
-tools: [careercoach_init_workspace, careercoach_scaffold_role, careercoach_write_artifact, careercoach_assemble_packet, careercoach_list_roles, careercoach_track_application, company_researcher]
+tools: [careercoach_init_workspace, careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_profile, careercoach_scaffold_role, careercoach_write_artifact, careercoach_assemble_packet, careercoach_list_roles, careercoach_track_application, company_researcher]
 ---
 
 # Role packet — the gated application pipeline
@@ -33,20 +33,29 @@ The output is a real folder tree the user can open and edit:
    ask the user to confirm. Do not chain phases silently. This is the whole point of this flow — it
    is a coach working *with* the user, not an autopilot.
 2. **Anchor everything to the truth.** Every claim in the evidence map, resume, skills list, and
-   cover letter must trace to `Resume/Experience.md` (the source of truth) or `Agent/story-bank.md`,
-   and pass the interview-backtrack test in `job-application-assistant/writing-style.md`. If it isn't
-   there and true, it doesn't ship. Honor the story bank's "do NOT claim" guardrails.
+   cover letter must trace to the operator profile — the single source of truth,
+   `careercoach_read_profile("experience")` — or `Agent/story-bank.md`, and pass the
+   interview-backtrack test in
+   `job-application-assistant/writing-style.md`. If it isn't there and true, it doesn't ship. Honor
+   the "do NOT claim" guardrails — the story bank's and the profile's `do_not_claim`.
 
 ## Before you start
 
 - **Workspace seeded?** If this is the user's first packet, run `careercoach_init_workspace` to lay
-  down the fill-in templates, and confirm `Resume/Experience.md` is filled in. Everything is anchored
-  to it, so if it's empty, stop and help the user populate it first (that's a coaching session, not a
-  drafting one).
-- The reference files live in two places: the **per-candidate** ones in the workspace
-  (`Resume/Experience.md`, `Agent/story-bank.md`, `Agent/experience-reviewer.md`,
-  `Skills/Humanize/SKILL.md`, `workflow-audit/improvements.md`) and the **discipline** ones in the
-  `job-application-assistant` skill (read via `load_skill`). Read each when its phase says to, not up front.
+  down the fill-in templates.
+- **Read the truth before drafting.** `careercoach_read_profile("experience")` — this is the only
+  path to the source of truth (the generic `read_file` reaches managed fs projects, which the
+  workspace is not). It always returns the operator profile, never the workspace
+  `Resume/Experience.md`. If it says no profile is recorded, **stop**: run `/setup-coach` (or
+  interview the user yourself), and if they keep their own Experience.md, bring it in with
+  `careercoach_import_experience` (preview, then `apply=true` with its `preview_id` once they
+  confirm). Drafting from an
+  empty record means inventing a career, which this flow forbids. A fact they give you mid-packet
+  goes into the profile with `careercoach_update_profile` before you use it.
+- The reference files live in two places: the **per-candidate** ones, read with
+  `careercoach_read_profile(doc)` — `experience` (the profile), `story-bank`, `reviewer`,
+  `humanize`, `improvements` — and the **discipline** ones in the `job-application-assistant` skill
+  (read via `load_skill`). Read each when its phase says to, not up front.
 
 ## The six phases
 
@@ -69,7 +78,7 @@ hiring manager is identifiable from the posting or research, research them and w
 ### Phase 3 — Resume  ·  *gate: confirm before drafting*
 Read `evidence-map.md`, then `job-application-assistant`'s `cv-guide.md` and **`writing-style.md`**
 (read before writing any bullet). First build the **`evidence-map`**: every JD requirement mapped to
-your proof from `Experience.md` / the story bank, with gaps and stretches flagged honestly. *Then*
+your proof from the profile / the story bank, with gaps and stretches flagged honestly. *Then*
 write the **`tailored-resume`**, drawing only on what the evidence map supports. Surface any stretch
 line for the user to keep, soften, or drop. Render per `render_format` if the user wants a file —
 `html` → PDF, or `docx` → a real Word file saved as a versioned download-artifact (see `cv-guide.md`);

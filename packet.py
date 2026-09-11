@@ -16,7 +16,8 @@ real job hunt is filed:
         prompt transcript.md
         role packet.md                 (the assembled deliverable)
         orchestration log.md
-      Resume/Experience.md             (per-candidate source of truth — from templates/)
+      Resume/Experience.md             (optional: the operator's own history, imported into the profile)
+      Resume/Experience (profile export).md  (generated from the operator profile, on request)
       Agent/story-bank.md · Agent/experience-reviewer.md
       Skills/Humanize/SKILL.md · workflow-audit/improvements.md
 
@@ -34,7 +35,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # The packet artifacts: slug (what tools accept + validate) → human filename (what's written).
@@ -75,9 +76,31 @@ PACKET_BODY: tuple[str, ...] = (
     "cover-letter",
 )
 
+# The per-candidate reference files ``init_workspace`` seeds. Every claim the coach writes has
+# to trace back to one of these, so the agent needs its own read path — the generic ``read_file``
+# only reaches *managed fs projects*, and nothing registers the workspace as one.
+SOURCES: dict[str, str] = {
+    "experience": "Resume/Experience.md",
+    "story-bank": "Agent/story-bank.md",
+    "reviewer": "Agent/experience-reviewer.md",
+    "humanize": "Skills/Humanize/SKILL.md",
+    "improvements": "workflow-audit/improvements.md",
+}
+
+# The only agent-writable source: the story bank. The discipline files are what the agent is
+# *bound by* — letting it rewrite those would quietly move its own guardrails. And
+# ``Resume/Experience.md`` is the operator's own file: the operator profile is the single source of
+# truth for their history, so the agent records history there (``update_field``) and reads it back
+# from there; Experience.md only ever flows INTO the profile, through an explicit import.
+WRITABLE_SOURCES: tuple[str, ...] = ("story-bank",)
+
+# Where the operator-profile export lands: its OWN file, beside ``Resume/Experience.md`` and never
+# over it. The export is a regenerated snapshot of the profile, so overwriting *it* loses nothing.
+EXPERIENCE_EXPORT = "Resume/Experience (profile export).md"
+
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def safe_name(text: str) -> str:
@@ -259,3 +282,56 @@ def init_workspace(root, templates_dir) -> dict:
         shutil.copyfile(src, dest)
         created.append(str(rel))
     return {"created": created, "skipped": skipped, "root": str(root)}
+
+
+def source_path(root, doc: str) -> Path:
+    """Absolute path to one per-candidate source file. Raises on an unknown slug."""
+    if doc not in SOURCES:
+        raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
+    return Path(root) / SOURCES[doc]
+
+
+def read_source(root, doc: str, templates_dir=None) -> dict:
+    """Read one source file, reporting whether the candidate has actually filled it in.
+
+    ``edited`` compares the workspace copy against the shipped template rather than sniffing for
+    placeholder syntax — the templates are full of realistic-looking hint text ("team size, budget,
+    remit"), so any guess at "looks empty" gets it wrong. Differing from the template is the honest
+    signal that someone typed into it. Without ``templates_dir`` an existing file is assumed edited.
+    """
+    path = source_path(root, doc)
+    if not path.exists():
+        return {"path": str(path), "doc": doc, "exists": False, "edited": False, "text": ""}
+    text = path.read_text(encoding="utf-8")
+    edited = True
+    if templates_dir is not None:
+        tpl = Path(templates_dir) / SOURCES[doc]
+        if tpl.exists():
+            edited = tpl.read_text(encoding="utf-8").strip() != text.strip()
+    return {"path": str(path), "doc": doc, "exists": True, "edited": edited, "text": text}
+
+
+def write_source(root, doc: str, content: str) -> dict:
+    """Overwrite one of the agent-writable source files (``WRITABLE_SOURCES``: the story bank).
+
+    Refuses everything else by design — the discipline files, and ``Experience.md``, which is the
+    operator's own and only flows into the profile by import. Whole-file write: callers read first
+    and pass the merged markdown, so a partial write can't silently truncate the file."""
+    if doc not in SOURCES:
+        raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
+    if doc not in WRITABLE_SOURCES:
+        raise PermissionError(f"{doc!r} is a read-only reference; writable sources: {', '.join(WRITABLE_SOURCES)}")
+    path = source_path(root, doc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    replaced = path.exists() and bool(path.read_text(encoding="utf-8").strip())
+    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    return {"path": str(path), "doc": doc, "replaced": replaced}
+
+
+def write_export(root, content: str) -> dict:
+    """Write the generated operator-profile snapshot to ``EXPERIENCE_EXPORT`` — never to
+    ``Resume/Experience.md``, whatever state that file is in. Regenerated on every export."""
+    path = Path(root) / EXPERIENCE_EXPORT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    return {"path": str(path)}

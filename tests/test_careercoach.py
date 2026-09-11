@@ -9,7 +9,6 @@ Two layers:
 from __future__ import annotations
 
 import importlib
-import sys
 import types
 from pathlib import Path
 
@@ -166,61 +165,245 @@ def test_packet_init_workspace_never_clobbers(plugin, tmp_path):
     assert exp.read_text() == "MY REAL EXPERIENCE"
 
 
-# ── register() — host-free (guards skip host-only knobs + subagents) ──────────
+def test_packet_source_read_write_and_guards(plugin, tmp_path):
+    """The workspace-file seam: the coach can reach the workspace files without a managed fs
+    project, can tell a seeded-but-untouched template from a filled-in one, and writes only the
+    story bank — not the discipline files that bind it, and not the operator's own Experience.md
+    (their history lives in the profile; that file only flows in by import)."""
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+    templates = ROOT / "templates"
+
+    # Unseeded workspace — reported missing, not silently empty.
+    missing = packet.read_source(tmp_path, "experience", templates)
+    assert missing["exists"] is False and missing["text"] == ""
+
+    packet.init_workspace(tmp_path, templates)
+
+    # Seeded but untouched: the file exists and has plenty of text, but is NOT edited — this is
+    # the distinction that stops the coach drafting a career out of template hint text.
+    seeded = packet.read_source(tmp_path, "experience", templates)
+    assert seeded["exists"] is True
+    assert seeded["edited"] is False
+    assert seeded["text"].startswith("# Experience")
+
+    # The story bank is the one writable source (the template counts as content being replaced)…
+    res = packet.write_source(tmp_path, "story-bank", "## Story: migration")
+    assert res["doc"] == "story-bank" and res["replaced"] is True
+    assert packet.read_source(tmp_path, "story-bank", templates)["edited"] is True
+    # …Experience.md and the discipline files are not.
+    for readonly in ("experience", "reviewer", "humanize", "improvements"):
+        try:
+            packet.write_source(tmp_path, readonly, "rewriting my own guardrails")
+            raise AssertionError(f"expected PermissionError writing {readonly}")
+        except PermissionError:
+            pass
+        assert packet.read_source(tmp_path, readonly, templates)["exists"] is True  # still readable
+
+    # An unknown slug is rejected on both paths, not silently created.
+    for call in (lambda: packet.read_source(tmp_path, "nope"), lambda: packet.write_source(tmp_path, "nope", "x")):
+        try:
+            call()
+            raise AssertionError("expected KeyError for unknown source")
+        except KeyError:
+            pass
+
+    # Without a templates_dir there's nothing to compare against — an existing file reads as edited.
+    assert packet.read_source(tmp_path, "reviewer")["edited"] is True
+
+
+def test_profile_store_completeness_and_context(plugin, monkeypatch, tmp_path):
+    """The operator profile: field-at-a-time writes, an honest completeness picture, and a
+    context block that names what's missing — the thing that stops the agent re-interviewing."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
+    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
+    profile = importlib.import_module(plugin.__name__ + ".profile")
+
+    # Cold start: well-formed but empty, and it injects NOTHING (an empty block is noise).
+    cov = profile.completeness()
+    assert cov["empty"] is True and cov["filled"] == 0
+    assert set(cov["missing"]) == set(profile.IDENTITY_FIELDS) | set(profile.SECTIONS)
+    assert profile.context_block() == ""
+
+    profile.update_field("name", "Ada Lovelace")
+    profile.update_field("location", "London")
+    saved = profile.update_field("roles", "### Analyst — Analytical Engine\n- Owned the notes")
+
+    # Field-at-a-time must not disturb its neighbours — a long interview saves as it goes.
+    assert saved["identity"]["name"] == "Ada Lovelace"
+    assert saved["identity"]["location"] == "London"
+    assert "Analytical Engine" in saved["sections"]["roles"]
+
+    cov = profile.completeness()
+    assert cov["filled"] == 3 and cov["empty"] is False
+    assert set(cov["known"]) == {"name", "location", "roles"}
+    assert "work_auth" in cov["missing"] and "do_not_claim" in cov["missing"]
+
+    block = profile.context_block()
+    assert "Ada Lovelace" in block and "London" in block  # short facts inject verbatim…
+    assert "Owned the notes" not in block  # …long sections do NOT (always-on context stays cheap)
+    assert "recorded (" in block  # they appear as presence + size instead
+    assert "MISSING" in block and "work_auth" in block
+    assert "NEVER ask for anything listed under KNOWN" in block
+    assert f"{cov['filled']} of {cov['total']}" in block
+
+    # do_not_claim is a guardrail: short, load-bearing, and injected IN FULL every turn.
+    profile.update_field("do_not_claim", "Never imply production ML ownership.")
+    block = profile.context_block()
+    assert "Never imply production ML ownership." in block
+
+    # The write gate rides along on EVERY turn, so a side-door request ("just make me a docx")
+    # can't reach a deliverable without the voice discipline having been loaded first.
+    assert "BEFORE WRITING ANYTHING IN THEIR NAME" in block
+    assert "writing-style" in block and "my-writing-style" in block
+    assert "side door does not suspend the rules" in block
+
+    # Unknown fields are rejected rather than silently creating a slot.
+    try:
+        profile.update_field("favourite_colour", "green")
+        raise AssertionError("expected KeyError for unknown profile field")
+    except KeyError:
+        pass
+
+    # A corrupt store never raises mid-turn: readers see nothing from it — but the block SAYS it's
+    # unreadable instead of reading as a fresh start, so the agent neither re-interviews nor drafts
+    # without the hard stops. (The write-side refusal is in test_profile_store.py.)
+    (tmp_path / "profile.json").write_text("{not json", encoding="utf-8")
+    assert profile.completeness()["empty"] is True
+    block = profile.context_block()
+    assert "unreadable" in block and "DO NOT CLAIM" in block and "Ada Lovelace" not in block
+
+    # The markdown export is generated FROM the profile (one write direction, no drift).
+    md = profile.to_markdown({"identity": {"name": "Ada"}, "sections": {"roles": "R"}, "updated": ""})
+    assert md.startswith("# Experience") and "Ada" in md and "_(not recorded)_" in md
+
+
+def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
+    """Parallel ``update_field`` calls must not drop each other's edits or tear the file.
+
+    Not theoretical: models emit tool calls in parallel, and a real run recorded five fields but
+    persisted two, leaving valid JSON with the tail of a longer write spliced onto the end. The
+    store is load-edit-save, so without a lock the last writer wins."""
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
+    monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
+    profile = importlib.import_module(plugin.__name__ + ".profile")
+
+    import json as _json
+    import threading
+
+    # Long values make an interleaved write far likelier to strand a tail.
+    fields = {
+        "name": "Ada Lovelace",
+        "location": "London",
+        "work_auth": "UK citizen",
+        "contact": "ada@example.com · linkedin.com/in/ada",
+        "headlines": "Analyst · Mathematician · Engine specialist",
+        "roles": "### Analyst — Analytical Engine\n" + ("- Owned the notes\n" * 120),
+        "skills": "**Can lead on:** " + ("symbolic computation, " * 60),
+        "do_not_claim": "Never imply hands-on manufacture of the Engine.",
+    }
+    barrier = threading.Barrier(len(fields))
+
+    def write(k, v):
+        barrier.wait()  # maximize overlap
+        profile.update_field(k, v)
+
+    threads = [threading.Thread(target=write, args=kv) for kv in fields.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # The file must still parse — no tail of a longer write left behind.
+    text = (tmp_path / "profile.json").read_text(encoding="utf-8")
+    _json.loads(text)  # raises if torn
+
+    # And every field must have survived, not just the last writer's.
+    prof = profile.load_profile()
+    for k, v in fields.items():
+        got = prof["identity"].get(k) or prof["sections"].get(k)
+        assert got == v.strip(), f"{k} was lost to a concurrent write"
+    assert profile.completeness(prof)["filled"] == len(fields)
+
+
+def test_skills_declare_real_tools(plugin, registry):
+    """Every ``careercoach_*`` tool a skill lists in its frontmatter must actually be registered.
+
+    Guards the failure mode this seam was built to fix: a skill instructing the agent to reach for
+    something the plugin never exposes, which fails silently at runtime as "the agent just didn't
+    do it". Also asserts each skill carries the frontmatter the host indexes on."""
+    plugin.register(registry)
+    registered = {getattr(t, "name", str(t)) for t in registry.tools}
+
+    skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
+    assert len(skills) >= 5, "skills should be discovered from skills/*/SKILL.md"
+
+    for path in skills:
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n"), f"{path.name} needs YAML frontmatter"
+        fm = yaml.safe_load(text.split("---\n", 2)[1])
+        assert fm.get("name") and fm.get("description"), f"{path.parent.name} needs name + description"
+        for name in fm.get("tools") or []:
+            if name.startswith("careercoach_"):
+                assert name in registered, f"{path.parent.name} declares unknown tool {name!r}"
+
+    # The onboarding skill is the entry point a fresh archetype lands on — it must be user-facing.
+    setup = yaml.safe_load((ROOT / "skills/setup-coach/SKILL.md").read_text().split("---\n", 2)[1])
+    assert setup["user_facing"] is True and setup["slash"] == "setup-coach"
+
+
+# ── register() — host-free (the testkit's record-only stand-ins let every guarded path run) ──
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
-    assert len(registry.tools) == 8  # 3 tracker/search + 5 packet tools; knobs skipped host-free
+    names = [t.name for t in registry.tools]
+    # 3 tracker/search + 11 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
+    # stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
+    assert len(names) == 17 and len(set(names)) == 17
+    assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
-    assert registry.subagents == []  # subagent registration skipped without the host
+    # The research → evaluate → write crew (graph.subagents.config is stood in by the testkit too).
+    assert {c.name for c in registry.subagents} == {"company_researcher", "job_evaluator", "application_writer"}
+    assert len(registry.middlewares) == 1  # the operator-profile frame (langchain is a dev dep)
     assert "careercoach:new_matches" in registry.verifiers  # goal verifier wired (VerifyResult is stubbed)
     assert "careercoach-watch" not in registry.surfaces  # auto-scan off by default
 
 
-# ── register() — full surface with lightweight host stubs ─────────────────────
+# ── register() — the rubric knobs, with the host seam recorded ─────────────────
 def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
-    """With graph.sdk (Knobs) + graph.subagents.config (SubagentConfig) present, the guarded
-    paths wire up: the rubric knobs become tools and the 3-subagent crew registers."""
+    """With graph.sdk's Knobs patched to a recording fake, the guarded knob path defines one knob
+    per rubric weight at its default (plus every preset), and the crew can pull the full skill."""
     import graph.sdk  # the testkit stub module
 
-    class _FakeKnobs:
+    rubric = importlib.import_module(plugin.__name__ + ".rubric")
+    made = {}
+
+    class _RecordingKnobs:
         def __init__(self):
-            self.defined = {}
+            self.defined, self.presets = {}, {}
+            made["knobs"] = self
 
         def define(self, key, value, **_):
             self.defined[key] = value
             return self
 
-        def preset(self, *_a, **_k):
+        def preset(self, name, overrides, **_):
+            self.presets[name] = overrides
             return self
 
-    monkeypatch.setattr(graph.sdk, "Knobs", _FakeKnobs, raising=False)
+    monkeypatch.setattr(graph.sdk, "Knobs", _RecordingKnobs, raising=False)
     monkeypatch.setattr(
-        graph.sdk, "make_knob_tools", lambda knobs, prefix: [f"{prefix}_knobs", f"{prefix}_tune"], raising=False
+        graph.sdk,
+        "make_knob_tools",
+        lambda knobs, prefix: [types.SimpleNamespace(name=f"{prefix}_tune")],
+        raising=False,
     )
-
-    # Stand in for graph.subagents.config (not in the testkit's default stubs).
-    subpkg = types.ModuleType("graph.subagents")
-    subpkg.__path__ = []  # type: ignore[attr-defined]
-    cfgmod = types.ModuleType("graph.subagents.config")
-
-    class _FakeSubagentConfig:
-        def __init__(self, **kw):
-            self.__dict__.update(kw)
-
-    cfgmod.SubagentConfig = _FakeSubagentConfig
-    monkeypatch.setitem(sys.modules, "graph.subagents", subpkg)
-    monkeypatch.setitem(sys.modules, "graph.subagents.config", cfgmod)
 
     plugin.register(registry)
 
-    # 8 base tools (track, list, search + 5 packet) + 2 knob tools.
-    assert len(registry.tools) == 10
-    assert any("careercoach_knobs" == str(t) for t in registry.tools)
-    # The research → evaluate → write crew.
-    names = {c.name for c in registry.subagents}
-    assert names == {"company_researcher", "job_evaluator", "application_writer"}
+    assert made["knobs"].defined == {f"weight_{d}": v for d, v in rubric.DEFAULT_WEIGHTS.items()}
+    assert set(made["knobs"].presets) == set(rubric.PRESETS)
+    assert "careercoach_tune" in {t.name for t in registry.tools}
     for c in registry.subagents:
         assert "load_skill" in c.tools or c.name == "company_researcher"
 

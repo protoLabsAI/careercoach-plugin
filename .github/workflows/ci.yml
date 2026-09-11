@@ -15,9 +15,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt ruff
-      # Lint the whole plugin; format-check only tests/ (the generated starter
-      # __init__ is yours to shape). Broaden to `ruff format --check .` once you've
-      # run `ruff format .` on your code.
-      - run: ruff check . && ruff format --check tests/
+      # ruff is PINNED, like the other plugin repos: an unpinned install once resolved a newer
+      # ruff whose default rules flagged code this version passes, and the job failed before
+      # pytest ran. Bump it deliberately, and run the same version locally.
+      - run: pip install -r requirements-dev.txt ruff==0.15.10
+      - run: ruff check . && ruff format --check .
       - run: pytest -q

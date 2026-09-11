@@ -7,7 +7,7 @@ description: >-
   The execution half of the Career Coach: score fit against the rubric, then draft
   tailored, honest, verified documents. For interview practice see interview-coach;
   for positioning / offers / negotiation see career-strategy; for skill gaps see upskill.
-tools: [careercoach_track_application, careercoach_list_applications, company_researcher]
+tools: [careercoach_track_application, careercoach_list_applications, careercoach_get_profile, careercoach_read_profile, careercoach_update_profile, careercoach_import_experience, company_researcher]
 ---
 
 # Job Application Assistant
@@ -41,8 +41,17 @@ that step (progressive disclosure), don't inline them all up front:
 
 ### Step 2 — Tailor the CV (on request)
 - Read `cv-guide.md` and `writing-style.md`.
-- Start from the user's existing CV/profile; reframe *emphasis*, never fabricate (see the
-  honesty test in `writing-style.md`).
+- Load the candidate's verified history with `careercoach_read_profile("experience")` — the
+  operator profile, the single source of truth (never a workspace `Resume/Experience.md`; that
+  only reaches the profile through `careercoach_import_experience`) — plus
+  `careercoach_get_profile("skills")` and `("stories")` as needed. The `<operator_profile>` block
+  you already have each turn is only an index; read the full record before drafting from it. If
+  it's thin, say so and offer `/setup-coach` — tailoring against an empty profile is just
+  inventing a career. Anything new they tell you goes into the profile
+  (`careercoach_update_profile`) before it goes into a draft.
+- Honour `do_not_claim` from that block as a hard stop, not a preference.
+- Reframe *emphasis* from that history, never fabricate (see the honesty test in
+  `writing-style.md`).
 - Render per the operator's `render_format` (default `html` → the artifact plugin → PDF;
   `docx` → a real Word file via cowork's `docx` skill → `save_file_artifact`; `latex` → moderncv
   `.tex`). See `cv-guide.md` for each path. **For `docx`, the cowork `docx` skill and the

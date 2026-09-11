@@ -3,7 +3,8 @@
 The bridge artifact, and the honesty backbone of the whole packet. Before writing a single resume
 bullet, map **each requirement in the posting** to **the candidate's actual proof**. The resume,
 skills list, and cover letter then draw *only* on what this map supports — so nothing unfounded can
-leak downstream. Build it from `Resume/Experience.md`, `Agent/story-bank.md`, and the recruiter brief.
+leak downstream. Build it from the operator profile (`careercoach_read_profile("experience")`),
+`Agent/story-bank.md`, and the recruiter brief.
 
 ## How to build it
 
@@ -25,7 +26,7 @@ leak downstream. Build it from `Resume/Experience.md`, `Agent/story-bank.md`, an
 
 | JD requirement | Match | Evidence (source) | Best proof to lead with |
 |----------------|-------|-------------------|-------------------------|
-| e.g. "5+ yrs product management" | Direct | 6 yrs PM @ X (Experience.md) | Owned X roadmap, $Y impact |
+| e.g. "5+ yrs product management" | Direct | 6 yrs PM @ X (profile: roles) | Owned X roadmap, $Y impact |
 | e.g. "clinical trial domain" | Adjacent | Regulated-data work @ X | Shipped under HIPAA audit |
 | e.g. "manage a team of 8" | Stretch | Led 3 ICs + 2 contractors | flag: never had 8 directs |
 | e.g. "SAS programming" | Gap | — | (none — see upskill / omit) |
