@@ -16,7 +16,7 @@ real job hunt is filed:
         prompt transcript.md
         role packet.md                 (the assembled deliverable)
         orchestration log.md
-      Resume/Experience.md             (per-candidate source of truth — from templates/)
+      Resume/Experience.md             (optional: the operator's own history, imported into the profile)
       Resume/Experience (profile export).md  (generated from the operator profile, on request)
       Agent/story-bank.md · Agent/experience-reviewer.md
       Skills/Humanize/SKILL.md · workflow-audit/improvements.md
@@ -87,14 +87,15 @@ SOURCES: dict[str, str] = {
     "improvements": "workflow-audit/improvements.md",
 }
 
-# Only the candidate's own two files are agent-writable (the onboarding interview fills them).
-# The rest are the discipline the agent is *bound by* — letting it rewrite those would quietly
-# move its own guardrails.
-WRITABLE_SOURCES: tuple[str, ...] = ("experience", "story-bank")
+# The only agent-writable source: the story bank. The discipline files are what the agent is
+# *bound by* — letting it rewrite those would quietly move its own guardrails. And
+# ``Resume/Experience.md`` is the operator's own file: the operator profile is the single source of
+# truth for their history, so the agent records history there (``update_field``) and reads it back
+# from there; Experience.md only ever flows INTO the profile, through an explicit import.
+WRITABLE_SOURCES: tuple[str, ...] = ("story-bank",)
 
 # Where the operator-profile export lands: its OWN file, beside ``Resume/Experience.md`` and never
-# over it. Experience.md is the operator's document (only they, or ``write_source`` with their
-# confirmation, write it); the export is a regenerated snapshot, so overwriting *it* loses nothing.
+# over it. The export is a regenerated snapshot of the profile, so overwriting *it* loses nothing.
 EXPERIENCE_EXPORT = "Resume/Experience (profile export).md"
 
 
@@ -311,11 +312,11 @@ def read_source(root, doc: str, templates_dir=None) -> dict:
 
 
 def write_source(root, doc: str, content: str) -> dict:
-    """Overwrite one of the candidate's own source files (the onboarding interview's write path).
+    """Overwrite one of the agent-writable source files (``WRITABLE_SOURCES``: the story bank).
 
-    Refuses the read-only discipline files by design — see ``WRITABLE_SOURCES``. Whole-file write:
-    callers read first and pass the merged markdown, so a partial write can't silently truncate a
-    career history."""
+    Refuses everything else by design — the discipline files, and ``Experience.md``, which is the
+    operator's own and only flows into the profile by import. Whole-file write: callers read first
+    and pass the merged markdown, so a partial write can't silently truncate the file."""
     if doc not in SOURCES:
         raise KeyError(f"unknown source {doc!r}; known: {', '.join(SOURCES)}")
     if doc not in WRITABLE_SOURCES:

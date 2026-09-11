@@ -3,12 +3,18 @@
 The coach's answer to "who am I working for?". Before this existed the answer lived in a
 markdown file the operator had to find in Finder, which meant two failures: the agent
 re-interviewed for facts it already held (it had no cheap way to know what it knew), and the
-person being described couldn't see the record. So the profile is now *state*, not a document:
+person being described couldn't see the record. So the profile is now *state*, not a document.
 
-  ``profile.json``   structured, in the plugin's per-instance store (beside ``applications.json``)
-       ↓ every turn        ``context_block()`` → an ``<operator_profile>`` frame via middleware
-       ↓ on demand         the full sections, via the profile tools
-       ↓ on request        ``to_markdown()`` → a portable snapshot, never over the operator's own file
+**The profile is the single source of truth.** Everything that reads the operator's history —
+the always-on block, ``careercoach_read_profile("experience")``, the drafting and scoring crew —
+reads *this*. A workspace ``Resume/Experience.md`` is never a competing read source; it takes part
+in two explicit, one-way moves:
+
+  ``Experience.md``  --import (``parse_experience`` + ``import_fields``, on request)-->  ``profile.json``
+  ``profile.json``   --export (``to_markdown``)-->  ``Resume/Experience (profile export).md``
+
+and every other write goes through ``update_field``, so an import obeys the same append/replace
+and ``do_not_claim`` rules as the agent does.
 
 Two design rules earn their keep:
 
@@ -23,9 +29,10 @@ Two design rules earn their keep:
 **Where it lives.** ``<instance_root>/careercoach/`` — the host's per-instance plugin store
 (``graph.sdk.plugin_store``, ADR 0004), so the dev sandbox, every fleet member and a container's
 persisted volume each get their own, and ``scripts/dev-reset.sh`` wipes the sandbox's. Before
-v0.7 it was ``~/.protoagent/careercoach[/<PROTOAGENT_INSTANCE>]``; a store found only there is
-copied forward on first load and the old file is left in place. ``CAREERCOACH_DIR`` overrides the
-location (tests / power users) with its pre-0.7 layout.
+v0.7 it was ``~/.protoagent/careercoach[/<PROTOAGENT_INSTANCE>]``: a store found there is copied
+forward once, the legacy folder gets a ``MIGRATED-TO`` note, and the old files are left in place
+(for a rollback) but never adopted again — so wiping the new store really starts over.
+``CAREERCOACH_DIR`` overrides the location (tests / power users) with its pre-0.7 layout.
 
 The store helpers here (location, lock, atomic write, the unreadable-file guard) are shared with
 ``state.py``. No host imports at module level, so every function is unit-testable with nothing
@@ -41,6 +48,7 @@ import re
 import shutil
 import tempfile
 import threading
+import unicodedata
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -84,8 +92,9 @@ ALWAYS_INJECT_SECTIONS: tuple[str, ...] = ("do_not_claim",)
 GUARDED_SECTIONS: tuple[str, ...] = ("do_not_claim",)
 
 # How a write to a section lands. ``append`` (the default) adds to what's there, so recording
-# roles one at a time keeps every one; ``replace`` rewrites the section and is for a caller that
-# has just read it in full. Identity fields are single facts and are always set.
+# roles one at a time keeps every one; ``replace`` rewrites the section and is how a CORRECTION is
+# made — read the section, fix it, write the whole thing back (appending a correction would leave
+# the wrong line beside it). Identity fields are single values and are always set outright.
 UPDATE_MODES: tuple[str, ...] = ("append", "replace")
 
 TOTAL_FIELDS = len(IDENTITY_FIELDS) + len(SECTIONS)
@@ -106,12 +115,12 @@ WRITE_GATE = (
     "side door does not suspend the rules."
 )
 
-# The export banner's first line. ``is_generated_export`` keys on it, so an ``Experience.md`` a
-# pre-0.7 export wrote over is recognised as a snapshot rather than as the operator's own file.
-EXPORT_MARKER = "> Generated from the Career Coach operator profile"
-
 # The files this store holds — the set copied forward from the pre-0.7 location.
 STORE_FILES: tuple[str, ...] = ("profile.json", "applications.json")
+
+# Written into a legacy folder once its store has been copied forward: which store(s) it went to
+# and when. A destination listed here never adopts the legacy files again.
+MIGRATED_MARKER = "MIGRATED-TO"
 
 
 # ── where the store lives ─────────────────────────────────────────────────────────────
@@ -175,8 +184,8 @@ def _path() -> Path:
 
 
 def backup_path(path) -> Path:
-    """The store's last-good copy: every successful write refreshes ``<file>.bak`` too, so a file
-    later broken by hand can be restored from what the coach last wrote."""
+    """The store's previous version: every write first saves what it's about to replace to
+    ``<file>.bak``, so the last change — a bad agent write included — can be undone by hand."""
     path = Path(path)
     return path.with_name(path.name + ".bak")
 
@@ -185,14 +194,26 @@ _ADOPTED: set[str] = set()
 _ADOPT_GUARD = threading.Lock()
 
 
-def _adopt_legacy(store: Path) -> None:
-    """Copy a store left at the pre-0.7 location forward, once per process per store.
+def _migrated_to(legacy: Path) -> set[str]:
+    """The stores a legacy folder's ``MIGRATED-TO`` note says it has already been copied into."""
+    try:
+        lines = (legacy / MIGRATED_MARKER).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {ln.split("\t", 1)[-1].strip() for ln in lines if ln.strip() and not ln.startswith("#")}
 
-    Only when the new file doesn't exist yet: the new location is authoritative from its first
-    write. The legacy file is never deleted or modified — a rollback to an older plugin still finds
-    it — and each copy is logged once. Serialized in-process and (on POSIX) across processes, and
-    every read and write resolves the store through here first, so nothing can write the new file
-    between the existence check and the copy."""
+
+def _adopt_legacy(store: Path) -> None:
+    """Copy a store left at the pre-0.7 location forward — once, ever, per destination.
+
+    Runs at most once per process per store (every read and write resolves the store through
+    here first, so nothing can write the new file between the check and the copy). A file is only
+    copied when the new one doesn't exist: the new location is authoritative from its first write.
+    Afterwards the legacy folder gets a ``MIGRATED-TO`` note naming this store, and a store named
+    there never adopts the legacy files again — so ``scripts/dev-reset.sh``, or an operator
+    deleting a member's ``careercoach/`` folder to start over, isn't undone by the next start. The
+    legacy files themselves are never modified or deleted (a rollback to 0.6 still finds them).
+    Serialized in-process and, on POSIX, across processes."""
     key = str(store)
     if key in _ADOPTED:
         return
@@ -201,25 +222,46 @@ def _adopt_legacy(store: Path) -> None:
             return
         legacy = _legacy_dir()
         if legacy.is_dir() and legacy.resolve() != store.resolve():
+            dest = str(store.resolve())
             with _file_lock(store / ".migrate.lock"):
-                for name in STORE_FILES:
-                    src, dst = legacy / name, store / name
-                    if dst.exists() or not src.is_file():
-                        continue
-                    try:
-                        fd, tmp = tempfile.mkstemp(dir=str(store), prefix=f".{name}.", suffix=".adopt")
-                        os.close(fd)
-                        shutil.copy2(src, tmp)
-                        os.replace(tmp, dst)
-                        log.info(
-                            "[careercoach] adopted %s from its pre-0.7 location: %s -> %s (the old file is left in place)",
-                            name,
-                            src,
-                            dst,
-                        )
-                    except OSError as exc:
-                        log.warning("[careercoach] could not adopt %s from %s: %s", name, src, exc)
+                if dest not in _migrated_to(legacy):
+                    present = [name for name in STORE_FILES if (legacy / name).is_file()]
+                    failed = False
+                    for name in present:
+                        src, dst = legacy / name, store / name
+                        if dst.exists():
+                            continue
+                        try:
+                            fd, tmp = tempfile.mkstemp(dir=str(store), prefix=f".{name}.", suffix=".adopt")
+                            os.close(fd)
+                            shutil.copy2(src, tmp)
+                            os.replace(tmp, dst)
+                            log.info(
+                                "[careercoach] adopted %s from its pre-0.7 location: %s -> %s",
+                                name,
+                                src,
+                                dst,
+                            )
+                        except OSError as exc:
+                            failed = True
+                            log.warning("[careercoach] could not adopt %s from %s: %s", name, src, exc)
+                    if present and not failed:
+                        _note_migration(legacy, dest)
         _ADOPTED.add(key)
+
+
+def _note_migration(legacy: Path, dest: str) -> None:
+    marker = legacy / MIGRATED_MARKER
+    try:
+        with open(marker, "a", encoding="utf-8") as fh:
+            if fh.tell() == 0:
+                fh.write(
+                    "# Career Coach 0.7+ copied this folder's profile.json / applications.json to the\n"
+                    "# store(s) below and no longer reads them here. Kept for a rollback; safe to delete.\n"
+                )
+            fh.write(f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}\t{dest}\n")
+    except OSError as exc:  # a missing note only means a later wipe could re-adopt; never fail a read
+        log.warning("[careercoach] could not write %s: %s", marker, exc)
 
 
 # ── serialized, atomic, never-over-an-unreadable-file writes ──────────────────────────
@@ -285,24 +327,32 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _write_store(path: Path, text: str) -> None:
-    """Persist a store file and refresh its last-good copy (``backup_path``)."""
-    _atomic_write(path, text)
+    """Persist a store file, first saving the version it replaces to ``backup_path`` — one
+    generation back, so the change being made can always be undone. Callers hold the lock and
+    have already refused an unreadable file, so what's saved is a good version."""
     try:
-        _atomic_write(backup_path(path), text)
-    except OSError as exc:  # the backup is a belt; a failed one must not fail the write
-        log.warning("[careercoach] could not refresh %s: %s", backup_path(path), exc)
+        previous = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        previous = None
+    if previous is not None and previous.strip() and previous != text:
+        try:
+            _atomic_write(backup_path(path), previous)
+        except OSError as exc:  # the backup is a belt; a failed one must not fail the write
+            log.warning("[careercoach] could not save %s: %s", backup_path(path), exc)
+    _atomic_write(path, text)
 
 
 class StoreUnreadable(RuntimeError):
-    """A store file exists but can't be parsed. Writers raise this rather than treat it as empty:
-    an ordinary one-field update would otherwise save that one field over everything in it."""
+    """A store file has content that can't be parsed. Writers raise this rather than treat it as
+    empty: an ordinary one-field update would otherwise save that one field over everything."""
 
     def __init__(self, path, reason: str):
         self.path = Path(path)
         self.reason = reason
         backup = backup_path(self.path)
         remedy = (
-            f"The last copy the coach wrote is {backup}: restore it, or fix the file."
+            f"Fix the file (usually a one-character slip), or restore {backup}, the version before "
+            "the coach's last change."
             if backup.is_file()
             else "Fix the file to continue."
         )
@@ -313,14 +363,16 @@ class StoreUnreadable(RuntimeError):
 
 
 def _read_json(path: Path):
-    """``(data, error)``: ``(None, "")`` when the file doesn't exist, ``(None, reason)`` when it
-    exists but can't be read or parsed."""
+    """``(data, error)``: ``(None, "")`` when the file doesn't exist or is empty (nothing to lose),
+    ``(None, reason)`` when it has content that can't be read or parsed."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None, ""
     except (OSError, ValueError) as exc:
         return None, f"can't be read: {exc}"
+    if not text.strip():
+        return None, ""
     try:
         return json.loads(text), ""
     except ValueError as exc:
@@ -354,7 +406,7 @@ def _normalize(raw: dict) -> dict:
 
 
 def load_profile_checked() -> tuple[dict, str]:
-    """``(profile, error)``. ``error`` is "" when the store is fine or absent, else why it's
+    """``(profile, error)``. ``error`` is "" when the store is fine, absent or empty, else why it's
     unreadable — in which case ``profile`` is empty. Readers that can say so to the agent use this."""
     path = _path()
     raw, err = _read_json(path)
@@ -406,14 +458,30 @@ def _appended(existing: str, addition: str) -> str:
     return f"{existing}\n\n{addition}"
 
 
+def _dropped(old: str, new: str) -> list[str]:
+    kept = set(_lines(new))
+    return [ln for ln in _lines(old) if ln not in kept]
+
+
+def _refuse_removal(field: str, dropped: list[str]) -> PermissionError:
+    listed = "\n".join(f"  - {ln}" for ln in dropped)
+    return PermissionError(
+        f"Refused: this would remove {len(dropped)} line(s) from {field}, the hard stops "
+        f"the operator set:\n{listed}\nThose are theirs to drop, not yours. Ask them; only "
+        "if they explicitly confirm, call again with confirm_removal=true. To add a line, "
+        "use mode='append' (the default)."
+    )
+
+
 def update_field(field: str, content: str, *, mode: str = "append", confirm_removal: bool = False) -> dict:
     """Record one identity field or one section, leaving every other field untouched.
 
     Field-at-a-time is the point: a long onboarding interview saves as it goes, so nothing is lost
-    if it's abandoned. Identity fields are single facts and are set outright. Sections **append**
-    by default, so recording roles one at a time keeps every role — no ordinary write truncates a
-    career history. ``mode="replace"`` rewrites a section and is for a caller that has just read it
-    in full and passes the whole merged text.
+    if it's abandoned. Identity fields are single values and are set outright (for the multi-part
+    ones — ``contact``, ``headlines`` — pass the whole line). Sections **append** by default, so
+    recording roles one at a time keeps every role — no ordinary write truncates a career history.
+    ``mode="replace"`` rewrites a section: it's how a correction is made, by a caller that has just
+    read the section in full and passes the whole fixed text.
 
     Refuses rather than guesses:
 
@@ -442,21 +510,11 @@ def update_field(field: str, content: str, *, mode: str = "append", confirm_remo
         prof = _normalize(raw) if raw else empty_profile()
         slot = "identity" if field in IDENTITY_FIELDS else "sections"
         old = prof[slot][field]
-        if slot == "identity" or mode == "replace":
-            new = text
-        else:
-            new = _appended(old, text)
+        new = text if slot == "identity" or mode == "replace" else _appended(old, text)
         if field in GUARDED_SECTIONS and not confirm_removal:
-            kept = set(_lines(new))
-            dropped = [ln for ln in _lines(old) if ln not in kept]
+            dropped = _dropped(old, new)
             if dropped:
-                listed = "\n".join(f"  - {ln}" for ln in dropped)
-                raise PermissionError(
-                    f"Refused: this would remove {len(dropped)} line(s) from {field}, the hard stops "
-                    f"the operator set:\n{listed}\nThose are theirs to drop, not yours. Ask them; only "
-                    "if they explicitly confirm, call again with confirm_removal=true. To add a line, "
-                    "use mode='append' (the default)."
-                )
+                raise _refuse_removal(field, dropped)
         if new == old:
             return {**prof, "change": "unchanged"}
         prof[slot][field] = new
@@ -503,6 +561,10 @@ def _summarize(text: str) -> str:
     return f"recorded ({len(lines)} lines, {len(text)} chars)"
 
 
+# The compatibility forms of the delimiter characters (fullwidth / small-form < > /) — the only
+# code points whose NFKC form is one of them — folded to ASCII before neutralizing, rather than
+# NFKC-normalizing the whole value (which would also turn "10⁶" into "106" in a hard stop).
+_DELIMITER_LOOKALIKES = str.maketrans({"﹤": "<", "＜": "<", "﹥": ">", "＞": ">", "／": "/"})
 # Anything shaped like a tag opener — ``<operator_profile>``, ``</injected_context>``, ``<system>``.
 _TAG_OPENER = re.compile(r"<(?=\s*/?\s*[A-Za-z_!?])")
 
@@ -510,8 +572,11 @@ _TAG_OPENER = re.compile(r"<(?=\s*/?\s*[A-Za-z_!?])")
 def _defang(text: str) -> str:
     """Neutralize tag-shaped text in a profile value, so nothing the agent recorded — say, a line
     harvested from an ingested CV — can close the ``<operator_profile>`` block (or the host frame
-    around it) and speak as the block itself."""
-    return _TAG_OPENER.sub("&lt;", text or "")
+    around it) and speak as the block itself. Invisible format characters (zero-width space,
+    joiners, direction overrides) are dropped first, and look-alike brackets folded to ASCII, so
+    ``<`` + ZWSP + ``/operator_profile>`` or a fullwidth ``＜/operator_profile＞`` is caught too."""
+    text = "".join(ch for ch in (text or "") if unicodedata.category(ch) != "Cf")
+    return _TAG_OPENER.sub("&lt;", text.translate(_DELIMITER_LOOKALIKES))
 
 
 def _one_line(text: str) -> str:
@@ -532,7 +597,7 @@ def unreadable_block(reason: str) -> str:
     ]
     backup = backup_path(path)
     if backup.is_file():
-        lines.append(_defang(f"The last copy you wrote is {backup}; restoring it (or fixing the file) clears this."))
+        lines.append(_defang(f"The version before your last change is {backup}, if fixing the file is harder."))
     lines.append("</operator_profile>")
     return "\n".join(lines)
 
@@ -593,23 +658,12 @@ def context_block(profile: dict | None = None) -> str:
     return "\n".join(lines)
 
 
-def to_markdown(profile: dict | None = None) -> str:
-    """Render the profile as a portable, ``Experience.md``-shaped snapshot.
-
-    The export exists so the record stays the operator's: readable, diffable, and handable to
-    anyone, including a different agent. It's written to its own file and regenerated on every
-    export — never over the operator's own ``Resume/Experience.md``."""
+def render_markdown(profile: dict | None = None) -> str:
+    """The profile as markdown — what ``careercoach_read_profile("experience")`` serves, and the
+    body of the export. Same section labels ``parse_experience`` reads back."""
     prof = profile if profile is not None else load_profile()
     ident, sect = prof["identity"], prof["sections"]
-    out = [
-        "# Experience (profile export)",
-        "",
-        EXPORT_MARKER + (f" on {prof.get('updated')}" if prof.get("updated") else "") + ".",
-        "> A regenerated snapshot: the next export overwrites this file. To change the record, tell",
-        "> your coach in chat (the Career Coach panel is a read-only view of it).",
-        "",
-        "## Identity",
-    ]
+    out = ["## Identity"]
     for k, label in IDENTITY_FIELDS.items():
         out.append(f"- **{label}:** {ident.get(k) or '_(not recorded)_'}")
     for k, label in SECTIONS.items():
@@ -617,7 +671,171 @@ def to_markdown(profile: dict | None = None) -> str:
     return "\n".join(out) + "\n"
 
 
-def is_generated_export(text: str) -> bool:
-    """Whether ``text`` is a snapshot ``to_markdown`` wrote (this version's or a pre-0.7 one that
-    went over ``Experience.md``) rather than something the operator authored."""
-    return any(ln.startswith(EXPORT_MARKER) for ln in (text or "").splitlines()[:6])
+def to_markdown(profile: dict | None = None) -> str:
+    """The portable export: ``render_markdown`` under a title and a banner, written to
+    ``Resume/Experience (profile export).md`` — never over the operator's own ``Experience.md``.
+    Readable, diffable, and handable to anyone, including a different agent."""
+    prof = profile if profile is not None else load_profile()
+    head = [
+        "# Experience (profile export)",
+        "",
+        "> Generated from the Career Coach operator profile"
+        + (f" on {prof.get('updated')}" if prof.get("updated") else "")
+        + ".",
+        "> A regenerated snapshot: the next export overwrites this file. To change the record, tell",
+        "> your coach in chat (the Career Coach panel is a read-only view of it).",
+        "",
+    ]
+    return "\n".join(head) + render_markdown(prof)
+
+
+# ── Experience.md → profile: the explicit import ──────────────────────────────────────
+# An H2 heading in the operator's file → the profile field it feeds. First match wins, so the
+# specific patterns come first ("Lines never to claim" is do_not_claim, not roles).
+_HEADING_FIELDS: tuple[tuple[str, re.Pattern], ...] = (
+    ("do_not_claim", re.compile(r"\b(do not|don't|never)\b.*\bclaim", re.I)),
+    ("stories", re.compile(r"\bstor(y|ies)\b|\bstar\b", re.I)),
+    ("education", re.compile(r"\beducation\b|\bcertific|\bcredential|\bdegree|\bqualification", re.I)),
+    ("skills", re.compile(r"\bskill", re.I)),
+    ("notes", re.compile(r"\bnotes?\b", re.I)),
+    ("roles", re.compile(r"\broles?\b|\bexperience\b|\bemployment\b|\bwork history\b|\bcareer\b|\bpositions?\b", re.I)),
+    ("identity", re.compile(r"\bidentity\b|\bcontact\b|\babout\b|\bpersonal\b", re.I)),
+)
+# A "- **Label:** value" / "Label: value" line in the identity section → the identity field.
+_IDENTITY_LABELS: tuple[tuple[str, re.Pattern], ...] = (
+    ("name", re.compile(r"\bname\b", re.I)),
+    ("location", re.compile(r"\blocation\b|\bbased\b|\bcity\b", re.I)),
+    ("work_auth", re.compile(r"\bauthori[sz]ation\b|\bvisa\b|\bright to work\b|\bwork auth", re.I)),
+    ("contact", re.compile(r"\bcontact\b|\bemail\b|\bphone\b|\blinkedin\b|\bportfolio\b|\bgithub\b", re.I)),
+    ("headlines", re.compile(r"\bheadline|\btitles?\b|\brole-type\b", re.I)),
+)
+_LABELLED = re.compile(r"^\s*(?:[-*+]\s+)?(?:\*\*(?P<b>[^*]+?):?\*\*:?|(?P<p>[A-Za-z][^:*]{0,48}):)\s*(?P<value>.*)$")
+_NOT_RECORDED = "_(not recorded)_"
+
+
+def _labelled(line: str) -> tuple[str, str] | None:
+    m = _LABELLED.match(line)
+    if not m:
+        return None
+    return (m.group("b") or m.group("p") or "").strip(), m.group("value").strip()
+
+
+def parse_experience(text: str, template_text: str = "") -> tuple[dict[str, str], list[str]]:
+    """Read an operator-written ``Experience.md`` into profile fields: ``(fields, unmapped)``.
+
+    Sections are found by their ``##`` heading (the template's, the export's, or a plain "Skills" /
+    "Experience"), identity facts by ``Label: value`` lines. Every line that is still the shipped
+    template's hint text is dropped — so a file where only the Name line was filled in yields just
+    the name, never the template's example bullets — as are ``_(not recorded)_`` placeholders and
+    the preamble (title and banner). Anything that doesn't map to a field comes back in ``unmapped``
+    for the agent to raise, rather than being guessed into one."""
+    template = {ln.strip() for ln in (template_text or "").splitlines() if ln.strip()}
+    fields: dict[str, list[str]] = {}
+    unmapped: list[str] = []
+    heading, target = "", None  # None = preamble; "" = an unmapped section
+
+    def keep(line: str) -> bool:
+        s = line.strip()
+        return bool(s) and s not in template and s != _NOT_RECORDED
+
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        h2 = re.match(r"^##\s+(.*?)\s*#*\s*$", line)
+        if h2 and not line.startswith("###"):
+            heading = h2.group(1)
+            target = next((f for f, pat in _HEADING_FIELDS if pat.search(heading)), "")
+            if target in SECTIONS and fields.get(target):
+                fields[target].append("")  # a second heading feeding the same field starts a new paragraph
+            continue
+        if target is None:  # preamble: the title and a banner are the file's, not the operator's history
+            if keep(line) and not line.lstrip().startswith(("#", ">")):
+                unmapped.append(line.strip())
+            continue
+        if not keep(line):
+            if not line.strip() and target in SECTIONS and fields.get(target):
+                fields[target].append("")  # keep paragraph breaks inside a section
+            continue
+        if target == "identity":
+            pair = _labelled(line)
+            value = pair[1] if pair and pair[1] != _NOT_RECORDED else ""
+            if pair and not value:
+                continue  # "Label:" with nothing after it is an unfilled slot, not content
+            field = next((f for f, pat in _IDENTITY_LABELS if pair and pat.search(pair[0])), None)
+            if field:
+                fields.setdefault(field, []).append(value)
+            else:
+                unmapped.append(f"{heading}: {line.strip()}")
+            continue
+        if target == "skills":
+            pair = _labelled(line)
+            if pair and _HEADING_FIELDS[0][1].search(pair[0]):  # the template's "Explicitly do NOT claim:"
+                if pair[1] and pair[1] != _NOT_RECORDED:
+                    fields.setdefault("do_not_claim", []).append(pair[1])
+                continue
+        if target == "":
+            unmapped.append(f"{heading}: {line.strip()}")
+            continue
+        fields.setdefault(target, []).append(line)
+
+    out: dict[str, str] = {}
+    for field, lines in fields.items():
+        if field in IDENTITY_FIELDS:
+            out[field] = " · ".join(dict.fromkeys(lines))
+        else:
+            body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+            if body:
+                out[field] = body
+    return out, unmapped
+
+
+def import_fields(
+    fields: dict[str, str], *, mode: str = "append", confirm_removal: bool = False, apply: bool = False
+) -> list[dict]:
+    """What importing ``fields`` would do to the profile — and, with ``apply=True``, do it — one
+    row per field: ``{"field", "outcome", "detail"}``.
+
+    Everything goes through ``update_field``, so the import obeys the agent's own rules: sections
+    append (or replace, when asked), dropping a ``do_not_claim`` line needs ``confirm_removal``, an
+    unreadable store raises ``StoreUnreadable``. Identity facts are filled in where the profile has
+    none; one that differs from the profile is kept as-is unless ``mode="replace"``."""
+    if mode not in UPDATE_MODES:
+        raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
+    path = _path()
+    raw, err = _read_json(path)
+    if err or (raw is not None and not isinstance(raw, dict)):
+        raise StoreUnreadable(path, err or "not a JSON object")
+    prof = _normalize(raw) if raw else empty_profile()
+    rows: list[dict] = []
+    for field in list(IDENTITY_FIELDS) + list(SECTIONS):
+        text = (fields.get(field) or "").strip()
+        if not text:
+            continue
+        if field in IDENTITY_FIELDS:
+            old = prof["identity"][field]
+            if old == text:
+                rows.append({"field": field, "outcome": "unchanged", "detail": ""})
+                continue
+            if old and mode == "append":
+                rows.append({"field": field, "outcome": "kept", "detail": f"file says {text!r}, profile keeps {old!r}"})
+                continue
+            outcome, detail = ("replaced" if old else "set"), repr(text)
+        else:
+            old = prof["sections"][field]
+            new = text if mode == "replace" else _appended(old, text)
+            if new == old:
+                rows.append({"field": field, "outcome": "unchanged", "detail": ""})
+                continue
+            dropped = _dropped(old, new)
+            if field in GUARDED_SECTIONS and dropped and not confirm_removal:
+                rows.append(
+                    {"field": field, "outcome": "refused", "detail": f"would remove {len(dropped)} hard stop(s)"}
+                )
+                continue
+            had = set(_lines(old))
+            added = len([ln for ln in _lines(new) if ln not in had])
+            outcome = "set" if not old else ("replaced" if mode == "replace" else "appended")
+            detail = f"{added} new line(s)" + (f", {len(dropped)} removed" if dropped else "")
+        if apply:
+            outcome = update_field(field, text, mode=mode, confirm_removal=confirm_removal)["change"]
+        rows.append({"field": field, "outcome": outcome, "detail": detail})
+    return rows

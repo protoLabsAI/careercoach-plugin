@@ -166,9 +166,10 @@ def test_packet_init_workspace_never_clobbers(plugin, tmp_path):
 
 
 def test_packet_source_read_write_and_guards(plugin, tmp_path):
-    """The source-of-truth seam: the coach can reach Experience.md without a managed fs project,
-    can tell a seeded-but-untouched template from a filled-in one, and cannot rewrite the
-    discipline files that bind it."""
+    """The workspace-file seam: the coach can reach the workspace files without a managed fs
+    project, can tell a seeded-but-untouched template from a filled-in one, and writes only the
+    story bank — not the discipline files that bind it, and not the operator's own Experience.md
+    (their history lives in the profile; that file only flows in by import)."""
     packet = importlib.import_module(plugin.__name__ + ".packet")
     templates = ROOT / "templates"
 
@@ -183,16 +184,14 @@ def test_packet_source_read_write_and_guards(plugin, tmp_path):
     seeded = packet.read_source(tmp_path, "experience", templates)
     assert seeded["exists"] is True
     assert seeded["edited"] is False
-    assert "source of truth" in seeded["text"]
+    assert seeded["text"].startswith("# Experience")
 
-    res = packet.write_source(tmp_path, "experience", "# Experience\n\n- Staff Eng @ Acme, 6y")
-    assert res["replaced"] is True  # the template counts as content being replaced
-    filled = packet.read_source(tmp_path, "experience", templates)
-    assert filled["edited"] is True and "Acme" in filled["text"]
-
-    # Story bank is writable too; the discipline files are not.
-    assert packet.write_source(tmp_path, "story-bank", "## Story: migration")["doc"] == "story-bank"
-    for readonly in ("reviewer", "humanize", "improvements"):
+    # The story bank is the one writable source (the template counts as content being replaced)…
+    res = packet.write_source(tmp_path, "story-bank", "## Story: migration")
+    assert res["doc"] == "story-bank" and res["replaced"] is True
+    assert packet.read_source(tmp_path, "story-bank", templates)["edited"] is True
+    # …Experience.md and the discipline files are not.
+    for readonly in ("experience", "reviewer", "humanize", "improvements"):
         try:
             packet.write_source(tmp_path, readonly, "rewriting my own guardrails")
             raise AssertionError(f"expected PermissionError writing {readonly}")
@@ -356,9 +355,9 @@ def test_skills_declare_real_tools(plugin, registry):
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
     names = [t.name for t in registry.tools]
-    # 3 tracker/search + 10 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
+    # 3 tracker/search + 11 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
     # stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
-    assert len(names) == 16 and len(set(names)) == 16
+    assert len(names) == 17 and len(set(names)) == 17
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route

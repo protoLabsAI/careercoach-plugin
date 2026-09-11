@@ -1,9 +1,10 @@
-# Experience — source of truth
+# Experience — your history, in your words
 
-> This is the **one file everything is anchored to**. The coach reframes and selects from
-> what's here; it never invents beyond it. Rule: if a claim isn't in this file *and true*,
-> it does not go on a resume, in an evidence map, or in a cover letter. Keep it verified,
-> specific, and current. Update it as your career moves, not per application.
+> **Optional.** If you'd rather write your history than be interviewed for it, fill this in and
+> ask your coach to **import** it: it shows you what it will add to your profile and records it
+> once you confirm. Your coach's **profile** is the one record everything is anchored to; it
+> reframes and selects from that and never invents beyond it. So keep this verified and
+> specific, and re-import after you edit it. The coach never writes over this file.
 
 ## Identity
 - **Name:**

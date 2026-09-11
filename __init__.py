@@ -162,10 +162,10 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_init_workspace() -> str:
-        """Seed your job-search workspace with the fill-in reference templates (Experience source
-        of truth, story bank, experience-reviewer rules, Humanize skill, improvements log). Safe to
-        re-run: it only adds files that are missing and never overwrites your edits. Run this once
-        before your first role packet, then fill in Resume/Experience.md."""
+        """Seed your job-search workspace with the fill-in reference templates (an Experience.md
+        the operator can write their history into, story bank, experience-reviewer rules, Humanize
+        skill, improvements log). Safe to re-run: it only adds files that are missing and never
+        overwrites your edits. Run this once before your first role packet."""
         root = packet.resolve_root(_root())
         res = packet.init_workspace(root, templates_dir)
         if not res["created"]:
@@ -173,8 +173,9 @@ def _register_packet_tools(registry, cfg) -> None:
         made = "\n".join(f"  - {r}" for r in res["created"])
         return (
             f"Seeded your workspace at {res['root']}:\n{made}\n\n"
-            "Next: fill in Resume/Experience.md (your verified source of truth) — everything the "
-            "coach writes is anchored to it."
+            "Next: build the operator profile with /setup-coach — it's the record everything the "
+            "coach writes is anchored to. If they'd rather write their history into "
+            "Resume/Experience.md, bring it in afterwards with careercoach_import_experience."
         )
 
     @tool
@@ -218,9 +219,11 @@ def _register_packet_tools(registry, cfg) -> None:
         an identity fact (`name`, `location`, `work_auth`, `contact`, `headlines` — each set to
         `content`) or a section (`roles`, `education`, `skills`, `do_not_claim`, `stories`,
         `notes`). Sections APPEND by default, so recording roles one at a time keeps every one and
-        no ordinary write truncates a career history. Pass `mode="replace"` only to rewrite a
-        section you've just read in full with careercoach_get_profile, giving the whole merged
-        text. Dropping or rewording any `do_not_claim` line is refused unless
+        no ordinary write truncates a career history. To CORRECT something already recorded, read
+        the section with careercoach_get_profile, fix it, and write the whole section back with
+        `mode="replace"` — appending a correction leaves the wrong line beside it. Identity fields
+        hold one value each: for `contact` or `headlines`, pass the whole line (what's there plus
+        the addition). Dropping or rewording any `do_not_claim` line is refused unless
         `confirm_removal=true` — set that only after the operator explicitly asked you to remove
         that hard stop. Never record anything the operator didn't tell you or confirm: this
         profile is the anti-fabrication anchor for every CV, letter and interview answer."""
@@ -242,10 +245,10 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_export_experience() -> str:
-        """Write a portable markdown snapshot of the operator's profile to
-        `Resume/Experience (profile export).md` in their workspace — readable, diffable, and
-        handable to anyone. It never touches their own `Resume/Experience.md`; each run regenerates
-        the snapshot from the current profile."""
+        """Write a portable markdown snapshot of the operator's profile (the single source of
+        truth) to `Resume/Experience (profile export).md` in their workspace — readable, diffable,
+        and handable to anyone. It never touches their own `Resume/Experience.md`; each run
+        regenerates the snapshot from the current profile."""
         prof, err = profile.load_profile_checked()
         if err:
             return f"Not exported: {profile.unreadable_block(err)}"
@@ -257,55 +260,129 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_read_profile(doc: str = "experience") -> str:
-        """Read one of the candidate's workspace source-of-truth files — the files every CV bullet,
-        evidence-map row and cover-letter claim must trace back to. `doc` is one of: `experience`
-        (their verified career history: their own Resume/Experience.md once they've filled it in,
-        which wins over the profile where the two differ; until then, their operator profile
-        rendered as markdown), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
+        """Read the candidate's record, or one of the workspace reference files — what every CV
+        bullet, evidence-map row and cover-letter claim must trace back to. `doc` is one of:
+        `experience` (their career record: ALWAYS the live operator profile — the single source of
+        truth, the same record careercoach_get_profile reads — rendered as markdown; the workspace
+        Resume/Experience.md is never read here, it reaches the profile only through
+        careercoach_import_experience), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
         guardrails), `reviewer` (the experience-reviewer discipline), `humanize` (anti-slop rules),
         `improvements` (the workflow-audit log). Read `experience` BEFORE drafting anything in the
-        candidate's name — if it comes back unfilled, help them fill it in rather than inventing."""
+        candidate's name — if it comes back empty, help them build the profile rather than inventing."""
         root = packet.resolve_root(_root())
-        try:
-            res = packet.read_source(root, doc, templates_dir)
-        except KeyError as e:
-            return f"{e}"
-        operator_filled = res["exists"] and res["edited"] and not profile.is_generated_export(res["text"])
-        if doc == "experience" and not operator_filled:
-            # The operator hasn't written Experience.md (missing, the template, or a pre-0.7 export
-            # that went over it) — so the profile IS their record. Serve it, rather than sending a
-            # filled-in profile round the "run /setup-coach" loop.
+        if doc == "experience":
             prof, err = profile.load_profile_checked()
             if err:
                 return profile.unreadable_block(err)
             if not profile.completeness(prof)["empty"]:
                 return (
-                    f"The operator hasn't filled in Resume/Experience.md ({res['path']}), so this is "
-                    "their operator profile — the record careercoach_get_profile reads — rendered as "
-                    "markdown. Draft from it. If they later fill in Experience.md, that file wins.\n\n"
-                    + profile.to_markdown(prof)
+                    "The operator's career record — their operator profile, the single source of truth "
+                    "(what careercoach_get_profile reads), rendered as markdown. Draft only from this; "
+                    "record additions or corrections with careercoach_update_profile once they confirm.\n\n"
+                    + profile.render_markdown(prof)
                 )
+            hint = ""
+            res = packet.read_source(root, "experience", templates_dir)
+            if res["exists"]:
+                tpl = templates_dir / packet.SOURCES["experience"]
+                fields, _ = profile.parse_experience(
+                    res["text"], tpl.read_text(encoding="utf-8") if tpl.is_file() else ""
+                )
+                if fields:
+                    hint = (
+                        f" Their own {res['path']} has history in it that isn't in the profile: offer to "
+                        "bring it in with careercoach_import_experience (preview first, apply once they confirm)."
+                    )
+            return (
+                "No operator profile recorded yet, so there is no career record to draft from — do NOT "
+                "invent one. Run /setup-coach (or interview them) and record it with "
+                "careercoach_update_profile." + hint
+            )
+        try:
+            res = packet.read_source(root, doc, templates_dir)
+        except KeyError as e:
+            return f"{e}"
         if not res["exists"]:
             return (
                 f"{doc} not found at {res['path']} — the workspace isn't seeded yet. "
                 "Run careercoach_init_workspace first."
             )
-        if not res["edited"]:
+        if doc in packet.WRITABLE_SOURCES and not res["edited"]:
             return (
                 f"{doc} at {res['path']} is still the untouched template — the candidate hasn't "
-                "filled it in. Do NOT draft from it; run /setup-coach (or interview them) and save "
-                "the result with careercoach_write_profile.\n\n"
+                "filled it in. Do NOT draft from its placeholder text; ask them (or run /setup-coach) "
+                "and save what they confirm with careercoach_write_profile.\n\n"
                 f"{res['text']}"
             )
         return res["text"]
 
     @tool
+    def careercoach_import_experience(apply: bool = False, mode: str = "append", confirm_removal: bool = False) -> str:
+        """Bring the operator's own Resume/Experience.md into their profile — the only way that
+        file's content reaches you (the profile is the single source of truth; nothing reads
+        Experience.md directly). Use it in /setup-coach when they already keep one, and whenever
+        they say they've edited it. Call it first WITHOUT `apply`: it previews, field by field, what
+        would change (the template's hint text, and anything already in the profile, is skipped).
+        Show the operator the preview, and only after they confirm call again with `apply=true`.
+        Sections append by default; `mode="replace"` makes each imported section match the file
+        (for corrections they made there). Dropping a `do_not_claim` line still needs
+        `confirm_removal=true`, and only on their explicit say-so."""
+        root = packet.resolve_root(_root())
+        res = packet.read_source(root, "experience", templates_dir)
+        if not res["exists"]:
+            return f"No Resume/Experience.md at {res['path']} — nothing to import."
+        tpl = templates_dir / packet.SOURCES["experience"]
+        fields, unmapped = profile.parse_experience(
+            res["text"], tpl.read_text(encoding="utf-8") if tpl.is_file() else ""
+        )
+        if not fields and not unmapped:
+            return f"{res['path']} is still the untouched template — nothing to import."
+        try:
+            rows = profile.import_fields(fields, mode=mode, confirm_removal=confirm_removal, apply=apply)
+        except (ValueError, PermissionError, profile.StoreUnreadable) as e:
+            return f"Not imported: {e}"
+        head = "Imported" if apply else "Import preview — nothing written yet"
+        lines = [f"{head} (mode={mode}) from {res['path']}:"]
+        lines += [f"  {r['field']}: {r['outcome']}" + (f" — {r['detail']}" if r["detail"] else "") for r in rows]
+        if not rows:
+            lines.append("  (nothing in it maps to a profile field)")
+        outcomes = {r["outcome"] for r in rows}
+        if "kept" in outcomes:
+            lines.append("'kept' = the file differs from the profile; mode='replace' takes the file's version.")
+        if "refused" in outcomes:
+            lines.append(
+                "'refused' = it would drop do_not_claim hard stops: only with their explicit say-so (confirm_removal=true)."
+            )
+        if unmapped:
+            lines.append(
+                f"Not imported — {len(unmapped)} line(s) match no profile field; raise them with the operator "
+                "and record what they confirm with careercoach_update_profile:"
+            )
+            lines += [f"  {u[:160]}" for u in unmapped[:12]] + (["  …"] if len(unmapped) > 12 else [])
+        if outcomes == {"unchanged"}:
+            lines.append("Nothing new to import: the profile already has everything the file says.")
+        elif not apply and outcomes & {"set", "appended", "replaced"}:
+            lines.append("Show the operator this preview; if they confirm, call again with apply=true.")
+        if apply:
+            cov = profile.completeness()
+            lines.append(f"Profile now {cov['filled']}/{cov['total']} fields.")
+        return "\n".join(lines)
+
+    @tool
     def careercoach_write_profile(doc: str, content: str) -> str:
-        """Save the candidate's own source-of-truth file after THEY have confirmed the content.
-        `doc` is `experience` or `story-bank` only — the discipline files are read-only by design.
-        This overwrites the whole file, so read it first (careercoach_read_profile) and pass the
-        full merged markdown, never a fragment. Never write a claim the candidate didn't give you:
-        this file is the anti-fabrication anchor for everything downstream."""
+        """Save the candidate's story bank (`doc="story-bank"`) after THEY have confirmed the
+        content. It's the only workspace source file you write: the discipline files are read-only
+        by design, and their career history lives in the operator profile (record it with
+        careercoach_update_profile), never in Resume/Experience.md. This overwrites the whole file,
+        so read it first (careercoach_read_profile("story-bank")) and pass the full merged markdown,
+        never a fragment. Never write a claim the candidate didn't give you."""
+        if doc == "experience":
+            return (
+                "Not written: Resume/Experience.md is the operator's own file, and their history lives in "
+                "the operator profile, the single source of truth. Record what they confirmed with "
+                "careercoach_update_profile (mode='replace' to correct a section you've read in full). "
+                "If THEY edited Experience.md, bring it in with careercoach_import_experience."
+            )
         root = packet.resolve_root(_root())
         try:
             res = packet.write_source(root, doc, content)
@@ -377,6 +454,7 @@ def _register_packet_tools(registry, cfg) -> None:
             careercoach_get_profile,
             careercoach_update_profile,
             careercoach_export_experience,
+            careercoach_import_experience,
             careercoach_read_profile,
             careercoach_write_profile,
             careercoach_scaffold_role,

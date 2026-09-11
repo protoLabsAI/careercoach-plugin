@@ -8,11 +8,12 @@ Read `Agent/experience-reviewer.md` (the candidate's own truth + voice rules) an
 against it. Report a **pass/fail line per artifact**, quoting the specific offending text on a fail:
 
 - **Anchored** — every resume bullet, evidence-map claim, skills entry, and cover-letter fact traces
-  to `Experience.md` or the story bank. No orphan claims.
+  to the operator profile (`careercoach_read_profile("experience")`) or the story bank. No orphan claims.
 - **Interview-backtrack** — no line the candidate would have to walk back in an interview.
 - **Company claims sourced** — each is backed by a source in the recruiter brief, or it's cut.
 - **No inflation** — emphasis reframed, scope/level/metrics not upgraded.
-- **Guardrails honored** — nothing from the story bank's "do NOT claim" list appears.
+- **Guardrails honored** — nothing from the profile's `do_not_claim` or the story bank's "do NOT claim"
+  list appears.
 - **Voice** — reads in the candidate's register: honors `Agent/experience-reviewer.md`'s voice rules and
   the operator's learned `my-writing-style` voice (if that skill exists); apply `Skills/Humanize/SKILL.md`
   if a draft still reads generic. No em-dashes, no clichés.

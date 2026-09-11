@@ -8,6 +8,11 @@
 
 Follow `writing-style.md` for tone and the honesty test **before** writing any bullet.
 
+**Draft only from the operator profile** — `careercoach_read_profile("experience")`, the single
+source of truth — and treat its `do_not_claim` lines as hard stops. A workspace
+`Resume/Experience.md` is never a source here; if the operator has updated theirs, bring it into
+the profile with `careercoach_import_experience` first.
+
 ## Rendering: `render_format`
 
 - **`html`** (default) — build a clean, semantic one-file HTML CV with print CSS, hand it to

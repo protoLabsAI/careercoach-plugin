@@ -6,14 +6,15 @@ description: >-
   "set me up", "get started", "onboard me", or any session where the operator profile is thin.
 user_facing: true
 slash: setup-coach
-tools: [careercoach_get_profile, careercoach_update_profile, careercoach_export_experience, careercoach_read_profile, careercoach_init_workspace, memory_recall, knowledge_ingest, list_skills, load_skill]
+tools: [careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_export_experience, careercoach_read_profile, careercoach_init_workspace, memory_recall, knowledge_ingest, list_skills, load_skill]
 ---
 
 # First conversation
 
 The coach can't do its job without knowing who it works for, and it must never invent the
 answer. This skill fills that gap once, and records it as a **profile** that gets injected into
-every future turn.
+every future turn. The profile is the single source of truth: every draft, score and interview
+answer reads it, and nothing reads a workspace `Resume/Experience.md` directly.
 
 **Harvest before you ask.** You almost certainly already know things. Asking an operator for
 their own name when it's sitting in memory is the fastest way to lose their trust, and it's the
@@ -25,12 +26,11 @@ Before your first message, gather silently. None of this needs permission:
 
 - `careercoach_get_profile` — the completeness picture. Anything under **known** is settled;
   only **missing** is in play. If it's already complete, skip to step 4.
-- `careercoach_read_profile("experience")` — their own `Resume/Experience.md`, if they keep one.
-  If it returns that file (rather than saying it hasn't been filled in and showing the profile)
-  while the profile is thin, that's a prior setup worth keeping: parse it into fields and save
-  them with `careercoach_update_profile`, then confirm the result rather than asking it all
-  again. Their file stays theirs — nothing you do here writes over it. `"story-bank"` may hold
-  their STAR stories too.
+- `careercoach_import_experience()` — if they keep their own `Resume/Experience.md`, this
+  previews what it would add to the profile (the template's hint text and anything already
+  recorded are skipped). That's a prior setup worth keeping: show them the preview and, once they
+  confirm, run it with `apply=true`, rather than asking it all again. Their file stays theirs —
+  nothing writes over it. `careercoach_read_profile("story-bank")` may hold their STAR stories too.
 - `memory_recall` for the operator's profile, background, abilities and voice.
 - Look at what's around: existing CVs or resumes in the workspace, saved artifacts, notes.
 - If they've ever shared a resume link or file, `knowledge_ingest` it — that handles PDFs and
@@ -55,8 +55,10 @@ should finish most profiles.
 
 Record each field as it's settled with `careercoach_update_profile(field, content)`. Sections
 **append** by default, so record roles (or stories) one at a time as each is settled and every
-one is kept; `mode="replace"` is only for rewriting a section you've just read in full with
-`careercoach_get_profile(field)`, passing the whole merged text. Identity facts are set outright.
+one is kept. To **correct** something already recorded, read the section with
+`careercoach_get_profile(field)`, fix it, and write the whole section back with `mode="replace"`
+— appending a correction leaves the wrong line beside it. Identity facts hold one value each and
+are set outright: for `contact` or `headlines`, pass the whole line.
 
 | field | what goes in it |
 |---|---|
@@ -94,7 +96,8 @@ not after. Voice rules that arrive after the document is written have already fa
 
 Offer one real piece of work: score a posting they care about, or search their target roles.
 Run `careercoach_export_experience` so they have a portable copy of everything — it writes
-`Resume/Experience (profile export).md` and never touches their own `Resume/Experience.md`.
+`Resume/Experience (profile export).md` and never touches their own `Resume/Experience.md`. If
+they later edit their own Experience.md, `careercoach_import_experience` brings the changes in.
 
 Close by telling them where the record lives: the **Career Coach** panel in the console shows
 every field you hold, what's still missing, and exactly what you're told each turn. It's a

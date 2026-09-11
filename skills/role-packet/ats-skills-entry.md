@@ -16,7 +16,7 @@ improvised at 11pm in the portal.
 3. **Rank** by (a) how central the skill is to the posting and (b) strength of evidence. Lead with the
    ones that are both required and provable.
 4. Note proficiency honestly where the form asks for it (expert / proficient / familiar), matched to
-   the source of truth's skills inventory.
+   the skills inventory in the operator profile (`careercoach_get_profile("skills")`).
 
 ## Format (write to `application skills entry list.md`)
 

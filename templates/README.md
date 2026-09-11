@@ -16,7 +16,7 @@ Companies/<Company>/Roles/<Role - Req>/   ← one folder per role (created as yo
   role packet.md                           the assembled deliverable
   orchestration log.md                     completeness checklist
 
-Resume/Experience.md          ← YOUR source of truth. Fill this in first. Verified only.
+Resume/Experience.md          ← optional: your history in your words, imported into your profile
 Agent/story-bank.md           ← reusable proof stories + guardrails
 Agent/experience-reviewer.md  ← the truth + voice rules the QA step enforces
 Skills/Humanize/SKILL.md      ← writing-quality guidance
@@ -25,9 +25,10 @@ workflow-audit/improvements.md ← reusable process fixes learned across roles
 
 ## Start here
 
-1. **Fill in `Resume/Experience.md`** — your verified roles, metrics, education, and links.
-   Everything the coach writes is anchored to this file. If it isn't in here (and true), it
-   doesn't go on a resume.
+1. **Build your profile** — run `/setup-coach` and your coach records your verified roles,
+   metrics, education and links. Everything it writes is anchored to that profile: if it isn't
+   in there (and true), it doesn't go on a resume. Prefer typing to an interview? Fill in
+   `Resume/Experience.md` and ask the coach to import it.
 2. **Seed `Agent/story-bank.md`** with a handful of your strongest proof stories.
 3. Then paste a posting to your coach and say **"run the role packet"** — it walks the
    phases with you, pausing for your approval at each one.
