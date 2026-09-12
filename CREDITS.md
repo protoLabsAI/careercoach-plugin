@@ -17,8 +17,8 @@ An excellent Claude Code job-application framework. What we ported and adapted:
 **What changed in the adaptation:**
 
 - **Rendering.** Upstream compiles LaTeX/moderncv; most of its CV/cover-letter guides are
-  LaTeX page-break firefighting. Here the default is **HTML → PDF via the protoAgent artifact
-  plugin** — no toolchain, no orphaned-entry rescue. The upstream LaTeX gotchas are preserved
+  LaTeX page-break firefighting. Here the default is a **print-correct HTML artifact** (protoAgent's
+  artifact plugin), turned into a real file by the `resume` skill — no toolchain, no orphaned-entry rescue. The upstream LaTeX gotchas are preserved
   as an optional appendix for anyone who wants `.tex`.
 - **Reframed around coaching.** The upstream is application-centric; this adds a `career-strategy`
   skill (positioning, offer evaluation, salary negotiation, decisions) and an `interview-coach`

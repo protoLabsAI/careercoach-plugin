@@ -19,7 +19,7 @@ contribution surface in one place:
 
 Adapted, with credit, from Mads Lorentzen's ``ai-job-search`` (MIT) — see CREDITS.md.
 The prompt-engineering IP (fit rubric, writing-style discipline, upskill gap analysis)
-is ported; the LaTeX toolchain is replaced by artifact-rendered HTML → PDF; and the
+is ported; the LaTeX toolchain is replaced by a print-correct HTML artifact (the resume skill); and the
 whole thing is reframed around coaching.
 
 Host imports (``graph.*``) stay **lazy and guarded** so the plugin loads and its tests
@@ -479,12 +479,15 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_list_roles() -> str:
-        """List the role packets in your workspace with how many artifacts each has, so you can see
-        what's in flight and what still needs work."""
+        """List the role packets in your workspace with how many artifacts each has and each role
+        folder's absolute path, so you can see what's in flight, what still needs work, and where
+        a role's files (its tailored resume snapshot, its exports) live."""
         rows = packet.list_roles(packet.resolve_root(_root()))
         if not rows:
             return "No role packets yet. Start one with careercoach_scaffold_role(company, role)."
-        return "\n".join(f"- {r['role']} @ {r['company']} — {r['artifacts']}/{r['total']} artifacts" for r in rows)
+        return "\n".join(
+            f"- {r['role']} @ {r['company']} — {r['artifacts']}/{r['total']} artifacts — {r['path']}" for r in rows
+        )
 
     registry.register_tools(
         [

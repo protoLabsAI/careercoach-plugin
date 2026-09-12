@@ -63,7 +63,9 @@ Write every authored artifact with `careercoach_write_artifact(company, role, ar
 so it lands in the right file and the process log stays honest.
 
 ### Phase 1 — Intake  ·  *gate: confirm the role*
-Confirm company, role title, and requisition id, and get the posting. Then
+Confirm company, role title, and requisition id, and get the posting. If `careercoach_list_roles`
+already shows a folder for this company and role (the `resume` skill files a tailored resume there),
+reuse it: pass the same `req` it was filed under, so the packet and the resume share one folder. Then
 `careercoach_scaffold_role(company, role, req, raw_jd=<the full posting>)` — this files the folder and
 seeds `job description (raw).md` + `process_log.md`. Track it with `careercoach_track_application`
 (status `considering`). Read the raw JD closely; pull required/preferred skills, responsibilities, and
@@ -80,10 +82,15 @@ Read `evidence-map.md`, then `job-application-assistant`'s `cv-guide.md` and **`
 (read before writing any bullet). First build the **`evidence-map`**: every JD requirement mapped to
 your proof from the profile / the story bank, with gaps and stretches flagged honestly. *Then*
 write the **`tailored-resume`**, drawing only on what the evidence map supports. Surface any stretch
-line for the user to keep, soften, or drop. Render per `render_format` if the user wants a file —
-`html` → PDF, or `docx` → a real Word file saved as a versioned download-artifact (see `cv-guide.md`);
-the `.docx` is what most ATS forms want. **`docx` needs the cowork `docx` skill + the `execute_code`
-plugin enabled (it runs code); if either is off, say so and fall back to `html`.**
+line for the user to keep, soften, or drop.
+
+To *render* it, use the **`resume`** skill (`load_skill("resume")`): the resume becomes a versioned
+`html` artifact built from an ATS-safe template, and `tailored resume.md` becomes a snapshot that
+records which artifact and version it came from — so the packet stays readable without becoming a
+second, diverging copy. That skill also owns the export routes (`html` / `docx` / `latex`), what each
+one needs, and the ATS check. **Never silently switch route — name what's missing** (DOCX
+needs `execute_code` in your toolset and `docx` in your available skills; cowork adds skills,
+not tools).
 
 ### Phase 4 — Application skills / ATS entry  ·  *gate: confirm*
 Read `ats-skills-entry.md`. Produce the **`skills-entry`** list — the discrete skills an ATS form asks

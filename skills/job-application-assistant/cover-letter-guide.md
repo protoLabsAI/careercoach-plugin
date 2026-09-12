@@ -1,20 +1,25 @@
 # Cover-Letter Rendering Guide
 
 > Content discipline adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
-> `06-cover-letter-templates.md`. Rendering defaults to **HTML → PDF via the artifact
-> plugin**; LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
+> `06-cover-letter-templates.md`. Rendering defaults to a **print-correct HTML artifact**;
+> LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
 > `writing-style.md` — read it first.
 
 ## Rendering: `render_format`
 
-- **`html`** (default) — one self-contained HTML letter with print CSS, rendered by the
-  artifact plugin and exported to PDF. Match the CV's font + accent so the pair looks like a set.
+- **`html`** (default) — one self-contained HTML letter with print CSS, handed to the
+  artifact plugin with `show_artifact(kind="html", …)`. Match the CV's font + page setup so
+  the pair looks like a set (borrow the `@page` block and font stack from whichever
+  `skills/resume/templates/*.html` the CV used). Getting a **file** out of it is the same
+  story as the CV — the routes in the `resume` skill's `export.md` (DOCX, `browser_pdf`, or
+  the operator's download-and-print); the artifact plugin itself doesn't make PDFs.
 - **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
-  **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
+  **`docx`** skill (`load_skill('docx')`, `python-docx`), save to an **absolute** path, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
   downloadable file. Same requirements + fallback as the CV (`cv-guide.md`): needs cowork +
   `execute_code` + a v0.108.0+ host (on desktop the managed Python runtime provisions on first use),
-  else fall back to `html`.
+  else fall back to `html`. It's available when you have `execute_code` in your toolset and
+  `docx` in your available skills (cowork adds skills, not tools).
 - **`latex`** — the custom `cover.cls` (Lato/Raleway, XeLaTeX); see the appendix.
 
 ### HTML letter — house style
@@ -42,7 +47,8 @@
 - [ ] Headline is specific, not generic
 
 ## Submission
-Export as PDF. Name files clearly ("[Name] CV", "[Name] Cover Letter"). Submit only what's
+Get a real PDF or `.docx` file out — see `resume/export.md` for the routes and what each
+one needs. Name files clearly ("[Name] CV", "[Name] Cover Letter"). Submit only what's
 requested, and follow any anonymity/format instructions in the posting.
 
 ---

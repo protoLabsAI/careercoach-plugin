@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FULL NAME - Resume</title>
+<style>
+  /* ── compact-a4: the same ATS-safe skeleton, tightened for a long career ─────
+     Use when classic-letter spills past two pages on content that all earns its
+     place. It buys roughly 15% more lines per page from leading and margins - it
+     does NOT change the rules: single column, no tables, no images, no header. */
+
+  @page { size: A4; margin: 14mm; }
+
+  :root {
+    /* 210mm page - 2 x 14mm margin = 182mm of content, on screen and on paper. */
+    --content-width: 182mm;
+    --ink: #111111;
+    --muted: #444444;
+    --rule: #999999;
+    --accent: #111111;
+    --body-size: 10pt;
+    --lead: 1.28;
+  }
+
+  /* The artifact panel injects the console's design-system stylesheet into every html
+     artifact (element-level `body` and `:where(h1,h2,h3,h4)` rules). Everything below is
+     declared explicitly — box model, weights, colours — so the panel render and a
+     standalone print are the same document rather than nearly the same. */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { background: #ffffff; }
+
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+    font-variant-ligatures: none;
+    font-kerning: none;
+    font-size: var(--body-size);
+    font-weight: 400;
+    line-height: var(--lead);
+    color: var(--ink);
+    background: #ffffff;
+    max-width: var(--content-width);
+    margin: 0 auto;
+    padding: 14mm 0;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media print {
+    body { max-width: none; margin: 0; padding: 0; }
+  }
+
+  h1 {
+    font-size: 17pt;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0;
+    margin: 0 0 1pt;
+    color: var(--accent);
+  }
+
+  .headline { font-size: 10.5pt; color: var(--muted); margin: 0 0 3pt; }
+
+  .contact { font-size: 9pt; color: var(--muted); margin: 0 0 10pt; }
+  /* URLs stay visible text: many parsers ignore href. If you add a link, keep the
+     address as its visible text and let it take the contact colour. */
+  .contact a { color: inherit; text-decoration: none; }
+
+  h2 {
+    font-size: 10.5pt;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin: 11pt 0 4pt;
+    padding-bottom: 1.5pt;
+    border-bottom: 0.75pt solid var(--rule);
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  p { margin: 0 0 4pt; }
+
+  .entry {
+    margin: 0 0 7pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .entry:last-child { margin-bottom: 0; }
+
+  .entry-head { margin: 0 0 1pt; }
+
+  .role { font-weight: 700; font-size: var(--body-size); }
+  .org { font-weight: 400; }
+  .dates { color: var(--muted); }
+
+  .entry ul { margin: 2pt 0 0; padding-left: 12pt; }
+  .entry li { margin: 0 0 2pt; break-inside: avoid; page-break-inside: avoid; }
+
+  .skills p { margin: 0 0 3pt; }
+  .skills strong { font-weight: 700; }
+
+  /* Older roles compressed to a single line each - still real text in reading
+     order, which is all a parser wants. */
+  .early p { margin: 0 0 2pt; }
+
+  ul { list-style: disc; }
+
+  p, li { orphans: 2; widows: 2; }
+</style>
+</head>
+<body>
+
+<!-- REPLACE every bracketed placeholder from the operator profile. Delete any
+     section the profile has nothing for; never leave a placeholder in a rendered
+     resume, and never invent a value to fill one. -->
+
+<h1>[FULL NAME]</h1>
+<p class="headline">[TARGET ROLE TITLE]</p>
+<p class="contact">
+  [City, Country] | [email@example.com] | [+1 555 0100] | [linkedin.com/in/handle]
+</p>
+
+<section>
+  <h2>Summary</h2>
+  <p>[Three lines, written for THIS posting.]</p>
+</section>
+
+<section class="skills">
+  <h2>Skills</h2>
+  <p><strong>[Category]:</strong> [comma, separated, list]</p>
+  <p><strong>[Category]:</strong> [comma, separated, list]</p>
+</section>
+
+<section>
+  <h2>Experience</h2>
+
+  <div class="entry">
+    <p class="entry-head">
+      <span class="role">[Job Title]</span>, <span class="org">[Employer]</span>, <span class="dates">[Mon YYYY - Mon YYYY]</span>
+    </p>
+    <ul>
+      <li>[Achievement bullet led by the result.]</li>
+      <li>[Bullet.]</li>
+      <li>[Bullet.]</li>
+      <li>[Bullet.]</li>
+    </ul>
+  </div>
+
+  <div class="entry">
+    <p class="entry-head">
+      <span class="role">[Job Title]</span>, <span class="org">[Employer]</span>, <span class="dates">[Mon YYYY - Mon YYYY]</span>
+    </p>
+    <ul>
+      <li>[Bullet.]</li>
+      <li>[Bullet.]</li>
+      <li>[Bullet.]</li>
+    </ul>
+  </div>
+
+  <div class="entry early">
+    <p class="entry-head">
+      <span class="role">[Job Title]</span>, <span class="org">[Employer]</span>, <span class="dates">[Mon YYYY - Mon YYYY]</span>
+    </p>
+    <ul>
+      <li>[One bullet, the single most relevant thing.]</li>
+    </ul>
+  </div>
+
+  <!-- Roles too old to need bullets: one line each, still full title + employer
+       + dates, so a parser gets the whole history under one standard heading. -->
+  <div class="entry early">
+    <p>[Job Title], [Employer], [YYYY - YYYY]</p>
+    <p>[Job Title], [Employer], [YYYY - YYYY]</p>
+  </div>
+</section>
+
+<section>
+  <h2>Education</h2>
+  <div class="entry">
+    <p class="entry-head">
+      <span class="role">[Degree, Field]</span>, <span class="org">[Institution]</span>, <span class="dates">[YYYY]</span>
+    </p>
+  </div>
+</section>
+
+</body>
+</html>
