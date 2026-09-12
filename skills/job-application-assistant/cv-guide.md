@@ -29,7 +29,8 @@ the profile with `careercoach_import_experience` first (preview, then apply with
     length and layout from the content against the page budget below, and ask the operator
     to confirm; don't claim you looked at it.
   - **The artifact plugin does not make PDFs.** A real file comes from the routes in the
-    `resume` skill's `export.md`: a `.docx` via cowork (works today), a PDF via `browser_pdf`
+    `resume` skill's `export.md`: a `.docx` via cowork (wherever cowork + execute_code are
+    enabled), a PDF via `browser_pdf`
     (the **agent_browser** plugin, arriving with protoAgent PR #3451, plus **execute_code**),
     or, as the fallback, the operator downloading the HTML artifact and printing it from
     their own browser. Offer the route that's actually available; never say "exported to

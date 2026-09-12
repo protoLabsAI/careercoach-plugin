@@ -17,7 +17,7 @@ later export and ATS re-save for the same role. See `master-and-tailor.md`, *Evi
 
 ---
 
-## Route 1 — DOCX (works today, and what most ATS forms want)
+## Route 1 — DOCX (works wherever cowork + execute_code are enabled; what most ATS forms want)
 
 **Needs:** the **cowork** plugin's `docx` skill, the **execute_code** plugin (it runs
 `python-docx`), and a protoAgent **v0.108.0+** host — on the desktop app that's the floor,

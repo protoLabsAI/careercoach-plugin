@@ -36,7 +36,9 @@ own. Three ideas carry the whole thing:
 
 Reference every external tool **by name only** — never import another plugin (ADR 0039).
 If a tool isn't in your toolset, that path is off: say which tool is missing and which
-plugin owns it, then offer the fallback. Never silently switch routes.
+plugin owns it, then offer the fallback. Never silently switch routes. Judge by what's in
+your toolset, never by a plugin's install default — operators often have cowork and
+execute_code enabled.
 
 | Step | Tool | Owned by | If it's absent |
 |------|------|----------|----------------|
@@ -49,14 +51,15 @@ plugin owns it, then offer the fallback. Never silently switch routes.
 | Confirm it rendered | `check_artifact` | artifact | skip the verdict step; don't loop |
 | Turn a file into a download | `save_file_artifact` | artifact | no Download button; give the file path instead |
 | Clean up a temporary read | `delete_artifact` | artifact | leave it; it ages out |
-| Word file | the `docx` skill via `load_skill("docx")` | **cowork** (off by default) | offer the PDF route, or the HTML download |
-| Write HTML / DOCX bytes to disk | `execute_code` | **execute_code** (off by default — enabling it is a code-execution trust decision) | neither agent-made file route works; offer the HTML download |
-| Print HTML → PDF | `browser_pdf` (after `browser_open`) | **agent_browser** (off by default, and not in a release yet) | offer the DOCX route, or the HTML download |
+| Word file | the `docx` skill via `load_skill("docx")` | **cowork** (off in a fresh install — check your toolset) | offer the PDF route, or the HTML download |
+| Write HTML / DOCX bytes to disk | `execute_code` | **execute_code** (off in a fresh install — enabling it is a code-execution trust decision) | neither agent-made file route works; offer the HTML download |
+| Print HTML → PDF | `browser_pdf` (after `browser_open`) | **agent_browser** (off in a fresh install, and `browser_pdf` isn't in a release yet) | offer the DOCX route, or the HTML download |
 | Show results as a table | `show_component` | host core | fall back to a markdown table |
 
 `browser_pdf` arrives in protoAgent with **PR #3451** (the agent_browser plugin vendored
 into core). Until a core release includes it, the agent-produced PDF route doesn't exist.
-The route that produces a real file **today** is DOCX (cowork + execute_code); the
+The route that produces a real file **today** is DOCX, wherever cowork and execute_code
+are enabled; the
 fallback that needs no extra plugin at all is the operator downloading the HTML artifact
 and printing it from their own browser. Details in `export.md`.
 
@@ -81,7 +84,8 @@ role packet files a snapshot of it that records the artifact id — the copy of 
 artifact is ever evicted. See **`master-and-tailor.md`**.
 
 ### 4. Export
-HTML artifact → a real file the operator can attach: DOCX (works today), PDF via
+HTML artifact → a real file the operator can attach: DOCX (wherever cowork + execute_code
+are enabled), PDF via
 `browser_pdf` (once a release includes it), or the operator's own download-and-print as the
 fallback. What each needs is in **`export.md`**.
 
