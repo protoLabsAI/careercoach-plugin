@@ -122,10 +122,13 @@ def role_dirname(role: str, req: str = "") -> str:
 
 def resolve_root(configured: str = "") -> Path:
     """The workspace root. Precedence: ``CAREERCOACH_PACKET_DIR`` env (tests / override) →
-    the resolved ``packet_root`` config → ``~/CareerCoach``. Created on demand."""
+    the resolved ``packet_root`` config → ``~/CareerCoach``. A relative value is taken relative to
+    the home directory, never the process's cwd (``/`` on the desktop server). Created on demand."""
     env = os.environ.get("CAREERCOACH_PACKET_DIR", "").strip()
     raw = env or (configured or "").strip() or str(Path.home() / "CareerCoach")
     root = Path(raw).expanduser()
+    if not root.is_absolute():  # the desktop server's cwd is `/` (read-only): anchor to home
+        root = Path.home() / root
     root.mkdir(parents=True, exist_ok=True)
     return root
 

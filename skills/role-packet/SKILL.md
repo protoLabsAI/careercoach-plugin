@@ -63,7 +63,9 @@ Write every authored artifact with `careercoach_write_artifact(company, role, ar
 so it lands in the right file and the process log stays honest.
 
 ### Phase 1 — Intake  ·  *gate: confirm the role*
-Confirm company, role title, and requisition id, and get the posting. Then
+Confirm company, role title, and requisition id, and get the posting. If `careercoach_list_roles`
+already shows a folder for this company and role (the `resume` skill files a tailored resume there),
+reuse it: pass the same `req` it was filed under, so the packet and the resume share one folder. Then
 `careercoach_scaffold_role(company, role, req, raw_jd=<the full posting>)` — this files the folder and
 seeds `job description (raw).md` + `process_log.md`. Track it with `careercoach_track_application`
 (status `considering`). Read the raw JD closely; pull required/preferred skills, responsibilities, and

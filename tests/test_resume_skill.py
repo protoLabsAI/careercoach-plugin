@@ -73,6 +73,7 @@ NOT_TOOLS = {
 # (`showartifact`) is the regression this catches.
 BARE_WORDS = {
     "body",
+    "req",
     "content",
     "docx",
     "education",
@@ -91,6 +92,7 @@ BARE_WORDS = {
     "notes",
     "path",
     "react",
+    "role",
     "roles",
     "serif",
     "skills",
@@ -248,10 +250,14 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     as the record points at nothing after a busy week — so the id is verified, recovery is
     written down, the snapshot is the copy of record, and exports don't burn slots."""
     tailor = _flat((SKILL_DIR / "master-and-tailor.md").read_text(encoding="utf-8"))
-    assert "Eviction" in tailor and "get_artifact(<recorded id>)" in tailor
+    assert "Eviction" in tailor and "list_artifacts" in tailor and "careercoach_list_roles" in tailor
     assert "history" in tailor and "Tell the operator" in tailor
     # every layer that must survive eviction has a home, and recovery reads it back read-only
-    assert 'careercoach_get_profile("notes")' in tailor, "the registry is how a later session finds anything"
+    assert "careercoach master ·" in tailor, "the master's ids ride in its copy of record, not the profile"
+    assert "Updated tailored resume.md" in tailor, "a re-file answers Updated, not Wrote"
+    assert "pass the same `req` it was filed under" in tailor, "one folder per role across both flows"
+    packet_flow = _flat((ROOT / "skills/role-packet/SKILL.md").read_text(encoding="utf-8"))
+    assert "pass the same `req` it was filed under" in packet_flow, "role-packet must reuse the resume's folder"
     assert "careercoach_scaffold_role" not in tailor, "recovery must not use a write tool as a lookup"
     assert "Master Resume.html" in tailor, "the approved master's wording needs a copy of record"
     assert "the approved wording is gone" in tailor, "without one, say so — don't claim otherwise"
@@ -546,3 +552,40 @@ def test_the_guides_now_state_what_is_true_and_hand_off_to_the_resume_skill():
     assert 'load_skill("resume")' in cv
     letter = _flat((ROOT / "skills/job-application-assistant/cover-letter-guide.md").read_text(encoding="utf-8"))
     assert "`resume` skill's `export.md`" in letter and "doesn't make PDFs" in letter
+
+
+# ── the resume keeps its bookkeeping out of the operator's profile ─────────────────────
+def test_the_resume_skill_never_writes_into_the_operators_profile_sections():
+    """`notes` is the operator's own section (setup-coach: targets, NDAs, sensitivities) and it
+    flows into careercoach_read_profile("experience") and the shareable profile export. A
+    whole-section replace from the model is one slip from deleting it. Ids and paths live in
+    the resume's own files; the only profile writes here are fact corrections during import."""
+    write_notes = re.compile(r"careercoach_update_profile\(\s*['\"]notes")
+    for path in _skill_files():
+        text = path.read_text(encoding="utf-8")
+        assert not write_notes.search(text), f"{path.name} writes to the operator's notes"
+        if path.name != "import.md":
+            assert not re.search(r"mode\s*=\s*['\"]replace", text), f"{path.name} replaces a profile section"
+            assert "`notes`" not in text, f"{path.name} keeps resume bookkeeping in the operator's notes"
+
+
+def test_list_roles_prints_each_role_folders_absolute_path(tools):
+    """The resume skill finds a variant's snapshot through its role folder, so the read-only
+    lister has to say where that folder is."""
+    tools["careercoach_scaffold_role"].invoke({"company": "Acme", "role": "Staff Engineer", "req": "R1"})
+    out = tools["careercoach_list_roles"].invoke({})
+    line = next(ln for ln in out.splitlines() if "Staff Engineer" in ln)
+    folder = Path(line.rsplit(" — ", 1)[-1].strip())
+    assert folder.is_absolute() and folder.is_dir() and folder.name == "Staff Engineer - R1", out
+
+
+def test_a_relative_packet_root_lands_under_home_not_the_servers_cwd(plugin, iso, monkeypatch):
+    """The desktop server runs with cwd `/` (read-only), so a relative packet_root such as
+    "CareerCoach" raised EROFS in careercoach_init_workspace — the step the master's copy of
+    record depends on. A relative value is anchored to the home directory."""
+    import importlib
+
+    packet = importlib.import_module(plugin.__name__ + ".packet")
+    monkeypatch.chdir("/")
+    root = packet.resolve_root("CareerCoach")
+    assert root == Path.home() / "CareerCoach" and root.is_dir()

@@ -13,16 +13,17 @@ while `browser_pdf` isn't available), `latex` → the moderncv appendix in
 `save_file_artifact` call without an `artifact_id` adds a panel entry, and the panel keeps only
 20 by default across the whole instance, evicting the least recently touched — resumes
 included. Save a resume's first DOCX (or PDF) without an id, **record the id it returns** —
-in the variant's snapshot header (`DOCX export:` / `PDF export:`) or on the master's line in
-`notes` — and pass that same id on every later export and ATS re-save of that type. Never
+in the variant's snapshot header (`DOCX export:` / `PDF export:`) or in the comment at the top
+of the master's copy of record — and pass that same id on every later export and ATS re-save of
+that type. Title every export with the resume's own title plus `(DOCX)` or `(PDF)`, so
+`list_artifacts` finds it while it exists (an id only matters while it does). Never
 reuse a DOCX id for a PDF or the other way round: the plugin accepts it and mixes file types
 in one version history. See `master-and-tailor.md`, *Eviction*.
 
 **Always write to an absolute path.** The server runs with its working directory at `/`,
 which is read-only on the desktop app, so a relative save fails (`Read-only file system`)
 and `save_file_artifact` then finds nothing. Write into the variant's role folder — the
-folder of the snapshot path `careercoach_write_artifact` returned, recorded in `notes` — or
-into `<workspace>/Resume/` for the master, and pass that same absolute path to
+path `careercoach_list_roles` prints for it — or into `<workspace>/Resume/` for the master, and pass that same absolute path to
 `save_file_artifact`.
 
 ---
@@ -41,7 +42,7 @@ full steps and the version floors. In short: `load_skill("docx")`, author the CV
 `python-docx` following `cv-guide.md` + `writing-style.md`, save it to an **absolute** path in
 the role folder (cowork's skill defaults to a project folder or `output_dir`; neither fits
 the coach's workspace, so pass the path explicitly), then
-`save_file_artifact("<that same absolute path>", title="<Name> — CV — <Role>", artifact_id=<the DOCX export id from the snapshot header, if any>)`.
+`save_file_artifact("<that same absolute path>", title="<Name> — Resume — <Company> <Role> (DOCX)", artifact_id=<the DOCX export id from the snapshot header, if any>)`.
 
 Two things this skill adds on top:
 
@@ -89,7 +90,7 @@ The chain:
    path outside it is refused, not redirected. The result is the browser tool's output
    followed by a line `Saved to <absolute path>`, or a line starting `Error:`. **Take the
    path from the `Saved to` line** — don't pass the whole result on.
-5. `save_file_artifact("<that path>", title="<Name> — Resume — <Role> (PDF)", artifact_id=<the PDF export id from the snapshot header, if any>)`
+5. `save_file_artifact("<that path>", title="<Name> — Resume — <Company> <Role> (PDF)", artifact_id=<the PDF export id from the snapshot header, if any>)`
    — now the operator has a Download button, a text preview, and a version history. If this
    was the first PDF, record its id in the snapshot header and re-file the snapshot.
 

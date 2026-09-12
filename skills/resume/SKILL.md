@@ -76,9 +76,9 @@ this step entirely when the profile is already the better record.
 
 ### 2. Master resume
 One `html` artifact built from a template, filled from the profile. See
-**`master-and-tailor.md`**. Record its artifact id and template in the profile so the next
-session finds it instead of making a second one, write the approved wording to a file as its
-copy of record, and verify the id before every edit.
+**`master-and-tailor.md`**. Title it `<Name> — Master Resume` so `list_artifacts` finds it next
+session instead of a second one being made, write the approved wording to a file as its copy
+of record, and verify it still exists before every edit.
 
 ### 3. Tailor per role
 A variant is **its own artifact**, branched from the master, aimed at one posting. It is
