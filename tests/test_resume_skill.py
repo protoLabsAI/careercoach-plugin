@@ -253,7 +253,18 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     assert "Eviction" in tailor and "list_artifacts" in tailor and "careercoach_list_roles" in tailor
     assert "history" in tailor and "Tell the operator" in tailor
     # every layer that must survive eviction has a home, and recovery reads it back read-only
+    export = _flat((SKILL_DIR / "export.md").read_text(encoding="utf-8"))
     assert "careercoach master ·" in tailor, "the master's ids ride in its copy of record, not the profile"
+    # same-title postings at one company differ only by req: the title carries it, and a
+    # variant's id is read from its own snapshot header before any title lookup
+    assert 'title="<Name> — Resume — <Company> <Role - Req>"' in tailor, "same-title postings must not collide"
+    assert "<Role - Req> (DOCX)" in export and "<Role - Req> (PDF)" in export
+    assert tailor.index("from its snapshot header first") < tailor.index("fall back to the title")
+    # recovery must not carry the evicted artifact's id comment into the new one
+    assert "Strip the `<!-- careercoach master … -->` line" in tailor
+    assert "careercoach master · artifact <id> · version <n>" in tailor, "the comment records the version"
+    # edits the operator made in the panel get captured before an eviction can lose them
+    assert "wasn't written by you" in tailor and "re-save the copy of record" in tailor
     assert "Updated tailored resume.md" in tailor, "a re-file answers Updated, not Wrote"
     assert "pass the same `req` it was filed under" in tailor, "one folder per role across both flows"
     packet_flow = _flat((ROOT / "skills/role-packet/SKILL.md").read_text(encoding="utf-8"))

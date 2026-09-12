@@ -18,7 +18,7 @@ layer below current and the panel can forget anything without losing the resume:
 | Layer | Holds | Where | Survives eviction |
 |-------|-------|-------|-------------------|
 | Operator profile | the facts — roles, dates, skills, `do_not_claim` | the profile | always |
-| Master copy of record | the approved master's exact HTML — wording, order, the operator's edits — with a comment recording its ids | `<workspace>/Resume/Master Resume.html` | always (needs `execute_code` to write) |
+| Master copy of record | the approved master's exact HTML — wording, order, the operator's edits — with a comment recording its ids and version | `<workspace>/Resume/Master Resume.html` | always (needs `execute_code` to write) |
 | Variant snapshot | each variant's wording, stamped with artifact id, version, template and export ids | `<role folder>/tailored resume.md` | always |
 | Artifacts | the rendered, editable, versioned documents | the Artifact panel | until evicted |
 
@@ -32,17 +32,29 @@ edits — lives only in the artifact and is lost on eviction unless the operator
 themselves with the panel's **Download** button. Say so when the master is approved, and
 offer that.
 
+## Titles
+
+Titles are how `list_artifacts` rows are told apart, so they have to be unique:
+
+- master: `<Name> — Master Resume`
+- variant: `<Name> — Resume — <Company> <Role - Req>`, where `<Role - Req>` is the role and
+  requisition id exactly as its folder is named, or just `<Role>` when the posting has no req.
+  Two postings at one company with the same title differ only by their req, so leaving it out
+  gives two identical rows.
+- an export: its resume's title plus ` (DOCX)` or ` (PDF)`.
+
 ## Finding things in a later session
 
-- **A live artifact:** `list_artifacts`, by its title. The titles this skill requires —
-  `<Name> — Master Resume`, `<Name> — Resume — <Company> <Role>`, and each export's title with
-  `(DOCX)` or `(PDF)` on the end — are how you find them. An id only matters while its artifact
-  exists, and while it exists it's in that list.
+In the conversation that made an artifact you already have its id. In a later one:
+
+- **The master:** `list_artifacts`, by its title.
+- **A variant:** from its snapshot header first. `careercoach_list_roles` prints each role's
+  absolute folder path; read `tailored resume.md` there (`save_file_artifact` + `get_artifact`,
+  then `delete_artifact` the temporary read) and take the id from its `Source: artifact <id>`
+  line. Only if there is no snapshot, fall back to the title in `list_artifacts`.
 - **The workspace:** `careercoach_init_workspace` answers with its absolute path. On a seeded
   workspace it changes nothing; on a fresh one it lays down the fill-in templates, which you'd
   want anyway. The master's copy of record is `<workspace>/Resume/Master Resume.html`.
-- **A role's folder:** `careercoach_list_roles` prints each role's absolute folder path. The
-  variant's snapshot is `tailored resume.md` in it, and its exports are written beside it.
 
 ## Build the master
 
@@ -69,11 +81,22 @@ offer that.
    `<workspace>/Resume/Master Resume.html` (an absolute path — a relative one fails, see
    `export.md`):
    ```
-   <!-- careercoach master · artifact <id> · template <name> · docx <id|none> · pdf <id|none> -->
+   <!-- careercoach master · artifact <id> · version <n> · template <name> · docx <id|none> · pdf <id|none> -->
    ```
-   Write it again after every approved edit, and after the master's first DOCX or PDF export
-   (to record that id). No `execute_code`: tell them the wording has no copy of record and
-   offer the Download button.
+   There is only ever one such line: when you rewrite the file, replace it, never add a
+   second. Write it again after every approved edit, and after the master's first DOCX or PDF
+   export (to record that id). No `execute_code`: tell them the wording has no copy of record
+   and offer the Download button.
+
+## Edits you didn't make
+
+The operator can edit an artifact in the panel, and each of their edits is a new version
+that no copy of record knows about until you write one — so an eviction first would lose
+them. Whenever you pick up a resume artifact, compare its current version (`get_artifact`
+shows `· v<n>`) with the version recorded in its copy of record: the master's comment line, or
+the variant's snapshot header. If the artifact is ahead, its current version wasn't written by
+you — the operator changed it. Confirm with them that those edits are theirs to keep, then
+re-save the copy of record from the current version before doing anything else.
 
 ## Eviction — verify it exists before every edit
 
@@ -84,16 +107,17 @@ most `max_versions` versions per artifact (50 by default), trimming the oldest.
 
 So a resume artifact can vanish between conversations. Before editing one:
 
-1. Find it with `list_artifacts` by its title, then `get_artifact(<id>)`. If it isn't in the
-   list, or `get_artifact` answers "No artifact to read", it was evicted. **Tell the
-   operator** — don't silently rebuild.
+1. Find its id (*Finding things*, above), then `get_artifact(<id>)`. If `get_artifact`
+   answers "No artifact to read", it was evicted. **Tell the operator** — don't silently
+   rebuild.
 2. **The master:** read its copy of record back — `save_file_artifact("<workspace>/Resume/Master Resume.html")`
-   then `get_artifact(<that id>)` returns the exact HTML — rebuild it with
-   `show_artifact(kind="html", code=<that source>)`, then `delete_artifact(<the temporary file artifact>)`
-   so the recovery doesn't push something else out, and rewrite the copy of record with the
-   new id. With no copy of record, the facts can be rebuilt from the profile but **the approved
-   wording is gone**: say exactly that, rebuild from the profile, and have the operator approve
-   it again.
+   then `get_artifact(<that id>)` returns the file's source. **Strip the `<!-- careercoach master … -->`
+   line** from it — it names the old artifact — and rebuild with
+   `show_artifact(kind="html", code=<the source without that line>)`. Then
+   `delete_artifact(<the temporary file artifact>)` so the recovery doesn't push something else
+   out, and rewrite the copy of record with a fresh comment line for the new id. With no copy of
+   record, the facts can be rebuilt from the profile but **the approved wording is gone**: say
+   exactly that, rebuild from the profile, and have the operator approve it again.
 3. **A variant:** the same, from `tailored resume.md` in the folder `careercoach_list_roles`
    prints for that role. Read it back with `save_file_artifact` + `get_artifact`, rebuild the
    variant in the template its header names, `delete_artifact` the temporary read, and re-file
@@ -143,10 +167,10 @@ canonical full history; the variant is aimed at one posting and can be cut hard.
    relevance. **No new facts** — if the posting needs something the profile doesn't have,
    that's a gap to name, not a line to write. `do_not_claim` is a hard stop.
 3. ```
-   show_artifact(kind="html", code=<the tailored document>, title="<Name> — Resume — <Company> <Role>")
+   show_artifact(kind="html", code=<the tailored document>, title="<Name> — Resume — <Company> <Role - Req>")
    ```
-   Title it so `list_artifacts` reads like a pipeline. This is also the answer to "which
-   one did I send them".
+   With the req in it (see *Titles*), `list_artifacts` reads like a pipeline and answers
+   "which one did I send them" — even for two postings with the same title.
 4. `check_artifact(<id>)`, then show the operator what changed from the master and why.
 5. **File its snapshot now** — inside a role-packet flow or not (next section).
 

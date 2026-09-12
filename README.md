@@ -279,6 +279,13 @@ careercoach-plugin/
   Remotive (remote jobs, no key); add a JSearch/RapidAPI key for Google-for-Jobs breadth. Only
   `jobsource.py` makes outbound calls, and the manifest declares exactly those two hosts.
 
+## Upgrading
+
+- **0.8.0** — a *relative* `packet_root` setting or `CAREERCOACH_PACKET_DIR` value now resolves under the
+  home directory, not the server's working directory. This only matters for source / dev runs: on the
+  desktop app the working directory is `/` (read-only), so a relative workspace never worked there. An
+  absolute path, `~/…`, or the blank default (`~/CareerCoach`) behave exactly as before.
+
 ## Found while building (filed upstream)
 
 Building this surfaced protoAgent SDK/DX feedback, filed as issues on the host repo:

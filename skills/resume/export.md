@@ -42,7 +42,7 @@ full steps and the version floors. In short: `load_skill("docx")`, author the CV
 `python-docx` following `cv-guide.md` + `writing-style.md`, save it to an **absolute** path in
 the role folder (cowork's skill defaults to a project folder or `output_dir`; neither fits
 the coach's workspace, so pass the path explicitly), then
-`save_file_artifact("<that same absolute path>", title="<Name> — Resume — <Company> <Role> (DOCX)", artifact_id=<the DOCX export id from the snapshot header, if any>)`.
+`save_file_artifact("<that same absolute path>", title="<Name> — Resume — <Company> <Role - Req> (DOCX)", artifact_id=<the DOCX export id from the snapshot header, if any>)`.
 
 Two things this skill adds on top:
 
@@ -90,7 +90,7 @@ The chain:
    path outside it is refused, not redirected. The result is the browser tool's output
    followed by a line `Saved to <absolute path>`, or a line starting `Error:`. **Take the
    path from the `Saved to` line** — don't pass the whole result on.
-5. `save_file_artifact("<that path>", title="<Name> — Resume — <Company> <Role> (PDF)", artifact_id=<the PDF export id from the snapshot header, if any>)`
+5. `save_file_artifact("<that path>", title="<Name> — Resume — <Company> <Role - Req> (PDF)", artifact_id=<the PDF export id from the snapshot header, if any>)`
    — now the operator has a Download button, a text preview, and a version history. If this
    was the first PDF, record its id in the snapshot header and re-file the snapshot.
 
