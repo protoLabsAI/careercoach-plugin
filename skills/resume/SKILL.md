@@ -1,0 +1,153 @@
+---
+name: resume
+description: >-
+  Use when the user wants a RESUME/CV itself worked on — "build my resume", "import this
+  resume", "parse my CV", "turn my profile into a resume", "restyle it", "make a PDF /
+  Word version", "will this get through an ATS", "which resume is the current one". The
+  resume lives as ONE versioned artifact, tailored variants branch off it, and exports
+  become downloadable files. For scoring a posting or writing a cover letter see
+  job-application-assistant; for the full filed application see role-packet; for the
+  first-run interview see setup-coach.
+tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, show_component, load_skill]
+---
+
+# Resume — build, parse, export, check
+
+This skill adds **no tools of its own**. It composes capabilities other plugins already
+own. Two ideas carry the whole thing:
+
+1. **The resume IS an artifact.** One `html` artifact is the master. It is versioned, it
+   renders in the Artifact panel, and it is edited in place — never re-pasted into chat,
+   never copied into a second markdown file. That is the cure for the failure mode this
+   skill exists to fix: a workspace that accumulates five diverging copies of a
+   `tailored resume.md` and no answer to "which one is current".
+2. **The profile is the source of truth for facts.** The resume is a *presentation* of
+   the operator profile. It never introduces an employer, title, date or credential the
+   profile doesn't have. A fact that turns up while working on a resume goes into the
+   profile first, then into the document.
+
+## What composes what
+
+Reference every external tool **by name only** — never import another plugin (ADR 0039).
+If a tool isn't in your toolset, that path is off: say which tool is missing and which
+plugin owns it, then offer the fallback. Never silently switch routes.
+
+| Step | Tool | Owned by | If it's absent |
+|------|------|----------|----------------|
+| Read the facts | `careercoach_read_profile`, `careercoach_get_profile` | careercoach (this plugin) | always present |
+| Correct the facts | `careercoach_update_profile`, `careercoach_import_experience` | careercoach | always present |
+| Create the resume | `show_artifact(kind="html", …)` | **artifact** (bundled, on by default) | no artifact route at all — say so and fall back to showing the resume as chat markdown, which is a draft, not a deliverable |
+| Read it back / parse a file | `get_artifact`, `list_artifacts` | artifact | as above |
+| Edit it | `update_artifact`, `rewrite_artifact` | artifact | as above |
+| Confirm it rendered | `check_artifact` | artifact | skip the verdict step; don't loop |
+| Turn a file into a download | `save_file_artifact` | artifact | no Download button; give the file path instead |
+| Print HTML → PDF | `browser_pdf` (after `browser_open`) | **agent_browser** (off by default) | offer the DOCX route, or the operator's own print of the HTML artifact |
+| Write HTML/PDF bytes to disk | `execute_code` | **execute_code** (off by default — enabling it is a code-execution trust decision) | same fallback |
+| Word file | the `docx` skill via `load_skill("docx")` | **cowork** (off by default) | offer the PDF route or the operator's own print |
+| Show results as a table | `show_component` | host core | fall back to a markdown table |
+
+`browser_pdf` arrives in protoAgent with **PR #3451** (the agent_browser plugin vendored
+into core). Until a core release includes it, the agent-produced PDF route is inert — the
+operator's own print of the HTML artifact is the working PDF path, which is exactly why
+the templates are print-correct by construction.
+
+## The flow
+
+Each step is a natural stopping point. Don't chain all five silently.
+
+### 1. Import (only when there's something to import)
+An operator drops a resume in chat, or points at one on disk. See **`import.md`** —
+it covers both, and the rule that every email, phone, URL, employer and date you record
+must appear in the source text you actually read. Facts land in the **profile**. Skip
+this step entirely when the profile is already the better record.
+
+### 2. Master resume
+One `html` artifact built from a template, filled from the profile. See
+**`master-and-tailor.md`**. Record its artifact id in the profile so the next session
+finds it instead of making a second one.
+
+### 3. Tailor per role
+A variant is **its own artifact**, branched from the master, aimed at one posting. The
+role packet records the variant's artifact id rather than holding a competing copy of the
+text. See **`master-and-tailor.md`**.
+
+### 4. Export
+HTML artifact → a real file the operator can attach: PDF or DOCX. Three routes with
+different prerequisites, in **`export.md`**.
+
+### 5. ATS check
+Three parts — what a parser actually reads, the rules checklist, and keyword coverage
+against the posting. Results go out as `show_component` tables, not prose. See
+**`ats-check.md`**.
+
+## Reference files
+
+Read one when you reach its step, not all up front.
+
+| File | When to read it |
+|------|-----------------|
+| `import.md` | Step 1 — parsing an incoming resume into the profile |
+| `master-and-tailor.md` | Steps 2-3 — the artifact mechanics: create, edit, version, branch |
+| `export.md` | Step 4 — PDF / DOCX / print routes and what each one needs |
+| `ats-check.md` | Step 5 — the three-part check and how to present it |
+| `templates/*.html` | Step 2 — the ATS-safe starting points (catalogue below) |
+
+Content discipline is **not** duplicated here. Before writing a single bullet, read
+`job-application-assistant/cv-guide.md` (section order, relevance-weighted cutting, the
+two-page budget) and `job-application-assistant/writing-style.md` (tone, banned clichés,
+the interview-backtrack test). For the filed, gated, one-role-at-a-time version of this
+work, read `role-packet/SKILL.md` — this skill is what its Phase 3 renders with.
+
+If a reference file won't open, say so and work from this page rather than inventing a
+procedure.
+
+## Template catalogue
+
+| Template | Page | Use it for |
+|----------|------|------------|
+| `templates/classic-letter.html` | US Letter | The default. Reverse-chronological, most roles, most markets. |
+| `templates/compact-a4.html` | A4 | A long career that all earns its place and still has to fit two pages, and most non-US markets. |
+| `templates/credential-first-a4.html` | A4 | Education / certification / publications lead: regulated, clinical, research-adjacent roles. |
+
+Pick one, fill it from the profile, delete the sections the profile has nothing for. Never
+leave a bracketed placeholder in a rendered resume, and never invent a value to fill one.
+
+### The ATS-critical CSS contract
+
+Every template holds to this, and so must anything you hand-author or restyle. It is what
+makes one file render the same in the Artifact panel and in Chrome's print.
+
+- **`@page { size: Letter|A4; margin: …; }`** — a declared page, so print isn't a guess.
+- **Single column.** No multi-column grid, no `float`, no `position: absolute`, no table
+  used for layout. A parser reads the DOM in order; two columns interleave into nonsense.
+- **`break-inside: avoid`** (plus the legacy `page-break-inside` alias) on every entry, so
+  a job title never separates from its bullets across a page break.
+- **`font-variant-ligatures: none`.** An `fi` ligature reaches a text extractor as U+FB01
+  and turns "efficiency" into a word no keyword filter matches.
+- **A system font stack that ends in a generic family** (`sans-serif` / `serif`). No web
+  fonts: nothing external loads in the panel or in a print job.
+- **No `<img>`, no icons, no background colours.** Contact details in the document body,
+  never in a running header or footer — a header is page furniture, and extraction drops
+  or repeats it.
+- **Semantic headings** (`h1`, `h2`) with the boring standard words: Summary, Skills,
+  Experience, Education, Certifications, Publications.
+- **Declare everything yourself.** The Artifact panel injects the console's design-system
+  stylesheet into every html artifact; a `browser_pdf` print doesn't. Set box-sizing, font
+  weight, line-height, letter-spacing, colour and background on `body` and the headings
+  explicitly, or the panel shows the operator a document the PDF isn't.
+
+## Anti-fabrication
+
+The same rule as everywhere else in this plugin, restated because a resume is where it
+breaks first:
+
+- Facts come from `careercoach_read_profile("experience")` and
+  `careercoach_get_profile("skills")`. If the profile is thin, **say so and offer
+  `/setup-coach`** — rendering a resume from an empty record is inventing a career.
+- `do_not_claim` is a hard stop, not a preference.
+- Reframe emphasis; never add an employer, title, date, degree or tool the profile
+  doesn't hold. A number needs its baseline.
+- Anything the operator tells you mid-flow goes into the profile
+  (`careercoach_update_profile`) **before** it goes into the document.
+- When parsing a resume you didn't write, every recorded fact must be traceable to text
+  you actually read — see `import.md`.

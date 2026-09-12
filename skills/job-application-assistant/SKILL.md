@@ -5,7 +5,8 @@ description: >-
   CV/resume, or write a cover letter — "should I apply to this", "evaluate this job",
   "tailor my CV for X", "write a cover letter for the role at Y", "apply to this".
   The execution half of the Career Coach: score fit against the rubric, then draft
-  tailored, honest, verified documents. For interview practice see interview-coach;
+  tailored, honest, verified documents. To build, import, export or ATS-check the resume
+  document itself see resume; for interview practice see interview-coach;
   for positioning / offers / negotiation see career-strategy; for skill gaps see upskill.
 tools: [careercoach_track_application, careercoach_list_applications, careercoach_get_profile, careercoach_read_profile, careercoach_update_profile, careercoach_import_experience, company_researcher]
 ---
@@ -52,12 +53,12 @@ that step (progressive disclosure), don't inline them all up front:
 - Honour `do_not_claim` from that block as a hard stop, not a preference.
 - Reframe *emphasis* from that history, never fabricate (see the honesty test in
   `writing-style.md`).
-- Render per the operator's `render_format` (default `html` → the artifact plugin → PDF;
-  `docx` → a real Word file via cowork's `docx` skill → `save_file_artifact`; `latex` → moderncv
-  `.tex`). See `cv-guide.md` for each path. **For `docx`, the cowork `docx` skill and the
-  `execute_code` plugin must be enabled (it runs `python-docx`); if either is off, tell the user
-  exactly what to enable and fall back to `html` — don't silently switch.** Inspect the rendered
-  result; iterate until it's clean.
+- Produce the document with the **`resume`** skill (`load_skill("resume")`) — it owns the
+  mechanics: the CV as a versioned `html` artifact, the ATS-safe templates, and the export
+  routes per `render_format` (`html`, `docx` → a real Word file, `latex` → moderncv `.tex`),
+  each with what it needs and what to say when a plugin is off. `cv-guide.md` stays the
+  content discipline. **Never silently switch route** — name the missing plugin.
+- If the user wants an ATS read on the result, that's the `resume` skill's three-part check.
 
 ### Step 3 — Write the cover letter (on request)
 - Read `cover-letter-guide.md` and `writing-style.md`.

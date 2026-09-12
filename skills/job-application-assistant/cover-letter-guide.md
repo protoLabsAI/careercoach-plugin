@@ -1,14 +1,18 @@
 # Cover-Letter Rendering Guide
 
 > Content discipline adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
-> `06-cover-letter-templates.md`. Rendering defaults to **HTML → PDF via the artifact
-> plugin**; LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
+> `06-cover-letter-templates.md`. Rendering defaults to a **print-correct HTML artifact**;
+> LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
 > `writing-style.md` — read it first.
 
 ## Rendering: `render_format`
 
-- **`html`** (default) — one self-contained HTML letter with print CSS, rendered by the
-  artifact plugin and exported to PDF. Match the CV's font + accent so the pair looks like a set.
+- **`html`** (default) — one self-contained HTML letter with print CSS, handed to the
+  artifact plugin with `show_artifact(kind="html", …)`. Match the CV's font + page setup so
+  the pair looks like a set (borrow the `@page` block and font stack from whichever
+  `skills/resume/templates/*.html` the CV used). Getting a **PDF file** out of it is the
+  same story as the CV: the operator prints the artifact, or the `browser_pdf` route in the
+  `resume` skill's `export.md` does it — the artifact plugin itself doesn't make PDFs.
 - **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
   **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
@@ -42,7 +46,8 @@
 - [ ] Headline is specific, not generic
 
 ## Submission
-Export as PDF. Name files clearly ("[Name] CV", "[Name] Cover Letter"). Submit only what's
+Get a real PDF or `.docx` file out — see `resume/export.md` for the routes and what each
+one needs. Name files clearly ("[Name] CV", "[Name] Cover Letter"). Submit only what's
 requested, and follow any anonymity/format instructions in the posting.
 
 ---

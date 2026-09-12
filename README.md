@@ -34,6 +34,11 @@ forking core.
 - **Find live jobs** — `careercoach_search_jobs` queries a real job source: JSearch (Google-for-Jobs) with an API key, or the keyless **Remotive** remote-jobs board out of the box.
 - **Evaluate fit** against a weighted, tunable rubric, with sourced company research.
 - **Tailor a CV + cover letter** — reframing emphasis, never fabricating (the interview-backtrack test).
+- **Build, import, export and ATS-check the resume itself** — the `resume` skill. Your resume lives as
+  **one versioned artifact** (not five diverging markdown files), built from ATS-safe templates, tailored
+  per role as its own artifact, exported to a real PDF or `.docx` you can attach, and checked against an
+  ATS three ways: what a parser actually extracts from the file, a rules checklist, and keyword coverage
+  against the posting. It adds **no tools** — it composes the artifact, browser and cowork plugins.
 - Run the whole thing with the **`apply` workflow**: `run_workflow("apply", {"posting": "<url or text>"})`.
 - **Work up a full, filed role packet** — the gated **`role-packet`** flow files a folder per role
   (`Companies/<Co>/Roles/<Role - Req>/`) and produces each artifact — recruiter brief, evidence map,
@@ -54,7 +59,8 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 6 skills; `job-application-assistant` + `role-packet` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-skills-entry.md`, …) read on demand |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 7 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand |
+| **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser**, **cowork** and **execute_code** plugins own, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
 | **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
@@ -88,6 +94,7 @@ careercoach-plugin/
 ├─ skills/
 │  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter
 │  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
+│  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
 │  ├─ interview-coach/             # STAR bank + mock interviews with feedback
 │  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
 │  └─ upskill/                     # gap heatmap + learning plan
@@ -121,6 +128,7 @@ careercoach-plugin/
 6. **Talk to your agent.** A few things to try:
    - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
    - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
+   - **Work on the resume itself** — "Import this resume" (drop the PDF, or give it a path) · "Build my master resume" · "Tailor it for this role" · "Make me a PDF" · "Will this get through an ATS?"
    - **Work up a full packet** — "Build the role packet for this posting." The coach files a folder per role and produces each artifact one approved step at a time (see the workspace note below).
 
 ### Optional
@@ -157,9 +165,24 @@ careercoach-plugin/
 
 ## Design decisions
 
-- **HTML → PDF, not LaTeX.** The upstream project's biggest tax is LaTeX page-break firefighting.
-  We render via the **artifact plugin** (HTML → PDF) by default — the agent can *see* the rendered
-  result — and keep `.tex`/moderncv as an option (with the upstream gotchas preserved, credited).
+- **A print-correct HTML artifact, not LaTeX.** The upstream project's biggest tax is LaTeX page-break
+  firefighting. We build the CV as an HTML artifact with a real `@page` and `break-inside: avoid` on every
+  entry, so the panel's render and Chrome's print are the same document — and keep `.tex`/moderncv as an
+  option (with the upstream gotchas preserved, credited).
+- **The resume is an artifact, and that's the whole design.** A resume kept as chat text or markdown
+  multiplies: six weeks in there are five variants, three stale, and no answer to "which one did I send".
+  So the master resume is **one `html` artifact** — versioned, previewed, edited in place with
+  `update_artifact` / `rewrite_artifact` — each tailored variant is its own artifact, and the role packet's
+  `tailored resume.md` becomes a *snapshot that records which artifact and version it came from* rather
+  than a competing copy. The `resume` skill adds **no tools at all**: it composes the artifact plugin
+  (create/edit/read/save), `browser_pdf` (agent_browser) and the `docx` skill (cowork) for exports, and
+  `show_component` for results — naming the owner and the fallback for each, per ADR 0039's
+  reference-by-name rule. The **ATS check** falls out of the same composition: `save_file_artifact`
+  already extracts a PDF's text for its preview, so `get_artifact` reads back *what a parser sees* and the
+  skill diffs it against the document — real evidence, not a rules-only opinion.
+  **`browser_pdf` arrives with protoAgent [#3451](https://github.com/protoLabsAI/protoAgent/pull/3451),
+  so the agent-produced PDF route is inert until a core release includes it**; until then the operator
+  prints the artifact, which is exactly why the templates carry print CSS.
 - **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
   real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
   skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092) — what

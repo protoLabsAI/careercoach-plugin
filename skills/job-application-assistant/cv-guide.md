@@ -3,8 +3,13 @@
 > Content discipline adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
 > `05-cv-templates.md`. **The rendering mechanism is different here:** the upstream project
 > compiles LaTeX/moderncv (and spends most of its guide firefighting page-breaks). This
-> plugin defaults to **HTML → PDF via the artifact plugin** — no LaTeX toolchain, no
+> plugin defaults to a **print-correct HTML artifact** — no LaTeX toolchain, no
 > orphaned-entry rescue. LaTeX remains an option (appendix) for anyone who wants it.
+
+> **This file is the content discipline.** The *mechanics* — building the CV as a versioned
+> artifact, the ATS-safe templates, getting a real PDF or `.docx` file out, and the ATS
+> check — live in the **`resume`** skill (`load_skill("resume")`). Read this for what goes
+> on the page; read that for how the document is produced.
 
 Follow `writing-style.md` for tone and the honesty test **before** writing any bullet.
 
@@ -15,9 +20,21 @@ the profile with `careercoach_import_experience` first (preview, then apply with
 
 ## Rendering: `render_format`
 
-- **`html`** (default) — build a clean, semantic one-file HTML CV with print CSS, hand it to
-  the **artifact plugin** to render, then export/print to PDF. The agent can *see* the rendered
-  result (it's a real page), so the "render → inspect → fix" loop needs no LaTeX knowledge.
+- **`html`** (default) — build a clean, semantic one-file HTML CV with print CSS and hand it
+  to the **artifact plugin** (`show_artifact(kind="html", …)`). It becomes a versioned artifact
+  the operator can see and you can edit in place, and it needs no LaTeX knowledge. Two things
+  to be straight about, because the loop depends on them:
+  - You do **not** see the rendered page. `check_artifact` gives you a render *verdict*
+    (clean / failed with the error / no result yet) — that's the feedback channel. Judge
+    length and layout from the content against the page budget below, and ask the operator
+    to confirm; don't claim you looked at it.
+  - **The artifact plugin does not make PDFs.** A real PDF file comes from either the
+    operator printing the artifact (right-click inside it → "Print frame…" → Save as PDF;
+    plain Cmd/Ctrl-P prints the console, not the resume — see `resume/export.md`), or the
+    `browser_pdf` route in the `resume` skill's `export.md`, which needs
+    the **agent_browser** plugin (arriving with protoAgent PR #3451) plus **execute_code**.
+    Offer the route that's actually available; never say "exported to PDF" when what exists
+    is an HTML artifact.
 - **`docx`** — a real, editable **Word file** (what many ATS forms and recruiters expect). Build
   it with cowork's **`docx`** skill: `load_skill('docx')`, author the CV with `python-docx`
   following the content discipline in this guide + `writing-style.md`, save it to disk, then
@@ -33,14 +50,17 @@ the profile with `careercoach_import_experience` first (preview, then apply with
 - **`latex`** — produce a moderncv `.tex` (see the appendix). Use only if the user asks for it.
 
 ### HTML CV — house style
-- One file, self-contained (inline `<style>`), A4/Letter print CSS: `@page { size: A4; margin: 16mm; }`,
-  a body font stack, `--accent` custom property for the one accent colour.
-- Structure with real semantics (`<header>`, `<section>`, `<h2>`), not a table layout.
-- Keep it to **exactly 2 pages** when printed — use a `page-break-inside: avoid;` on each entry
-  block so a role's title never separates from its bullets (the HTML equivalent of the upstream's
-  `\needspace` rescue — but declarative and reliable).
-- Render, look at it, iterate. A CV that ends mid-page-2 looks unfinished; one that spills to page 3
-  needs cutting (see below), not squeezing.
+**Start from a template, don't hand-roll the shell.** The `resume` skill ships ATS-safe
+templates (`skills/resume/templates/*.html`) that already carry the whole contract: one
+self-contained file with inline `<style>`, a declared `@page` (Letter or A4),
+`break-inside: avoid` on every entry so a role's title never separates from its bullets
+(the declarative equivalent of the upstream's `\needspace` rescue), ligatures off, a system
+font stack, real semantics (`<section>`, `<h2>`) and no table layout. Read
+`resume/SKILL.md` for the catalogue and the rule list before restyling anything.
+
+Keep it to **2 pages**. You can't see the rendered page, so judge length from the budget
+below and confirm with the operator: a CV that ends mid-page-2 looks unfinished; one that
+spills to page 3 needs cutting (see below), not squeezing.
 
 ## Section-by-section tailoring
 
