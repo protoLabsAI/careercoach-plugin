@@ -477,9 +477,11 @@ def test_no_placeholder_hides_where_the_reader_cannot_see_it():
 # the same in both places only if it declares each of these itself, on the same element, in its
 # SCREEN rules — later-in-source wins at equal specificity and `:where()` has none.
 # (-webkit-font-smoothing is left out on purpose: a screen hint that affects neither layout nor
-# print.) NOT covered, because it can't be from here: the shell also puts that injection ahead
-# of the template's <!doctype>, so the panel renders in quirks mode — a core artifact-shell
-# issue, tracked there. Refresh this map if the kit grows a new element-level rule.
+# print.) NOT covered, because no stylesheet can win it: after a live theme change the shell's
+# re-theme shim writes the theme's text colour and background onto <body> as INLINE styles,
+# which beat any template rule — one reason the panel is not a print preview. (A srcdoc iframe
+# is never in quirks mode, so where the injection sits relative to the doctype doesn't matter.)
+# Refresh this map if the kit grows a new element-level rule.
 INJECTED = {
     "html": {"background"},
     "body": {"margin", "background", "color", "font-family", "font-size", "font-weight", "line-height"},
@@ -532,6 +534,7 @@ STALE = (
     "artifact-rendered HTML → PDF",
     "render these to PDF",
     "Print frame",
+    "quirks mode",  # a srcdoc iframe is never in quirks mode (HTML spec; measured for core #3457)
 )
 READ_FIRST = (
     "skills/job-application-assistant/SKILL.md",
