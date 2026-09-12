@@ -106,10 +106,11 @@ in the print dialog) when real A4 matters.
 
 **The PDF versus what the panel showed.** The panel injects the console's design-system
 stylesheet into every html artifact, and a `file://` page printed by `browser_pdf` gets none
-of it. The templates declare every property that stylesheet sets, so fonts, weights,
-spacing and colours agree between the two. The panel also renders html artifacts in quirks
-mode (a known core artifact-shell issue), so vertical spacing can differ slightly. **Treat
-the PDF, not the panel, as what the employer gets.**
+of it. The templates declare every property that stylesheet sets, so fonts, weights and
+spacing agree between the two. The panel still isn't a faithful print preview: it applies the
+console's theming (body margin 0, design-system typography), and a live theme change writes
+the theme's text colour and background onto `<body>` as inline styles, overriding the page's
+own colours. **Treat the PDF, not the panel, as what the employer gets.**
 
 **Gotchas.** A file artifact can't be edited by `update_artifact` / `rewrite_artifact`; you
 re-export and save a new version with the same `artifact_id`. If `save_file_artifact` says

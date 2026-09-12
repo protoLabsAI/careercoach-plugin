@@ -154,9 +154,10 @@ keeps the file an ATS reads faithful to the document the operator reviewed.
   stylesheet into every html artifact; a standalone print gets none of it. Set box-sizing,
   font weight, line-height, letter-spacing, colour and background on `body` and the
   headings explicitly, so fonts, weights and spacing agree between the panel and the file.
-  The panel also renders html artifacts in quirks mode (a known issue in the core artifact
-  shell), so vertical spacing can still differ slightly: **the exported file is what the
-  employer gets — check that, not the panel.**
+  Even so, the panel is not a faithful print preview: it applies the console's theming (body
+  margin 0, design-system typography), and a live theme change writes the theme's text colour
+  and background onto `<body>` as inline styles, overriding the page's own colours. **The
+  exported file is what the employer gets — check that, not the panel.**
 
 ## Anti-fabrication
 
