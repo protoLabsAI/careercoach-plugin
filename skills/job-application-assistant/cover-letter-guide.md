@@ -10,9 +10,9 @@
 - **`html`** (default) — one self-contained HTML letter with print CSS, handed to the
   artifact plugin with `show_artifact(kind="html", …)`. Match the CV's font + page setup so
   the pair looks like a set (borrow the `@page` block and font stack from whichever
-  `skills/resume/templates/*.html` the CV used). Getting a **PDF file** out of it is the
-  same story as the CV: the operator prints the artifact, or the `browser_pdf` route in the
-  `resume` skill's `export.md` does it — the artifact plugin itself doesn't make PDFs.
+  `skills/resume/templates/*.html` the CV used). Getting a **file** out of it is the same
+  story as the CV — the routes in the `resume` skill's `export.md` (DOCX, `browser_pdf`, or
+  the operator's download-and-print); the artifact plugin itself doesn't make PDFs.
 - **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
   **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,

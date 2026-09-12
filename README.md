@@ -167,22 +167,24 @@ careercoach-plugin/
 
 - **A print-correct HTML artifact, not LaTeX.** The upstream project's biggest tax is LaTeX page-break
   firefighting. We build the CV as an HTML artifact with a real `@page` and `break-inside: avoid` on every
-  entry, so the panel's render and Chrome's print are the same document — and keep `.tex`/moderncv as an
+  entry, so a print paginates the way it was laid out — and keep `.tex`/moderncv as an
   option (with the upstream gotchas preserved, credited).
 - **The resume is an artifact, and that's the whole design.** A resume kept as chat text or markdown
   multiplies: six weeks in there are five variants, three stale, and no answer to "which one did I send".
   So the master resume is **one `html` artifact** — versioned, previewed, edited in place with
   `update_artifact` / `rewrite_artifact` — each tailored variant is its own artifact, and the role packet's
   `tailored resume.md` becomes a *snapshot that records which artifact and version it came from* rather
-  than a competing copy. The `resume` skill adds **no tools at all**: it composes the artifact plugin
+  than a competing copy — and, because the panel keeps a bounded history (20 artifacts by default), that
+  snapshot plus the profile are the durable record; the artifact is the working surface. The `resume`
+  skill adds **no tools at all**: it composes the artifact plugin
   (create/edit/read/save), `browser_pdf` (agent_browser) and the `docx` skill (cowork) for exports, and
   `show_component` for results — naming the owner and the fallback for each, per ADR 0039's
   reference-by-name rule. The **ATS check** falls out of the same composition: `save_file_artifact`
   already extracts a PDF's text for its preview, so `get_artifact` reads back *what a parser sees* and the
   skill diffs it against the document — real evidence, not a rules-only opinion.
   **`browser_pdf` arrives with protoAgent [#3451](https://github.com/protoLabsAI/protoAgent/pull/3451),
-  so the agent-produced PDF route is inert until a core release includes it**; until then the operator
-  prints the artifact, which is exactly why the templates carry print CSS.
+  so the agent-produced PDF route is inert until a core release includes it**; until then a real file
+  comes from the DOCX route (cowork), or the operator downloads the HTML artifact and prints it.
 - **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
   real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
   skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092) — what

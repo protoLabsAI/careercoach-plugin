@@ -24,7 +24,7 @@ that step (progressive disclosure), don't inline them all up front:
 |------|-----------------|
 | `job-evaluation.md` | Step 1 — the weighted fit rubric + output format |
 | `writing-style.md`  | Steps 2-3 — tone, the banned-cliché list, the honesty test (**read before drafting anything**) |
-| `cv-guide.md`       | Step 2 — tailoring a CV, rendering it (HTML → PDF via the artifact plugin, or LaTeX) |
+| `cv-guide.md`       | Step 2 — tailoring a CV: the content discipline (producing the file is the `resume` skill) |
 | `cover-letter-guide.md` | Step 3 — cover-letter structure + rendering |
 
 ## Workflow

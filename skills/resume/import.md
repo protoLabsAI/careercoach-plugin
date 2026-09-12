@@ -7,10 +7,12 @@ from. The imported resume is evidence; the profile is the record.
 ## Two ways in
 
 ### A. They drop it in the chat
-Read what the host gives you. PDF text extraction works today; `.docx` arrived in
-protoAgent core with **#3444**. Nothing extra is needed — read it and go to *Structuring*
-below. If you get bytes you can't read rather than text, say exactly that instead of
-guessing at the content.
+Read what the host gives you. PDF text extraction works in current releases. `.docx`
+extraction for chat attachments is merged into protoAgent core (**#3444**) but **not yet in
+a release** — until one includes it, a `.docx` dropped in chat may not arrive as text. If it
+doesn't, ask for the file's path and use B below (the artifact plugin extracts `.docx`
+itself wherever python-docx is installed). If you get bytes you can't read rather than
+text, say exactly that instead of guessing at the content.
 
 ### B. It's a file on disk
 Ask for the absolute path (an old resume in their role-packet workspace, in Downloads,
@@ -26,6 +28,8 @@ get_artifact("<id>")
 `save_file_artifact` extracts a text preview when it stores the file, and `get_artifact`
 hands that text back to you. That is the whole parser — no new tool, and the operator
 gets the original filed in the Artifact panel with a Download button as a side effect.
+That costs one slot in the panel's bounded history (`master-and-tailor.md`, *Eviction*):
+once the facts are in the profile, offer to `delete_artifact` it.
 
 **What extraction covers and where it stops:**
 
@@ -41,6 +45,9 @@ gets the original filed in the Artifact panel with a Download button as a side e
   `ats-check.md`).
 - If a note comes back instead of text (a missing extractor library), say which one and
   ask them to paste the resume instead.
+- `.doc`, `.rtf`, `.odt` and other formats have no extractor: they come back as
+  `(binary file · <mime> · <n> bytes — download to open)`. Say so, and ask for a PDF, a
+  `.docx`, or the pasted text.
 
 If the artifact plugin isn't available, ask them to paste the text. Do not try to read a
 PDF with a fetch tool and conclude it can't be read.
@@ -92,6 +99,6 @@ it doesn't, the import isn't finished — don't move on to building a resume.
 
 ## Then what
 
-With the profile current, go build the master resume (`master-and-tailor.md`). The imported
-file artifact stays in the panel as provenance. It is **not** the resume: the moment the
-master artifact exists, that is the current document, and the imported PDF is history.
+With the profile current, go build the master resume (`master-and-tailor.md`). If the
+operator keeps the imported file artifact, it is provenance, **not** the resume: the moment
+the master artifact exists, that is the current document, and the imported PDF is history.

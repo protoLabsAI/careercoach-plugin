@@ -65,6 +65,8 @@
   /* Plain text, separated by a literal " | " in the markup - no CSS-generated
      separators, because generated content is invisible to a text extractor. */
   .contact { font-size: 9.5pt; color: var(--muted); margin: 0 0 14pt; }
+  /* URLs stay visible text: many parsers ignore href. If you add a link, keep the
+     address as its visible text and let it take the contact colour. */
   .contact a { color: inherit; text-decoration: none; }
 
   /* ── sections: standard, boring, parseable headings ───────────────────────── */
@@ -81,8 +83,6 @@
     break-after: avoid;
     page-break-after: avoid;        /* legacy alias: older print engines */
   }
-
-  section { break-inside: auto; }
 
   p { margin: 0 0 6pt; }
 
@@ -126,7 +126,7 @@
 <h1>[FULL NAME]</h1>
 <p class="headline">[TARGET ROLE TITLE]</p>
 <p class="contact">
-  [City, Country] | [email@example.com] | [+1 555 0100] | <a href="[https://linkedin.com/in/handle]">[linkedin.com/in/handle]</a>
+  [City, Country] | [email@example.com] | [+1 555 0100] | [linkedin.com/in/handle]
 </p>
 
 <section>

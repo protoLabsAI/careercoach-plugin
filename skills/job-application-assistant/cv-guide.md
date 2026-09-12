@@ -28,13 +28,12 @@ the profile with `careercoach_import_experience` first (preview, then apply with
     (clean / failed with the error / no result yet) — that's the feedback channel. Judge
     length and layout from the content against the page budget below, and ask the operator
     to confirm; don't claim you looked at it.
-  - **The artifact plugin does not make PDFs.** A real PDF file comes from either the
-    operator printing the artifact (right-click inside it → "Print frame…" → Save as PDF;
-    plain Cmd/Ctrl-P prints the console, not the resume — see `resume/export.md`), or the
-    `browser_pdf` route in the `resume` skill's `export.md`, which needs
-    the **agent_browser** plugin (arriving with protoAgent PR #3451) plus **execute_code**.
-    Offer the route that's actually available; never say "exported to PDF" when what exists
-    is an HTML artifact.
+  - **The artifact plugin does not make PDFs.** A real file comes from the routes in the
+    `resume` skill's `export.md`: a `.docx` via cowork (works today), a PDF via `browser_pdf`
+    (the **agent_browser** plugin, arriving with protoAgent PR #3451, plus **execute_code**),
+    or, as the fallback, the operator downloading the HTML artifact and printing it from
+    their own browser. Offer the route that's actually available; never say "exported to
+    PDF" when what exists is an HTML artifact.
 - **`docx`** — a real, editable **Word file** (what many ATS forms and recruiters expect). Build
   it with cowork's **`docx`** skill: `load_skill('docx')`, author the CV with `python-docx`
   following the content discipline in this guide + `writing-style.md`, save it to disk, then

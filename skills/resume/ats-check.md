@@ -14,11 +14,15 @@ The only part that tests reality rather than rules. It works because
 `save_file_artifact` extracts a text preview when it stores a file, and `get_artifact`
 hands that text back.
 
-1. Have the exported file (`export.md`). If the operator printed it themselves (Route A),
+1. Have the exported file (`export.md`). If the operator printed it themselves (Route 3),
    ask them for the PDF — without a file, **say this part didn't run**; don't substitute
    the HTML source and call it a parser view.
-2. `save_file_artifact("/abs/path/resume.pdf", title="<Name> — Resume — <Role> (PDF)")`.
-   Note the `(mime, NN KB)` in the result — that's Part 2's file-size check for free.
+2. Get it into a file artifact **once**. Routes 1 and 2 already saved it — use that id, don't
+   save it again. For a file the operator hands back:
+   `save_file_artifact("/abs/path/resume.pdf", title="<Name> — Resume — <Role> (PDF)", artifact_id=<this role's export artifact, if it has one>)`.
+   Every extra save without an id is one more panel entry pushing the master toward
+   eviction (`master-and-tailor.md`, *Eviction*). Note the `(mime, NN KB)` in the save
+   result — that's Part 2's file-size check for free.
 3. `get_artifact("<that id>")` → the extracted text. **This is approximately what an ATS
    sees.** Read it as if you'd never seen the resume.
 4. Diff it against the document you wrote, and report:
@@ -31,7 +35,7 @@ hands that text back.
 | Contact line is missing or repeated on every page | It's in a running header/footer | Put it in the body |
 | Odd characters: U+FB00-FB06 (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ), U+E000-F8FF (private use), stray U+00AD | Ligatures and icon-font glyphs | Remove; no icon fonts |
 
-Two limits to state rather than paper over:
+Three limits to state rather than paper over:
 
 - Extraction stops at **50 PDF pages** (`… (more pages — download for all)`) and the
   stored preview is clipped at **64 KB** (`… (preview truncated …)`). If you see either
@@ -126,8 +130,8 @@ show_component("keyvalue", {
 
 ## Closing the check
 
-Fix what's fixable in the artifact (`update_artifact` / `rewrite_artifact`), re-export, and
-re-run Part 1 — a layout fix is only proven by the extraction changing. Report the real
+Fix what's fixable in the artifact (`update_artifact` / `rewrite_artifact`), re-export into
+the same file artifact (pass its `artifact_id`), and re-run Part 1 — a layout fix is only proven by the extraction changing. Report the real
 gaps as gaps. **Never close an ATS check by adding a keyword the profile doesn't support**:
 that's the exact failure this plugin's anti-fabrication rule exists to stop, and it's the
 one an interviewer catches.

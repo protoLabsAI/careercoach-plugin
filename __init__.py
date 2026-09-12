@@ -19,7 +19,7 @@ contribution surface in one place:
 
 Adapted, with credit, from Mads Lorentzen's ``ai-job-search`` (MIT) — see CREDITS.md.
 The prompt-engineering IP (fit rubric, writing-style discipline, upskill gap analysis)
-is ported; the LaTeX toolchain is replaced by artifact-rendered HTML → PDF; and the
+is ported; the LaTeX toolchain is replaced by a print-correct HTML artifact (the resume skill); and the
 whole thing is reframed around coaching.
 
 Host imports (``graph.*``) stay **lazy and guarded** so the plugin loads and its tests
