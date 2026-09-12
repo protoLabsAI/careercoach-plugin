@@ -38,6 +38,7 @@ EXTERNAL_TOOLS: dict[str, str] = {
     "check_artifact": "artifact",
     "save_file_artifact": "artifact",
     "delete_artifact": "artifact",
+    "pin_artifact": "artifact",  # artifact plugin 0.18.0+ (protoAgent #3456); used only when present
     # agent_browser plugin (off by default; browser_pdf lands with protoAgent PR #3451)
     "browser_open": "agent_browser",
     "browser_pdf": "agent_browser",
@@ -603,3 +604,17 @@ def test_a_relative_packet_root_lands_under_home_not_the_servers_cwd(plugin, iso
     monkeypatch.chdir("/")
     root = packet.resolve_root("CareerCoach")
     assert root == Path.home() / "CareerCoach" and root.is_dir()
+
+
+def test_pinning_the_master_is_conditional_on_the_tool_being_there():
+    """pin_artifact ships in artifact plugin 0.18.0 (protoAgent #3456), not in a core release yet,
+    so every pin step is conditional and the copy of record stays the recovery path without it.
+    Only the master is pinned, and a refusal at the pin cap goes to the operator, never an unpin."""
+    tailor = _flat((SKILL_DIR / "master-and-tailor.md").read_text(encoding="utf-8"))
+    assert "if `pin_artifact` is in your toolset" in tailor
+    assert "pin_artifact(<id>)" in tailor and "pin_artifact(<new id>)` if you have it" in tailor
+    assert "Pin only the master" in tailor and "rather than unpinning one yourself" in tailor
+    assert "A pinned master is exempt from this cap" in tailor
+    fm, body = _frontmatter(SKILL_DIR / "SKILL.md")
+    assert "pin_artifact" in fm["tools"]
+    assert "| Keep the master from being evicted | `pin_artifact` |" in body

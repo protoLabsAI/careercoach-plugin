@@ -8,7 +8,7 @@ description: >-
   exports become downloadable files. For scoring a posting or writing a cover letter see
   job-application-assistant; for the full filed application see role-packet; for the
   first-run interview see setup-coach.
-tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, careercoach_list_roles, careercoach_init_workspace, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, show_component, load_skill]
+tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, careercoach_list_roles, careercoach_init_workspace, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, pin_artifact, show_component, load_skill]
 ---
 
 # Resume — build, parse, export, check
@@ -52,6 +52,7 @@ so the DOCX route is available when you have `execute_code` in your toolset and 
 | Confirm it rendered | `check_artifact` | artifact | skip the verdict step; don't loop |
 | Turn a file into a download | `save_file_artifact` | artifact | no Download button; give the file path instead |
 | Clean up a temporary read | `delete_artifact` | artifact | leave it; it ages out |
+| Keep the master from being evicted | `pin_artifact` | artifact (0.18.0+; not yet in a core release) | rely on the copy of record |
 | Word file | the `docx` skill via `load_skill("docx")` | **cowork** (adds skills, not tools — look for `docx` in your available skills) | offer the PDF route, or the HTML download |
 | Write HTML / DOCX bytes to disk | `execute_code` | **execute_code** (off in a fresh install — enabling it is a code-execution trust decision) | neither agent-made file route works, and the approved master gets no copy of record; offer the HTML download |
 | Print HTML → PDF | `browser_pdf` (after `browser_open`) | **agent_browser** (off in a fresh install, and `browser_pdf` isn't in a release yet) | offer the DOCX route, or the HTML download |

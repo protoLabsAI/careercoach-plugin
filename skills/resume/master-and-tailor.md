@@ -87,6 +87,12 @@ In the conversation that made an artifact you already have its id. In a later on
    second. Write it again after every approved edit, and after the master's first DOCX or PDF
    export (to record that id). No `execute_code`: tell them the wording has no copy of record
    and offer the Download button.
+7. **Pin it**, if `pin_artifact` is in your toolset (artifact plugin 0.18.0+): `pin_artifact(<id>)`.
+   A pinned master isn't evicted, so its copy of record becomes the backstop rather than the
+   routine recovery path. Pin only the master — variants have their snapshots. If the pin is
+   refused at the cap (the plugin's **Pinned artifacts** setting, 10 by default), the refusal
+   names the artifacts holding the pins: tell the operator which ones, rather than unpinning
+   one yourself. Without `pin_artifact`, skip this step; the copy of record is the recovery path.
 
 ## Edits you didn't make
 
@@ -115,7 +121,7 @@ So a resume artifact can vanish between conversations. Before editing one:
    line** from it — it names the old artifact — and rebuild with
    `show_artifact(kind="html", code=<the source without that line>)`. Then
    `delete_artifact(<the temporary file artifact>)` so the recovery doesn't push something else
-   out, and rewrite the copy of record with a fresh comment line for the new id. With no copy of
+   out, and rewrite the copy of record with a fresh comment line for the new id, and `pin_artifact(<new id>)` if you have it. With no copy of
    record, the facts can be rebuilt from the profile but **the approved wording is gone**: say
    exactly that, rebuild from the profile, and have the operator approve it again.
 3. **A variant:** the same, from `tailored resume.md` in the folder `careercoach_list_roles`
@@ -129,7 +135,7 @@ Keep the panel lean so this rarely happens: reuse the recorded export ids for ev
 re-export and ATS re-save (`export.md`), and delete temporary file artifacts once you've read
 them. If the operator works many roles at once, the artifact plugin's **"Artifacts kept"**
 setting (`history`, under Settings → Plugins → Artifact) raises the cap. Worth suggesting —
-never a substitute for the copies of record.
+never a substitute for the copies of record. A pinned master is exempt from this cap.
 
 ## Edit it
 
