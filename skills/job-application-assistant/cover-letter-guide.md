@@ -14,11 +14,12 @@
   story as the CV — the routes in the `resume` skill's `export.md` (DOCX, `browser_pdf`, or
   the operator's download-and-print); the artifact plugin itself doesn't make PDFs.
 - **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
-  **`docx`** skill (`load_skill('docx')`, `python-docx`), save to disk, then
+  **`docx`** skill (`load_skill('docx')`, `python-docx`), save to an **absolute** path, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
   downloadable file. Same requirements + fallback as the CV (`cv-guide.md`): needs cowork +
   `execute_code` + a v0.108.0+ host (on desktop the managed Python runtime provisions on first use),
-  else fall back to `html`.
+  else fall back to `html`. It's available when you have `execute_code` in your toolset and
+  `docx` in your available skills (cowork adds skills, not tools).
 - **`latex`** — the custom `cover.cls` (Lato/Raleway, XeLaTeX); see the appendix.
 
 ### HTML letter — house style

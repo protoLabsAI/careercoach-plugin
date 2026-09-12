@@ -19,7 +19,8 @@ hands that text back.
    the HTML source and call it a parser view.
 2. Get it into a file artifact **once**. Routes 1 and 2 already saved it — use that id, don't
    save it again. For a file the operator hands back:
-   `save_file_artifact("/abs/path/resume.pdf", title="<Name> — Resume — <Role> (PDF)", artifact_id=<this role's export artifact, if it has one>)`.
+   `save_file_artifact("/abs/path/resume.pdf", title="<Name> — Resume — <Role> (PDF)", artifact_id=<the PDF export id, or the DOCX export id for a .docx, from the snapshot header, if any>)`,
+   never one type's id for the other.
    Every extra save without an id is one more panel entry pushing the master toward
    eviction (`master-and-tailor.md`, *Eviction*). Note the `(mime, NN KB)` in the save
    result — that's Part 2's file-size check for free.

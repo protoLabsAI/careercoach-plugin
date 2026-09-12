@@ -8,7 +8,7 @@ description: >-
   exports become downloadable files. For scoring a posting or writing a cover letter see
   job-application-assistant; for the full filed application see role-packet; for the
   first-run interview see setup-coach.
-tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, careercoach_scaffold_role, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, show_component, load_skill]
+tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, careercoach_list_roles, careercoach_init_workspace, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, show_component, load_skill]
 ---
 
 # Resume — build, parse, export, check
@@ -24,8 +24,9 @@ own. Three ideas carry the whole thing:
 2. **The artifact is the working surface, not the vault.** The artifact plugin keeps a
    bounded history — 20 artifacts across the whole instance by default — and evicts the
    least recently touched. So the durable record lives elsewhere: the **profile** holds
-   the facts, and each role packet's `tailored resume.md` holds a snapshot of that
-   variant, stamped with the artifact and version it came from. Verify an artifact id
+   the facts, a file in the workspace holds the approved master's wording, and each
+   variant's `tailored resume.md` holds a snapshot stamped with the artifact and version
+   it came from. Verify an artifact id
    before you edit it — `master-and-tailor.md`, *Eviction*.
 3. **The profile is the source of truth for facts.** The resume is a *presentation* of
    the operator profile. It never introduces an employer, title, date or credential the
@@ -36,23 +37,23 @@ own. Three ideas carry the whole thing:
 
 Reference every external tool **by name only** — never import another plugin (ADR 0039).
 If a tool isn't in your toolset, that path is off: say which tool is missing and which
-plugin owns it, then offer the fallback. Never silently switch routes. Judge by what's in
-your toolset, never by a plugin's install default — operators often have cowork and
-execute_code enabled.
+plugin owns it, then offer the fallback. Never silently switch routes. Judge by what's
+actually available, never by a plugin's install default. **cowork adds skills, not tools**,
+so the DOCX route is available when you have `execute_code` in your toolset and `docx` in your available skills (or `load_skill("docx")` succeeds).
 
 | Step | Tool | Owned by | If it's absent |
 |------|------|----------|----------------|
 | Read the facts | `careercoach_read_profile`, `careercoach_get_profile` | careercoach (this plugin) | always present |
 | Correct the facts | `careercoach_update_profile`, `careercoach_import_experience` | careercoach | always present |
-| File or find a role's snapshot | `careercoach_write_artifact`, `careercoach_scaffold_role` | careercoach | always present |
+| File a snapshot / find the workspace | `careercoach_write_artifact`, `careercoach_list_roles`, `careercoach_init_workspace` | careercoach | always present |
 | Create the resume | `show_artifact(kind="html", …)` | **artifact** (bundled, on by default) | no artifact route at all — say so and fall back to showing the resume as chat markdown, which is a draft, not a deliverable |
 | Read it back / parse a file | `get_artifact`, `list_artifacts` | artifact | as above |
 | Edit it | `update_artifact`, `rewrite_artifact` | artifact | as above |
 | Confirm it rendered | `check_artifact` | artifact | skip the verdict step; don't loop |
 | Turn a file into a download | `save_file_artifact` | artifact | no Download button; give the file path instead |
 | Clean up a temporary read | `delete_artifact` | artifact | leave it; it ages out |
-| Word file | the `docx` skill via `load_skill("docx")` | **cowork** (off in a fresh install — check your toolset) | offer the PDF route, or the HTML download |
-| Write HTML / DOCX bytes to disk | `execute_code` | **execute_code** (off in a fresh install — enabling it is a code-execution trust decision) | neither agent-made file route works; offer the HTML download |
+| Word file | the `docx` skill via `load_skill("docx")` | **cowork** (adds skills, not tools — look for `docx` in your available skills) | offer the PDF route, or the HTML download |
+| Write HTML / DOCX bytes to disk | `execute_code` | **execute_code** (off in a fresh install — enabling it is a code-execution trust decision) | neither agent-made file route works, and the approved master gets no copy of record; offer the HTML download |
 | Print HTML → PDF | `browser_pdf` (after `browser_open`) | **agent_browser** (off in a fresh install, and `browser_pdf` isn't in a release yet) | offer the DOCX route, or the HTML download |
 | Show results as a table | `show_component` | host core | fall back to a markdown table |
 
@@ -76,12 +77,13 @@ this step entirely when the profile is already the better record.
 ### 2. Master resume
 One `html` artifact built from a template, filled from the profile. See
 **`master-and-tailor.md`**. Record its artifact id and template in the profile so the next
-session finds it instead of making a second one — and verify the id before every edit.
+session finds it instead of making a second one, write the approved wording to a file as its
+copy of record, and verify the id before every edit.
 
 ### 3. Tailor per role
-A variant is **its own artifact**, branched from the master, aimed at one posting. The
-role packet files a snapshot of it that records the artifact id — the copy of record if the
-artifact is ever evicted. See **`master-and-tailor.md`**.
+A variant is **its own artifact**, branched from the master, aimed at one posting. It is
+filed as a snapshot under its role the moment it exists, and re-filed after every edit — the
+copy of record if the artifact is ever evicted. See **`master-and-tailor.md`**.
 
 ### 4. Export
 HTML artifact → a real file the operator can attach: DOCX (wherever cowork + execute_code

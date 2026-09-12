@@ -56,8 +56,10 @@ that step (progressive disclosure), don't inline them all up front:
 - Produce the document with the **`resume`** skill (`load_skill("resume")`) — it owns the
   mechanics: the CV as a versioned `html` artifact, the ATS-safe templates, and the export
   routes per `render_format` (`html`, `docx` → a real Word file, `latex` → moderncv `.tex`),
-  each with what it needs and what to say when a plugin is off. `cv-guide.md` stays the
-  content discipline. **Never silently switch route** — name the missing plugin.
+  each with what it needs and what to say when a route isn't available (DOCX needs
+  `execute_code` in your toolset and `docx` in your available skills — cowork adds skills, not
+  tools). `cv-guide.md` stays the content discipline. **Never silently switch route** — name
+  what's missing.
 - If the user wants an ATS read on the result, that's the `resume` skill's three-part check.
 
 ### Step 3 — Write the cover letter (on request)

@@ -29,22 +29,24 @@ the profile with `careercoach_import_experience` first (preview, then apply with
     length and layout from the content against the page budget below, and ask the operator
     to confirm; don't claim you looked at it.
   - **The artifact plugin does not make PDFs.** A real file comes from the routes in the
-    `resume` skill's `export.md`: a `.docx` via cowork (wherever cowork + execute_code are
-    enabled), a PDF via `browser_pdf`
+    `resume` skill's `export.md`: a `.docx` via cowork (available when you have `execute_code`
+    in your toolset and `docx` in your available skills), a PDF via `browser_pdf`
     (the **agent_browser** plugin, arriving with protoAgent PR #3451, plus **execute_code**),
     or, as the fallback, the operator downloading the HTML artifact and printing it from
     their own browser. Offer the route that's actually available; never say "exported to
     PDF" when what exists is an HTML artifact.
 - **`docx`** — a real, editable **Word file** (what many ATS forms and recruiters expect). Build
   it with cowork's **`docx`** skill: `load_skill('docx')`, author the CV with `python-docx`
-  following the content discipline in this guide + `writing-style.md`, save it to disk, then
-  register it with **`save_file_artifact(path, title="<Name> — CV — <Role>")`** so it lands in the
+  following the content discipline in this guide + `writing-style.md`, save it to an **absolute** path
+  (a relative one fails — see `resume/export.md`), then register it with
+  **`save_file_artifact(<that same path>, title="<Name> — CV — <Role>")`** so it lands in the
   Artifact panel as a **versioned, downloadable** file with a text preview. Needs the cowork plugin
   + the **`execute_code`** plugin (which runs the `python-docx` code — enabling it is a code-execution
   trust decision) + a protoAgent **v0.108.0+** host. On the **desktop app** that's the floor: 0.108.0
   ships the managed Python runtime (ADR 0094), so the first `execute_code` call provisions a pinned
   CPython + the doc libraries (one consented download, once per machine); before it, code execution
-  couldn't run on the packaged app at all. On server/Docker there's nothing to provision. If any is missing,
+  couldn't run on the packaged app at all. On server/Docker there's nothing to provision. It's available when you have `execute_code` in your toolset and
+  `docx` in your available skills (cowork adds skills, not tools). If either is missing,
   **name exactly what's absent and fall back to `html`** — never silently skip. Save a revised CV as a
   new version by passing the same `artifact_id`.
 - **`latex`** — produce a moderncv `.tex` (see the appendix). Use only if the user asks for it.

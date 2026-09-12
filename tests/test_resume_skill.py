@@ -63,6 +63,7 @@ NOT_TOOLS = {
     "max_versions",
     "new_string",
     "old_string",
+    "output_dir",  # cowork docx skill's default output setting, named to explain why it is overridden
     "preview_id",
     "render_format",
 }
@@ -202,6 +203,31 @@ def test_the_skill_states_who_owns_each_external_tool_and_how_it_degrades():
     assert "never silently" in text.lower() or "don't silently" in text.lower()
 
 
+# cowork registers NO tools — only skills (`register_skill_dir`) and a goal verifier — so
+# "check your toolset" can't find it. Every skill file that names cowork states the one test
+# that works: `execute_code` in the toolset AND `docx` among the available skills.
+AVAILABILITY = ("`execute_code` in your toolset", "`docx` in your available skills")
+
+
+def test_every_file_naming_cowork_uses_the_one_availability_test_that_works():
+    routers = {ROOT / "skills/job-application-assistant/SKILL.md", ROOT / "skills/role-packet/SKILL.md"}
+    docx_route = re.compile(r"`docx`|load_skill\(['\"]docx")
+    naming = sorted(
+        {
+            p
+            for p in ROOT.glob("skills/**/*.md")
+            if "cowork" in (s := p.read_text(encoding="utf-8")) and docx_route.search(s)
+        }
+        | routers
+    )
+    assert len(naming) > len(routers), "the DOCX route is documented somewhere"
+    for path in naming:
+        flat = _flat(path.read_text(encoding="utf-8"))
+        for phrase in AVAILABILITY:
+            assert phrase in flat, f"{path.relative_to(ROOT)} names cowork without the test: {phrase!r}"
+        assert "check your toolset)" not in flat, f"{path.relative_to(ROOT)}: cowork adds no tools"
+
+
 def test_the_skill_does_not_promise_what_the_hosts_cannot_do():
     """Each of these was once stated as fact and wasn't: #3444 is merged, not released;
     browser_pdf prints Letter whatever the @page says; its result isn't a bare path; and
@@ -223,8 +249,18 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     written down, the snapshot is the copy of record, and exports don't burn slots."""
     tailor = _flat((SKILL_DIR / "master-and-tailor.md").read_text(encoding="utf-8"))
     assert "Eviction" in tailor and "get_artifact(<recorded id>)" in tailor
-    assert "copy of record" in tailor and "careercoach_scaffold_role" in tailor
     assert "history" in tailor and "Tell the operator" in tailor
+    # every layer that must survive eviction has a home, and recovery reads it back read-only
+    assert 'careercoach_get_profile("notes")' in tailor, "the registry is how a later session finds anything"
+    assert "careercoach_scaffold_role" not in tailor, "recovery must not use a write tool as a lookup"
+    assert "Master Resume.html" in tailor, "the approved master's wording needs a copy of record"
+    assert "the approved wording is gone" in tailor, "without one, say so — don't claim otherwise"
+    assert "Nothing of record ever lives only in the panel" not in tailor
+    assert "Re-file the snapshot after every edit" in tailor and "File its snapshot now" in tailor
+    assert "DOCX export:" in tailor and "PDF export:" in tailor, "both export ids live in the header"
+    export = _flat((SKILL_DIR / "export.md").read_text(encoding="utf-8"))
+    assert "Always write to an absolute path" in export, "the server's cwd is / — relative saves fail"
+    assert "Never reuse a DOCX id for a PDF" in export
     for name in ("export.md", "ats-check.md"):
         text = (SKILL_DIR / name).read_text(encoding="utf-8")
         calls = re.findall(r"`save_file_artifact\((.*?)\)`", text, flags=re.S)
@@ -366,7 +402,11 @@ def test_every_template_holds_the_ats_critical_css_contract():
 BANNED = {
     "float": lambda v: v != "none",
     "position": lambda v: v in ("absolute", "fixed"),
-    "display": lambda v: v in ("flex", "inline-flex", "grid", "inline-grid", "table", "table-row", "table-cell"),
+    "display": lambda v: (
+        v in ("flex", "inline-flex", "grid", "inline-grid", "inline-block", "table", "table-row", "table-cell")
+    ),
+    # `width: 48%` beside a sibling is a two-column layout without a single flex/grid keyword
+    "width": lambda v: v.endswith("%") and float(v[:-1] or 0) < 100,
     "columns": lambda v: True,
     "column-count": lambda v: True,
     "column-width": lambda v: True,

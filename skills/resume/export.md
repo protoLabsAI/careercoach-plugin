@@ -9,15 +9,27 @@ Honour the operator's `render_format` setting: `docx` → Route 1, `html` → Ro
 while `browser_pdf` isn't available), `latex` → the moderncv appendix in
 `job-application-assistant/cv-guide.md`.
 
-**One file artifact per role's export, not one per save.** Every `save_file_artifact` call
-without an `artifact_id` adds a panel entry, and the panel keeps only 20 by default across
-the whole instance, evicting the least recently touched — resumes included. Save a role's
-first export without an id, note the id it returns, and pass that `artifact_id` on every
-later export and ATS re-save for the same role. See `master-and-tailor.md`, *Eviction*.
+**One file artifact per export type per resume, not one per save.** Every
+`save_file_artifact` call without an `artifact_id` adds a panel entry, and the panel keeps only
+20 by default across the whole instance, evicting the least recently touched — resumes
+included. Save a resume's first DOCX (or PDF) without an id, **record the id it returns** —
+in the variant's snapshot header (`DOCX export:` / `PDF export:`) or on the master's line in
+`notes` — and pass that same id on every later export and ATS re-save of that type. Never
+reuse a DOCX id for a PDF or the other way round: the plugin accepts it and mixes file types
+in one version history. See `master-and-tailor.md`, *Eviction*.
+
+**Always write to an absolute path.** The server runs with its working directory at `/`,
+which is read-only on the desktop app, so a relative save fails (`Read-only file system`)
+and `save_file_artifact` then finds nothing. Write into the variant's role folder — the
+folder of the snapshot path `careercoach_write_artifact` returned, recorded in `notes` — or
+into `<workspace>/Resume/` for the master, and pass that same absolute path to
+`save_file_artifact`.
 
 ---
 
 ## Route 1 — DOCX (works wherever cowork + execute_code are enabled; what most ATS forms want)
+
+**Is it available?** `execute_code` in your toolset **and** `docx` in your available skills (or `load_skill("docx")` succeeds). cowork registers no tools, only skills, so don't look for it among your tools.
 
 **Needs:** the **cowork** plugin's `docx` skill, the **execute_code** plugin (it runs
 `python-docx`), and a protoAgent **v0.108.0+** host — on the desktop app that's the floor,
@@ -26,8 +38,10 @@ use.
 
 The procedure is already documented: read `job-application-assistant/cv-guide.md` for the
 full steps and the version floors. In short: `load_skill("docx")`, author the CV with
-`python-docx` following `cv-guide.md` + `writing-style.md`, save it to disk, then
-`save_file_artifact(path, title="<Name> — CV — <Role>", artifact_id=<this role's DOCX artifact, if it has one>)`.
+`python-docx` following `cv-guide.md` + `writing-style.md`, save it to an **absolute** path in
+the role folder (cowork's skill defaults to a project folder or `output_dir`; neither fits
+the coach's workspace, so pass the path explicitly), then
+`save_file_artifact("<that same absolute path>", title="<Name> — CV — <Role>", artifact_id=<the DOCX export id from the snapshot header, if any>)`.
 
 Two things this skill adds on top:
 
@@ -42,8 +56,9 @@ Two things this skill adds on top:
   stays the editable master; the `.docx` is an export of a specific version. Say which
   version it came from.
 
-If cowork or `execute_code` is off, name the one that's missing and offer Route 2 or 3 —
-don't silently produce HTML and call it a Word file.
+If either half of the availability test fails, name which — `execute_code` missing from your
+toolset, or `docx` missing from your available skills (the cowork plugin) — and offer Route 2
+or 3. Don't silently produce HTML and call it a Word file.
 
 ---
 
@@ -61,7 +76,8 @@ disabled; enabling `execute_code` is a code-execution trust decision.
 The chain:
 
 1. `get_artifact(<resume artifact id>)` — the HTML source.
-2. `execute_code` — write that HTML to a file and print its absolute path.
+2. `execute_code` — write that HTML to an **absolute** path in the role folder (never a
+   relative one) and print it.
    (The generic `write_file` can't help here: it only reaches managed fs projects, and the
    coach's workspace isn't one.)
 3. `browser_open("file:///<absolute path to the html>")` — the browser needs a URL, and a
@@ -73,8 +89,9 @@ The chain:
    path outside it is refused, not redirected. The result is the browser tool's output
    followed by a line `Saved to <absolute path>`, or a line starting `Error:`. **Take the
    path from the `Saved to` line** — don't pass the whole result on.
-5. `save_file_artifact("<that path>", title="<Name> — Resume — <Role> (PDF)", artifact_id=<this role's PDF artifact, if it has one>)`
-   — now the operator has a Download button, a text preview, and a version history.
+5. `save_file_artifact("<that path>", title="<Name> — Resume — <Role> (PDF)", artifact_id=<the PDF export id from the snapshot header, if any>)`
+   — now the operator has a Download button, a text preview, and a version history. If this
+   was the first PDF, record its id in the snapshot header and re-file the snapshot.
 
 Then run the ATS check on this file artifact — it is what makes part 1 of the check possible.
 

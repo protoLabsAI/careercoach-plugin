@@ -60,7 +60,7 @@ Every protoAgent extension surface, in one plugin:
 | Surface | Where | What it shows |
 |---------|-------|---------------|
 | **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 7 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand |
-| **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser**, **cowork** and **execute_code** plugins own, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
+| **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
 | **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
@@ -175,7 +175,8 @@ careercoach-plugin/
   `update_artifact` / `rewrite_artifact` — each tailored variant is its own artifact, and the role packet's
   `tailored resume.md` becomes a *snapshot that records which artifact and version it came from* rather
   than a competing copy — and, because the panel keeps a bounded history (20 artifacts by default), that
-  snapshot plus the profile are the durable record; the artifact is the working surface. The `resume`
+  snapshot plus the profile are the durable record (the approved master's wording is written to a
+  workspace file where `execute_code` is on); the artifact is the working surface. The `resume`
   skill adds **no tools at all**: it composes the artifact plugin
   (create/edit/read/save), `browser_pdf` (agent_browser) and the `docx` skill (cowork) for exports, and
   `show_component` for results — naming the owner and the fallback for each, per ADR 0039's
