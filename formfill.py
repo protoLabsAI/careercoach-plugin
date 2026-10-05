@@ -588,6 +588,23 @@ def record_verification(session_id: str, mismatches: list[dict]) -> dict:
         return rec
 
 
+def invalidate_verification(session_id: str) -> None:
+    """Drop a session's ``verified`` flag (and its stored diff) WITHOUT rewriting the plan, so it
+    reads as unverified until it is filled and read back again. Used after a visible-browser handoff:
+    a captcha / login / attestation step can re-render the form and clear filled fields, so the
+    verification made BEFORE the handoff no longer describes the live form and must not authorize a
+    submit. No-op if the session is gone."""
+    with _store._locked("fill_sessions"):
+        sessions = _load_strict()
+        rec = sessions.get(session_id)
+        if rec is None:
+            return
+        rec["verified"] = False
+        rec["verified_at"] = ""
+        rec["last_diff"] = None
+        _save(sessions)
+
+
 def is_verified(session_id: str) -> bool:
     """Whether the session's latest diff was empty (``False`` if there's no session or no diff)."""
     rec = load_session(session_id)
