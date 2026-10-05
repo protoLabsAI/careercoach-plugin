@@ -196,16 +196,63 @@ def _options(field: dict) -> list[str]:
     return [lbl for lbl in (_option_label(o) for o in raw) if lbl]
 
 
+# Punctuation that merely varies between equivalent wordings of the SAME option. Apostrophes are
+# DROPPED outright ("don't" → "dont"), so a decline wording can be written apostrophe-free; hyphens,
+# periods and commas become spaces so "self-identify" folds to "self identify".
+_OPT_DROP = re.compile(r"['’]")
+_OPT_SPACE = re.compile(r"[-.,]")
+
+
+def _norm_option(text: object) -> str:
+    """A select option or candidate value folded for matching: lowercased, the punctuation that
+    varies between equivalent wordings removed (apostrophes dropped, hyphens/periods/commas → space),
+    whitespace collapsed. So "Decline to self-identify" and "Decline To Self Identify" fold to the
+    same string."""
+    s = _OPT_DROP.sub("", str(text if text is not None else "").lower())
+    s = _OPT_SPACE.sub(" ", s)
+    return " ".join(s.split())
+
+
+# Normalized wordings that all mean "I decline to answer this voluntary question". A value whose
+# normalized form is in this set is a DECLINE answer, and is matched to an option whose normalized
+# form is ALSO in it — so a stored "Decline to self-identify" resolves to a form's "Decline To Self
+# Identify" or "I don't wish to answer". This equivalence applies to decline answers ONLY, and only
+# when exactly one option qualifies; it is not a general synonym table.
+_DECLINE_FORMS = frozenset(
+    {
+        "decline to self identify",
+        "decline to answer",
+        "prefer not to say",
+        "i dont wish to answer",
+        "i do not wish to answer",
+        "i dont want to answer",
+        "prefer not to answer",
+        "decline",
+    }
+)
+
+
 def _match_option(value: str, options: list[str]) -> str | None:
-    """The option ``value`` maps to: an exact match, else a case-insensitive exact match, else
-    ``None``. NEVER a nearest/fuzzy pick — picking "Afghanistan" for an unmatched answer because it
-    sorts first is exactly the failure this prevents."""
+    """The option ``value`` maps to, or ``None`` — NEVER a nearest/fuzzy pick (picking "Afghanistan"
+    for an unmatched answer because it sorts first is the failure this prevents).
+
+    Exact match first; then a normalized comparison (``_norm_option``: lowercase, drop the
+    apostrophes/hyphens/periods/commas that vary between equivalent wordings, collapse whitespace),
+    so "Decline to self-identify" equals "Decline To Self Identify". Finally, ONLY when ``value`` is
+    itself a recognized DECLINE answer, the option whose normalized form is ALSO a decline answer is
+    chosen — so a stored "Decline to self-identify" resolves to a form's "I don't wish to answer".
+    Exactly one decline-equivalent option resolves; zero or several leave it unmatched (ask the
+    operator). No other fuzzy matching is done — a non-decline mismatch is never guessed."""
     if value in options:
         return value
-    low = value.strip().lower()
+    nv = _norm_option(value)
     for opt in options:
-        if opt.strip().lower() == low:
+        if _norm_option(opt) == nv:
             return opt
+    if nv in _DECLINE_FORMS:
+        declines = [opt for opt in options if _norm_option(opt) in _DECLINE_FORMS]
+        if len(declines) == 1:
+            return declines[0]
     return None
 
 
@@ -248,6 +295,28 @@ def _is_resume_value(value: object) -> bool:
     if s == RESUME_UPLOAD_VALUE:
         return True
     return _basename(s).lower().startswith("resume")
+
+
+# STANDARD answer keys split by the SHAPE of their answer. A CHOICE key's answer is one of a fixed
+# set (Yes/No, a self-ID bucket, a country name) and may legitimately land on a select/combobox. A
+# FREE-TEXT key's answer is prose — an email, a URL, a city, a phone number — and must NEVER be
+# planned onto a choice field: a confirmed ``current_location`` of "Portland, Oregon, USA" is not an
+# answer to a Yes/No "do you currently live here?" question. (An operator's EXPLICIT extra answer is
+# exempt — they chose to answer that exact field, so it is honoured whatever its shape.)
+_CHOICE_KEYS = frozenset(
+    {
+        "requires_sponsorship",
+        "authorized_us",
+        "willing_to_relocate",
+        "gender",
+        "race_ethnicity",
+        "veteran_status",
+        "disability_status",
+        "phone_country",
+        "pronouns",
+    }
+)
+_FREE_TEXT_KEYS = frozenset(_answers.STANDARD_KEYS) - _CHOICE_KEYS
 
 
 # ── build_plan ──────────────────────────────────────────────────────────────────────────────
@@ -295,7 +364,10 @@ def build_plan(
     The key is matched to a field by its ``id`` first, then ``name``, then ``label`` — so an answer
     keyed by id/name fills exactly that field. A key that is a LABEL shared by several fields (and not
     pinned to one of them by id/name) is ambiguous: it fills NONE of them — each such field is handed
-    to ``unmapped`` asking the operator to re-key by id or name. ``ats`` names the applicant-tracking
+    to ``unmapped`` asking the operator to re-key by id or name. ``extra`` WINS over a classified
+    standard answer: when both a one-off ``extra`` and a confirmed standard answer would fill a field,
+    the ``extra`` is used (the standard answer is only the fallback), and each row records its
+    ``source`` (``"extra"`` or ``"standard"``). ``ats`` names the applicant-tracking
     system (e.g. ``"ashby"``) so the plan can apply
     system-specific rules. ``company`` / ``role`` / ``posting`` are the identity of THIS
     application — the operator-facing company and role, plus the posting itself (its URL, when the
@@ -314,11 +386,18 @@ def build_plan(
     "Attach" (résumé vs cover letter) distinguishable downstream — the plan, the fill and the
     read-back diff all key off the identity, not the shared label. For each field:
 
-    * a row ``{label, kind, id?, name?, target, key, value, action}`` is emitted when a value is
-      known — from ``confirmed`` (via ``classify``) or from ``extra`` (by id, name, then label).
-      ``action`` is ``fill`` / ``select`` / ``upload`` by field kind; a ``select`` value must match
-      one of the field's options (exact, then case-insensitive), else the field goes to ``unmapped``
-      with its options — never a fuzzy pick. A Yes/No button group reads as ``select`` and keeps its
+    * a row ``{label, kind, id?, name?, target, key, value, action, source?}`` is emitted when a
+      value is known — from ``extra`` (by id, name, then label) or, failing that, from ``confirmed``
+      (via ``classify``). ``action`` is ``fill`` / ``select`` / ``upload`` by field kind. A SELECT
+      value must resolve to one of the field's options via ``_match_option`` (exact, then a
+      normalized comparison that folds case/punctuation, then — for a decline answer only — a single
+      decline-equivalent option), else the field goes to ``unmapped`` with its options; never a fuzzy
+      pick. A FREE-TEXT standard answer (email, phone number, a URL, ``current_location``) is NOT a
+      choice value: on a SELECT field it is never planned — the field is asked about (required) or
+      left blank (optional) — so a confirmed location never lands on a Yes/No question; an explicit
+      ``extra`` answer is exempt. A SELECT field whose reader listed NO options (a react-select
+      combobox) is planned verbatim and flagged ``options_unknown`` for the read-back to guard. A
+      Yes/No button group reads as ``select`` and keeps its
       exact options. A cover-letter-ONLY file field NEVER receives the résumé PDF: a résumé-looking
       value routed to it is dropped, and the field takes only an explicit cover-letter answer. A
       COMBINED field also matching ``_is_resume_field`` (e.g. "Resume/Cover Letter") is excepted —
@@ -384,24 +463,28 @@ def build_plan(
             ident["name"] = fname
         ident["target"] = f"#{fid}" if fid else label
 
-        # Where the value comes from: a confirmed standard answer first, then the operator's extra —
-        # keyed by the field's id, then name, then label. An extra keyed by a LABEL shared by several
-        # fields (and not pinned to one of them by id/name) is ambiguous and fills none of them.
+        # Where the value comes from: the operator's EXTRA answer WINS — keyed by the field's id, then
+        # name, then label — and a confirmed standard answer is only the fallback when no non-empty
+        # extra exists. (The precedence was backwards before: a classified standard answer beat the
+        # operator's explicit one-off, so a confirmed location landed on a Yes/No "do you live here?"
+        # question.) An extra keyed by a LABEL shared by several fields (and not pinned to one of them
+        # by id/name) is ambiguous and fills none of them. ``source`` ("extra" / "standard") is
+        # recorded on the row so the read-back and the operator can see which answer was used.
         value = None
+        source = None
         shared_label = False
-        if key is not None and key in confirmed:
-            value = confirmed[key]
-        else:
-            nid, nname, nlabel = _norm(fid), _norm(fname), _norm(label)
-            if nid and extra_norm.get(nid, "").strip():
-                value = extra_norm[nid].strip()
-            elif nname and extra_norm.get(nname, "").strip():
-                value = extra_norm[nname].strip()
-            elif nlabel and extra_norm.get(nlabel, "").strip():
-                if label_counts.get(nlabel, 0) > 1:
-                    shared_label = True  # ambiguous: the key names a label several fields share
-                else:
-                    value = extra_norm[nlabel].strip()
+        nid, nname, nlabel = _norm(fid), _norm(fname), _norm(label)
+        if nid and extra_norm.get(nid, "").strip():
+            value, source = extra_norm[nid].strip(), "extra"
+        elif nname and extra_norm.get(nname, "").strip():
+            value, source = extra_norm[nname].strip(), "extra"
+        elif nlabel and extra_norm.get(nlabel, "").strip():
+            if label_counts.get(nlabel, 0) > 1:
+                shared_label = True  # ambiguous: the key names a label several fields share
+            else:
+                value, source = extra_norm[nlabel].strip(), "extra"
+        if value is None and not shared_label and key is not None and key in confirmed:
+            value, source = confirmed[key], "standard"
 
         # A cover-letter-ONLY file field NEVER receives the résumé PDF (or its placeholder): that is
         # the wrong document, so the value is dropped and the field is treated as having no answer.
@@ -484,23 +567,52 @@ def build_plan(
                 rows.append({**ident, "key": key, "value": "", "action": SKIP})
             continue
 
-        if action == SELECT and options:
-            picked = _match_option(value, options)
-            if picked is None:
-                unmapped.append(
-                    {
-                        **ident,
-                        "key": key,
-                        "required": required,
-                        "reason": "answer matches no option",
-                        "answer": value,
-                        "options": options,
-                    }
-                )
+        if action == SELECT:
+            # A FREE-TEXT standard answer (an email, a URL, a city, a phone number) is not a choice —
+            # it must never be planned onto a select/combobox (the confirmed location landing on a
+            # Yes/No "do you live here?" question). Only an operator's EXPLICIT extra, or a
+            # CHOICE-typed standard answer, belongs on a choice field; a free-text standard answer is
+            # asked about (required) or left blank (optional), never typed.
+            if source == "standard" and key in _FREE_TEXT_KEYS:
+                if required:
+                    unmapped.append(
+                        {
+                            **ident,
+                            "key": key,
+                            "required": True,
+                            "reason": "standard answer is free text; this is a choice question",
+                        }
+                    )
+                else:
+                    rows.append({**ident, "key": key, "value": "", "action": SKIP})
                 continue
-            value = picked
+            if options:
+                # A select WITH options must resolve to one of them — exact, normalized, or a single
+                # decline-equivalent — whatever the source; otherwise ask the operator, never guess.
+                picked = _match_option(value, options)
+                if picked is None:
+                    unmapped.append(
+                        {
+                            **ident,
+                            "key": key,
+                            "required": required,
+                            "reason": "answer matches no option",
+                            "answer": value,
+                            "options": options,
+                        }
+                    )
+                    continue
+                value = picked
 
-        rows.append({**ident, "key": key, "value": value, "action": action})
+        row = {**ident, "key": key, "value": value, "action": action}
+        if source is not None:
+            row["source"] = source
+        # A select/combobox whose options the reader didn't list (a react-select combobox reads back
+        # with none) is planned verbatim and flagged ``options_unknown`` — the browser_select
+        # read-back then guards that the chosen value actually took.
+        if action == SELECT and not options:
+            row["options_unknown"] = True
+        rows.append(row)
 
     _order_phone(rows)
     if is_ashby:

@@ -185,6 +185,174 @@ def test_optional_unmapped_is_skipped_and_required_unmapped_is_listed(formfill):
     assert not any(r["label"] == "Email" for r in plan["rows"])
 
 
+# ── extra beats standard; free-text never onto a choice field; decline matching (bugs 5+6) ──
+def live_location_question(*, required=True):
+    """The GitLab-Greenhouse field that broke: a Yes/No CHOICE whose label contains "location", so it
+    classifies to ``current_location`` — and the confirmed location string used to be planned onto it."""
+    return field(
+        "Do you currently live in this location?",
+        "select",
+        name="q_live",
+        id="q_live",
+        required=required,
+        options=["Yes", "No"],
+    )
+
+
+def test_extra_answer_beats_a_classified_standard_answer(formfill):
+    # r1: the confirmed current_location classifies to this Yes/No field, but the operator's one-off
+    # "Yes" must win and the row must record source "extra" — the precedence the bug had backwards.
+    confirmed = {"current_location": "Portland, Oregon, USA"}
+    extra = {"Do you currently live in this location?": "Yes"}
+    plan = formfill.build_plan([live_location_question()], confirmed, extra)
+    row = next(r for r in plan["rows"] if r["label"] == "Do you currently live in this location?")
+    assert row["value"] == "Yes" and row["source"] == "extra" and row["action"] == "select"
+    assert plan["unmapped"] == []
+    assert "Portland, Oregon, USA" not in [r.get("value") for r in plan["rows"]]
+
+
+def test_an_extra_keyed_by_id_or_name_wins_over_the_standard_answer(formfill):
+    # r1: extra keyed by the field's id, and by its name, both beat the classified standard answer.
+    confirmed = {"current_location": "Portland, Oregon, USA"}
+    by_id = formfill.build_plan([live_location_question()], confirmed, {"q_live": "No"})
+    row = next(r for r in by_id["rows"] if r.get("id") == "q_live")
+    assert row["value"] == "No" and row["source"] == "extra"
+
+    form = [
+        field(
+            "Do you currently live in this location?",
+            "select",
+            name="live_q",
+            id="x1",
+            required=True,
+            options=["Yes", "No"],
+        )
+    ]
+    by_name = formfill.build_plan(form, confirmed, {"live_q": "Yes"})
+    row = next(r for r in by_name["rows"] if r.get("name") == "live_q")
+    assert row["value"] == "Yes" and row["source"] == "extra"
+
+
+def test_a_free_text_standard_answer_is_never_planned_onto_a_choice_field(formfill):
+    # r2: only the confirmed current_location classifies here (no extra). A free-text answer is not a
+    # choice value, so the required Yes/No field is asked about — never filled with "Portland, Oregon".
+    confirmed = {"current_location": "Portland, Oregon, USA"}
+    plan = formfill.build_plan([live_location_question()], confirmed)
+    assert plan["rows"] == [], "a free-text standard answer never fills a choice field"
+    um = next(u for u in plan["unmapped"] if u["label"] == "Do you currently live in this location?")
+    assert um["required"] is True and "free text" in um["reason"]
+    assert "Portland, Oregon, USA" not in [r.get("value") for r in plan["rows"]]
+
+
+def test_an_optional_free_text_on_a_choice_field_is_skipped_not_asked(formfill):
+    # r2: the same field, but OPTIONAL — a free-text standard answer leaves it a blank skip row.
+    confirmed = {"current_location": "Portland, Oregon, USA"}
+    plan = formfill.build_plan([live_location_question(required=False)], confirmed)
+    assert plan["unmapped"] == []
+    row = next(r for r in plan["rows"] if r["label"] == "Do you currently live in this location?")
+    assert row["action"] == "skip" and row["value"] == ""
+
+
+def test_a_no_option_combobox_with_only_a_free_text_standard_answer_is_unmapped(formfill):
+    # r2: a react-select combobox reads back with NO options; its only candidate is the free-text
+    # current_location. It must be asked about, not planned verbatim.
+    form = [field("Current location", "combobox", name="location", id="location", required=True)]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, USA"})
+    assert plan["rows"] == []
+    um = next(u for u in plan["unmapped"] if u["target"] == "#location")
+    assert um["required"] is True and "free text" in um["reason"]
+    assert "Portland, Oregon, USA" not in [r.get("value") for r in plan["rows"]]
+
+
+def test_a_no_option_select_plans_an_extra_answer_verbatim_and_flags_it(formfill):
+    # A combobox with no options takes an operator's EXPLICIT extra verbatim and flags the row
+    # options_unknown — the browser_select read-back then guards that the value actually took.
+    form = [field("Role level", "combobox", name="level", id="level", required=True)]
+    plan = formfill.build_plan(form, {}, {"level": "Senior"})
+    row = next(r for r in plan["rows"] if r.get("id") == "level")
+    assert row["value"] == "Senior" and row["action"] == "select"
+    assert row["source"] == "extra" and row["options_unknown"] is True
+    assert plan["unmapped"] == []
+
+
+def test_a_choice_key_standard_answer_fills_a_no_option_select_verbatim(formfill):
+    # A CHOICE-typed standard answer (unlike a free-text one) MAY fill a no-option select: planned
+    # verbatim and flagged options_unknown for the read-back to guard.
+    form = [field("Are you authorized to work in the US?", "combobox", name="auth", id="auth", required=True)]
+    plan = formfill.build_plan(form, {"authorized_us": "Yes"})
+    row = next(r for r in plan["rows"] if r.get("id") == "auth")
+    assert row["value"] == "Yes" and row["source"] == "standard" and row["options_unknown"] is True
+
+
+def test_a_plain_fill_records_its_source(formfill):
+    # source is recorded on ordinary fill rows too — standard for the classified answer, extra for the one-off.
+    plan = formfill.build_plan(greenhouse_form(), {"email": "ada@example.com"}, {"LinkedIn Profile": "x"})
+    assert next(r for r in plan["rows"] if r["label"] == "Email")["source"] == "standard"
+    assert next(r for r in plan["rows"] if r["label"] == "LinkedIn Profile")["source"] == "extra"
+
+
+GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Decline To Self Identify"]
+VETERAN_OPTIONS = ["I am a veteran", "I am not a protected veteran", "I don't wish to answer"]
+
+
+def test_a_stored_decline_resolves_to_each_forms_decline_wording(formfill):
+    # r4: the seeded "Decline to self-identify" must resolve to "Decline To Self Identify" (gender,
+    # via the case/punctuation-folding comparison) and "I don't wish to answer" (veteran, via the
+    # decline-equivalence step) — the real wordings these forms use.
+    gender_form = [field("Gender", "select", name="gender", id="gender", options=GENDER_OPTIONS)]
+    gplan = formfill.build_plan(gender_form, {"gender": "Decline to self-identify"})
+    assert gplan["unmapped"] == []
+    assert next(r for r in gplan["rows"] if r["key"] == "gender")["value"] == "Decline To Self Identify"
+
+    veteran_form = [field("Veteran Status", "select", name="veteran", id="veteran", options=VETERAN_OPTIONS)]
+    vplan = formfill.build_plan(veteran_form, {"veteran_status": "Decline to self-identify"})
+    assert vplan["unmapped"] == []
+    assert next(r for r in vplan["rows"] if r["key"] == "veteran_status")["value"] == "I don't wish to answer"
+
+
+def test_several_decline_equivalent_options_are_unmapped_not_guessed(formfill):
+    # r4: when MORE THAN ONE option is a decline wording, the stored decline is ambiguous — asked about.
+    options = ["Male", "Female", "Prefer not to say", "Decline to answer"]
+    form = [field("Gender", "select", name="gender", id="gender", required=True, options=options)]
+    plan = formfill.build_plan(form, {"gender": "Decline to self-identify"})
+    assert plan["rows"] == []
+    um = next(u for u in plan["unmapped"] if u["key"] == "gender")
+    assert um["options"] == options and um["answer"] == "Decline to self-identify"
+
+
+def test_a_decline_with_no_decline_option_is_unmapped(formfill):
+    # r4: ZERO decline-equivalent options → unmatched (ask the operator), never a guess.
+    options = ["Male", "Female", "Non-binary"]
+    form = [field("Gender", "select", name="gender", id="gender", required=True, options=options)]
+    plan = formfill.build_plan(form, {"gender": "Decline to self-identify"})
+    assert plan["rows"] == []
+    assert any(u["key"] == "gender" and u["options"] == options for u in plan["unmapped"])
+
+
+def test_a_non_decline_answer_absent_from_options_is_never_fuzzy_matched(formfill):
+    # r5: a value that is not a decline answer and equals no option is unmapped — no nearest/synonym
+    # pick, whatever the source. "Woman" is close to "Female" but must NOT be guessed to it.
+    options = ["Male", "Female", "Non-binary"]
+    form = [field("Gender", "select", name="gender", id="gender", required=True, options=options)]
+    plan = formfill.build_plan(form, {}, {"gender": "Woman"})
+    assert plan["rows"] == []
+    um = next(u for u in plan["unmapped"] if u["key"] == "gender")
+    assert um["answer"] == "Woman" and um["options"] == options
+
+
+def test_match_option_folds_case_and_punctuation_but_not_synonyms(formfill):
+    # The matcher directly: exact, then case/punctuation-folded, then decline-equivalence only.
+    assert formfill._match_option("United States", ["united states"]) == "united states"
+    assert (
+        formfill._match_option("Decline to self-identify", ["Decline To Self Identify"]) == "Decline To Self Identify"
+    )
+    assert formfill._match_option("Decline to self-identify", ["I don't wish to answer"]) == "I don't wish to answer"
+    # not a decline answer, not an exact/normalized match → no pick
+    assert formfill._match_option("Woman", ["Female"]) is None
+    # a decline value but no decline option → no pick
+    assert formfill._match_option("Prefer not to say", ["Male", "Female"]) is None
+
+
 # ── same-label file fields: route the résumé, never onto the cover letter ───────────────────
 def two_attach_fields(*, resume_required=True, cover_required=False):
     """The GitLab-Greenhouse shape that broke: BOTH file inputs are labelled "Attach"; only the
