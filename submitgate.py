@@ -10,8 +10,10 @@ Two pure, host-free pieces:
 * **grant state** — an in-process, one-shot, time-limited authorization keyed by the fill
   ``session_id`` (``formfill.py``). ``careercoach_request_submit`` records one ONLY after an
   operator approves an interrupt; the submit-gate middleware spends it on the next submit-like
-  browser call, and nothing else creates one. It lives in memory on purpose: an authorization to
-  click submit should not survive a restart, a checkpoint, or a copy to another turn.
+  browser call — but only while that session is still VERIFIED (the middleware rechecks
+  ``formfill``, so a grant can't authorize a submit after its plan was re-planned or changed) — and
+  nothing else creates one. It lives in memory on purpose: an authorization to click submit should
+  not survive a restart, a checkpoint, or a copy to another turn.
 * **submit detection** — ``is_submit_like(tool_name, args)`` recognises the browser calls that
   would send an application (a submit/finish click, an Enter press, a ``.submit()`` eval), so the
   middleware knows which calls to gate. It does NOT gate a job board's "Apply" / "Apply now" button
@@ -37,9 +39,14 @@ __all__ = ["GRANT_TTL_S", "grant", "consume", "active_grant", "clear", "is_submi
 GRANT_TTL_S = 120
 
 _lock = threading.Lock()
-# session_id -> monotonic expiry deadline. At most one grant is ever live (``grant`` supersedes
-# any prior one), but keying by session means a grant issued for one fill plan can't authorize a
-# click made against a different one.
+# session_id -> monotonic expiry deadline. At most one grant is ever live (``grant`` supersedes any
+# prior one). Keying it by session lets ``consume`` / ``active_grant`` NAME the authorized session,
+# and lets a later approval for a different session supersede an earlier one. It does NOT, on its
+# own, bind a particular browser click to a session: a ``browser_click`` carries no session id, so
+# the middleware can only spend the single live grant on the next submit-like call. The binding to a
+# specific fill plan is enforced one level up, in the middleware, which spends a grant ONLY while
+# ``formfill`` still reports that session VERIFIED — so a grant can't survive a re-plan (which resets
+# verification) to authorize a submit against a changed plan. See ``_register_submit_middleware``.
 _grants: dict[str, float] = {}
 
 

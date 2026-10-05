@@ -1054,9 +1054,10 @@ def _register_submit_gate(registry) -> None:
 
 def _register_submit_middleware(registry) -> None:
     """The enforcement: an ``AgentMiddleware`` that intercepts every tool call and short-circuits a
-    submit-like one unless a live operator grant exists (which it then consumes). Guarded like the
-    profile middleware — if ``AgentMiddleware`` isn't importable (older host) the plugin still
-    registers; it just can't block (the browser tools' own confirmations remain the only guard)."""
+    submit-like one unless a live operator grant exists AND the session it was approved for is still
+    VERIFIED (the grant is then consumed). Guarded like the profile middleware — if
+    ``AgentMiddleware`` isn't importable (older host) the plugin still registers; it just can't block
+    (the browser tools' own confirmations remain the only guard)."""
     try:
         from langchain.agents.middleware import AgentMiddleware
     except ImportError:  # pragma: no cover — no langchain agents
@@ -1065,7 +1066,7 @@ def _register_submit_middleware(registry) -> None:
 
     from langchain_core.messages import ToolMessage
 
-    from . import submitgate
+    from . import formfill, submitgate
 
     BLOCKED = (
         "Blocked by careercoach submit gate: no operator authorization. Run careercoach_verify_fill "
@@ -1073,13 +1074,19 @@ def _register_submit_middleware(registry) -> None:
     )
 
     class _SubmitGateMiddleware(AgentMiddleware):
-        """Block submit-like browser calls unless an operator grant is live.
+        """Block submit-like browser calls unless an operator grant is live AND still tied to a
+        VERIFIED fill session.
 
         A grant is one-shot and created only by ``careercoach_request_submit`` after the operator
-        approves the interrupt — the model can't forge it. On a submit-like call with a live grant
-        the grant is consumed and the call runs; otherwise the call is short-circuited with a
-        ``ToolMessage`` carrying the SAME ``tool_call_id`` (so the transcript stays valid) and the
-        browser tool never runs. Every non-submit call passes through untouched."""
+        approves the interrupt — the model can't forge it. A ``browser_click`` carries no session
+        id, so the gate can't read a session off the click itself; instead it checks the live grant
+        AGAINST the session it was approved for — spending it only while ``formfill`` still reports
+        that session verified. A grant whose plan was re-planned or changed (verification reset) is
+        therefore inert, and can't authorize a submit against a form that is no longer the one the
+        operator saw. On a submit-like call with such a grant the grant is consumed and the call
+        runs; otherwise the call is short-circuited with a ``ToolMessage`` carrying the SAME
+        ``tool_call_id`` (so the transcript stays valid) and the browser tool never runs. Every
+        non-submit call passes through untouched."""
 
         def _blocked(self, request):
             """A ``ToolMessage`` to return instead of running the tool, or ``None`` to pass through."""
@@ -1088,9 +1095,13 @@ def _register_submit_middleware(registry) -> None:
             args = call.get("args", {})
             if not submitgate.is_submit_like(name, args):
                 return None  # not submit-like — never touch it
+            # A live grant alone isn't enough. The click names no session, so THIS is where the gate
+            # checks the grant against the session it was approved for: the grant's session must
+            # still be VERIFIED in formfill. A re-plan resets verification, so a stale grant for a
+            # changed plan can't authorize a submit. Only then is the one-shot grant spent.
             sid = submitgate.active_grant()
-            if sid and submitgate.consume(sid):
-                return None  # one-shot grant spent; let exactly this one call through
+            if sid and formfill.is_verified(sid) and submitgate.consume(sid):
+                return None  # live grant for a still-verified session; let exactly this call through
             return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name)
 
         def wrap_tool_call(self, request, handler):

@@ -140,7 +140,8 @@ def test_middleware_blocks_without_a_grant(gate):
 
 
 def test_middleware_allows_exactly_one_call_with_a_grant(gate):
-    gate.submitgate.grant("sid-1")
+    sid = _verified_session(gate.formfill)  # a grant is only spent while its session stays VERIFIED
+    gate.submitgate.grant(sid)
     calls = []
 
     def handler(req):
@@ -164,16 +165,18 @@ def test_middleware_passes_non_submit_calls_untouched(gate):
     )
     assert result == "RAN" and len(ran) == 1
     # A non-submit call does not touch the grant (so it can't starve a real submit of its grant).
-    gate.submitgate.grant("sid-1")
+    sid = _verified_session(gate.formfill)
+    gate.submitgate.grant(sid)
     gate.middleware.wrap_tool_call(FakeReq("browser_form_read", {}), lambda req: "RAN")
-    assert gate.submitgate.active_grant() == "sid-1"
+    assert gate.submitgate.active_grant() == sid
 
 
 def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate):
     # Regression: an "Apply" button opens the form and "Apply filters" is a listing control —
     # neither is a submit, so with a live grant the middleware passes them through untouched and
     # does NOT consume the one-shot grant, leaving it for the real submit click.
-    gate.submitgate.grant("sid-1")
+    sid = _verified_session(gate.formfill)
+    gate.submitgate.grant(sid)
     ran = []
     for label in ("Apply", "Apply now", "Apply filters"):
         out = gate.middleware.wrap_tool_call(
@@ -181,12 +184,32 @@ def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate)
         )
         assert out == "RAN"
     assert ran == ["Apply", "Apply now", "Apply filters"]  # every harmless click ran
-    assert gate.submitgate.active_grant() == "sid-1"  # the grant is still live for the real submit
+    assert gate.submitgate.active_grant() == sid  # the grant is still live for the real submit
 
     submit = gate.middleware.wrap_tool_call(
         FakeReq("browser_click", {"selector": "Submit application"}), lambda req: "SUBMITTED"
     )
     assert submit == "SUBMITTED" and gate.submitgate.active_grant() is None  # now it's spent
+
+
+def test_middleware_checks_the_grant_against_its_session_not_just_that_one_is_live(gate):
+    # The grant is checked AGAINST the session it was approved for, not merely "is any grant live".
+    # A browser click carries no session id, so the middleware enforces the binding by requiring the
+    # grant's session to still be VERIFIED: re-planning resets verification, so the still-live grant
+    # becomes inert and can't authorize a submit against a form that is no longer the verified one.
+    sid = _verified_session(gate.formfill)
+    gate.submitgate.grant(sid)
+    assert gate.submitgate.active_grant() == sid  # a grant is live…
+
+    gate.formfill.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
+    assert gate.formfill.is_verified(sid) is False  # …but a re-plan reset verification
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="c9"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "c9"
+    assert gate.submitgate.active_grant() == sid  # the inert grant was NOT spent on the blocked call
 
 
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────

@@ -297,12 +297,16 @@ the gate is built in two unforgeable halves (`submitgate.py`, host-free and test
   case never interrupts. Nothing else in the plugin creates a grant.
 - **Submit clicks are blocked, not trusted.** An `AgentMiddleware` (`wrap_tool_call`) inspects every
   tool call and short-circuits any **submit-like** browser call — a submit/finish click, an
-  Enter/Return press, a `.submit()` / `requestSubmit` eval — unless a live grant exists, which it then
-  consumes. A blocked call returns a `ToolMessage` on the same `tool_call_id` and the browser tool
-  never runs. A job board's "Apply" / "Apply now" button (which only **opens** the form, before any
-  fill session exists) and an "Apply filters" listing control are **not** submit-like, so they pass
-  through untouched — gating them would dead-end the flow and could spend the grant on a harmless
-  click. Every other non-submit call passes through too.
+  Enter/Return press, a `.submit()` / `requestSubmit` eval — unless a live grant exists **and the
+  session it was approved for is still `VERIFIED`**, which it then consumes. A browser click carries
+  no session id, so that `VERIFIED` recheck is how the gate ties the grant to the session it was
+  approved for: a grant whose plan was re-planned or changed (verification reset) is inert, so it
+  can't authorize a submit against a form that is no longer the one the operator saw. A blocked call
+  returns a `ToolMessage` on the same `tool_call_id` and the browser tool never runs. A job board's
+  "Apply" / "Apply now" button (which only **opens** the form, before any fill session exists) and an
+  "Apply filters" listing control are **not** submit-like, so they pass through untouched — gating
+  them would dead-end the flow and could spend the grant on a harmless click. Every other non-submit
+  call passes through too.
 
 **The limits, stated plainly.** This is **defense in depth over the browser tools — it does not
 sandbox the browser.** It stops the *agent* from clicking submit without an operator's unforgeable
