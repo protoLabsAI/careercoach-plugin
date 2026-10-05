@@ -320,6 +320,42 @@ def test_at_most_one_session_is_verified_after_any_sequence(formfill):
     assert verified_count() == 0  # a non-empty diff unverifies C and touches nothing else
 
 
+def test_a_different_application_with_identical_fields_gets_a_distinct_session(formfill):
+    # The bd-4t17 COLLISION: form B has the SAME fields and answers as the approved form A but is a
+    # DIFFERENT application. The session id folds in the operator-facing company/role, so B (different
+    # company, or different role) never collides onto A's id — verifying B clears A instead of reviving
+    # it. If the id were the rows hash alone, A and B would share a slot and a clean read-back of B
+    # would re-verify A, letting A's live grant through on a form the operator never saw.
+    rows = [field("Email", "email", name="email", required=True)]
+    confirmed = {"email": "ada@example.com"}
+    sid_a = formfill.build_plan(rows, confirmed, company="Acme", role="ML Engineer")["session_id"]
+    sid_company = formfill.build_plan(rows, confirmed, company="Globex", role="ML Engineer")["session_id"]
+    sid_role = formfill.build_plan(rows, confirmed, company="Acme", role="Staff Engineer")["session_id"]
+    assert len({sid_a, sid_company, sid_role}) == 3  # same fields/answers, three distinct applications
+
+    formfill.record_verification(sid_a, [])
+    assert formfill.is_verified(sid_a) is True
+    # Reading back the different-company form must NOT re-verify A; it clears A and verifies only itself.
+    formfill.record_verification(sid_company, [])
+    assert formfill.is_verified(sid_company) is True
+    assert formfill.is_verified(sid_a) is False
+
+
+def test_re_planning_the_same_application_keeps_its_id(formfill):
+    # The flip side of the collision fix: re-planning the SAME application (same company, role and
+    # rows) keeps the id, so _save_session resets exactly that session's verification — the existing
+    # re-plan-resets-verification guard still holds once company/role are part of the id.
+    rows = [field("Email", "email", name="email", required=True)]
+    first = formfill.build_plan(rows, {"email": "ada@example.com"}, company="Acme", role="ML Engineer")
+    sid = first["session_id"]
+    formfill.record_verification(sid, [])
+    assert formfill.is_verified(sid) is True
+
+    again = formfill.build_plan(rows, {"email": "ada@example.com"}, company="Acme", role="ML Engineer")
+    assert again["session_id"] == sid  # identical application → same id
+    assert formfill.is_verified(sid) is False  # and its verification was reset by the re-plan
+
+
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_formfill_has_no_host_imports():
     from pathlib import Path

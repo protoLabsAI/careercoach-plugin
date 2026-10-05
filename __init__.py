@@ -841,8 +841,17 @@ def _register_formfill_tools(registry) -> None:
                 return err
             ats_norm = (ats or "").strip().lower()
             resume_ready = _resume_renderable() if ats_norm == "ashby" else True
-            plan = formfill.build_plan(fields, answers.confirmed(), extra, ats=ats_norm, resume_ready=resume_ready)
-            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            company_s, role_s = (company or "").strip(), (role or "").strip()
+            plan = formfill.build_plan(
+                fields,
+                answers.confirmed(),
+                extra,
+                ats=ats_norm,
+                resume_ready=resume_ready,
+                company=company_s,
+                role=role_s,
+            )
+            formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             return _render_plan(plan, company or "", role or "")
         except Exception as e:  # noqa: BLE001 — a tool never raises
             return f"Could not build a fill plan: {e}"
@@ -959,8 +968,9 @@ def _register_prepare_tool(registry) -> None:
             if not fields:
                 return f"The Greenhouse schema had no fillable questions to prepare from. {live_path}"
 
-            plan = formfill.build_plan(fields, answers.confirmed())
-            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            company_s, role_s = (company or "").strip(), (role or "").strip()
+            plan = formfill.build_plan(fields, answers.confirmed(), company=company_s, role=role_s)
+            formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             title = (api_json.get("title") if isinstance(api_json, dict) else "") or ""
             preamble = (
                 f"Prepared from the Greenhouse public schema for {title or 'this role'} "
@@ -1050,10 +1060,12 @@ def _submit_ready(session, session_id: str) -> tuple[bool, str]:
     """Whether a fill session is safe to authorize for submit: it must be VERIFIED — its latest
     ``careercoach_verify_fill`` read-back diff was empty, AND that verification describes the plan as
     it stands now. "Changed since it was verified" is enforced upstream: ``formfill`` resets
-    verification on every ``build_plan`` write (a session is keyed by its rows hash, so a changed
-    plan is a different session, and a re-plan of the SAME rows comes back unverified until read back
-    again). So a plan that was re-planned or changed since its last verification reads as not-verified
-    here and is refused WITHOUT asking the operator. Returns ``(ok, reason)`` — ``reason`` is empty
+    verification on every ``build_plan`` write (a session is keyed by its rows AND the operator-facing
+    company/role, so a changed plan — or a DIFFERENT application — is a different session, and a
+    re-plan of the SAME application comes back unverified until read back again). Verification is also
+    EXCLUSIVE — planning or verifying any other form clears this one — so a grant for form A reads as
+    not-verified here once form B is planned. A plan that was re-planned or superseded since its last
+    verification is refused WITHOUT asking the operator. Returns ``(ok, reason)`` — ``reason`` is empty
     when ``ok``."""
     if not isinstance(session, dict):
         return False, "no fill plan was found for this session."

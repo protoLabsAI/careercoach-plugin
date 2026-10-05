@@ -236,6 +236,35 @@ def test_middleware_blocks_a_submit_after_a_different_form_is_planned(gate):
     assert gate.submitgate.active_grant() == sid_a  # the inert grant was NOT spent on the blocked click
 
 
+def test_middleware_blocks_a_submit_after_a_same_fields_different_company_form(gate):
+    # The exact bd-4t17 collision: form B has the SAME fields and answers as the approved form A, but
+    # is a different application (different company). Because the session id folds in company/role, B
+    # gets a DIFFERENT id — it does not reuse A's slot and re-verify it — so planning B unverifies A
+    # (verification is exclusive) and A's still-live grant can't authorize a submit on B.
+    ff = gate.formfill
+    rows = [{"label": "Email", "kind": "text", "required": True}]
+    confirmed = {"email": "ada@example.com"}
+
+    sid_a = ff.build_plan(rows, confirmed, {}, company="Acme", role="ML Engineer")["session_id"]
+    ff.update_session(sid_a, company="Acme", role="ML Engineer")
+    ff.record_verification(sid_a, [])  # A verified and approved
+    gate.submitgate.grant(sid_a)
+    assert gate.submitgate.active_grant() == sid_a and ff.is_verified(sid_a) is True
+
+    # Same fields + answers, DIFFERENT company → a genuinely different application, so a different id.
+    sid_b = ff.build_plan(rows, confirmed, {}, company="Globex", role="ML Engineer")["session_id"]
+    assert sid_b != sid_a, "same rows but a different company must not collide onto A's id"
+    assert ff.is_verified(sid_a) is False  # planning B revoked A's verification
+    assert ff.is_verified(sid_b) is False  # and a freshly planned B is unverified
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cC"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cC"
+    assert gate.submitgate.active_grant() == sid_a  # the inert grant was NOT spent on the blocked click
+
+
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────
 def test_request_submit_refuses_unverified_session(gate, monkeypatch):
     # A planned-but-not-verified session (no read-back diff recorded yet).

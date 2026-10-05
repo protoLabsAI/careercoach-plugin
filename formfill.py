@@ -255,14 +255,17 @@ def _order_resume_first(rows: list[dict]) -> list[dict]:
     return rows
 
 
-def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True) -> dict:
+def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True, company="", role="") -> dict:
     """Plan how to fill a form read by ``browser_form_read``: ``{session_id, rows, unmapped,
     unconfirmed}`` (plus a ``note`` for Ashby), persisted so ``verify_fill`` can diff against it later.
 
     ``confirmed`` is ``answers.confirmed()`` (the only values ever typed, besides ``extra``).
     ``extra`` maps a field LABEL to an operator-supplied answer for a one-off question in this
     session. ``ats`` names the applicant-tracking system (e.g. ``"ashby"``) so the plan can apply
-    system-specific rules. For each field:
+    system-specific rules. ``company`` / ``role`` are the operator-facing identity of THIS
+    application: they're folded into the ``session_id`` (see ``_session_id``) so two DIFFERENT
+    applications with identical fields and answers never share an id — a submit grant approved for
+    one can therefore never be spent on the other (bd-4t17). For each field:
 
     * a row ``{label, kind, key, value, action}`` is emitted when a value is known — from
       ``confirmed`` (via ``classify``) or from ``extra`` by label. ``action`` is ``fill`` /
@@ -380,11 +383,11 @@ def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True) 
     _order_phone(rows)
     if is_ashby:
         _order_resume_first(rows)
-    session_id = _rows_hash(rows)
+    session_id = _session_id(rows, company, role)
     plan = {"session_id": session_id, "rows": rows, "unmapped": unmapped, "unconfirmed": unconfirmed}
     if is_ashby:
         plan["note"] = ASHBY_PLAN_NOTE
-    _save_session(session_id, {**plan, "rows_hash": session_id})
+    _save_session(session_id, {**plan, "rows_hash": _rows_hash(rows)})
     return plan
 
 
@@ -480,9 +483,26 @@ def _now_ts() -> str:
 
 
 def _rows_hash(rows: list[dict]) -> str:
-    """A stable short hash of the plan rows — the session id, and the fingerprint
-    ``record_verification`` stores so a diff is tied to the plan it verified."""
+    """A stable short hash of the plan rows — the fingerprint ``record_verification`` stores so a
+    diff is tied to the plan it verified. (The SESSION ID is derived separately, by ``_session_id``,
+    which also folds in the operator-facing company/role.)"""
     payload = json.dumps(rows, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _session_id(rows: list[dict], company: str = "", role: str = "") -> str:
+    """The session id for a plan: a short hash of the plan rows AND the operator-facing identity
+    (company + role, normalized). Two applications with identical fields and answers but a different
+    company OR role get DIFFERENT ids — so a verification or submit grant for one is never carried
+    onto the other (bd-4t17: the operator approves "submit <role> at <company> with these answers";
+    anything else is a different approval). Re-planning the SAME application (same company, role and
+    rows) keeps the id, which is what lets ``_save_session`` reset exactly that one session's
+    verification on a re-plan."""
+    payload = json.dumps(
+        {"rows": rows, "company": _norm(company), "role": _norm(role)},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -558,7 +578,10 @@ def _save_session(session_id: str, record: dict) -> None:
     OTHER stored session in the same atomic write, so at most one session is ever verified — always
     the latest one planned or read back. A live submit grant for form A therefore stops passing
     ``is_verified(A)`` the moment any other form is planned, which is what keeps a grant for A from
-    authorizing a submit on a form the operator never saw."""
+    authorizing a submit on a form the operator never saw. This only bites because a different
+    application gets a different session id: the id folds in the operator-facing company/role (see
+    ``_session_id``), so planning form B is a genuinely OTHER session even when B's fields and answers
+    are identical to A's — it does not silently reuse A's slot and re-verify it."""
     with _store._locked("fill_sessions"):
         sessions = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         prior = sessions.get(session_id, {})
@@ -597,7 +620,10 @@ def record_verification(session_id: str, mismatches: list[dict]) -> dict:
 
     Verification is EXCLUSIVE to the newest read-back: an empty diff marks THIS session verified and
     clears ``verified`` on every OTHER stored session in the same atomic write, so at most one session
-    is verified at a time. A non-empty diff leaves the others alone — it only unverifies this one."""
+    is verified at a time. A non-empty diff leaves the others alone — it only unverifies this one.
+    Because distinct applications get distinct ids (``_session_id`` folds in company/role), reading
+    back form B can never re-verify form A's slot: B is a different session, so verifying it clears
+    A rather than reviving it."""
     verified = not mismatches
     with _store._locked("fill_sessions"):
         sessions = _load_strict()
@@ -619,6 +645,9 @@ def is_verified(session_id: str) -> bool:
 
     Verification is EXCLUSIVE: at most one session is verified at a time — always the latest one
     planned or read back (see ``_save_session`` / ``record_verification``). So planning or verifying
-    ANY other form flips this session back to ``False``, and a stale submit grant for it goes inert."""
+    ANY other form flips this session back to ``False``, and a stale submit grant for it goes inert.
+    "Any other form" is enforced by the session id folding in company/role (``_session_id``): a
+    different application — even one whose fields and answers match — is a different id, so it trips
+    this reset instead of colliding onto the grant's session and keeping it verified."""
     rec = load_session(session_id)
     return bool(rec and rec.get("verified"))
