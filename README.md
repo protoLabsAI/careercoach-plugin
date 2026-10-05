@@ -59,7 +59,7 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 7 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 8 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply-form` is the end-to-end ATS-form loop |
 | **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
 | **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
@@ -95,6 +95,7 @@ careercoach-plugin/
 │  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter
 │  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
 │  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
+│  ├─ apply-form/                  # the end-to-end ATS-form loop: plan → fill → verify → handoff → gated submit
 │  ├─ interview-coach/             # STAR bank + mock interviews with feedback
 │  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
 │  └─ upskill/                     # gap heatmap + learning plan
@@ -278,6 +279,39 @@ careercoach-plugin/
 - **The job source is provider-abstracted + keyless by default.** Live search works out of the box via
   Remotive (remote jobs, no key); add a JSearch/RapidAPI key for Google-for-Jobs breadth. Only
   `jobsource.py` makes outbound calls, and the manifest declares exactly those two hosts.
+
+### Applying through ATS forms
+
+When you ask the coach to actually **fill out and submit** an application, it runs one deterministic
+loop (the `apply-form` skill is the doctrine; the pieces this plugin owns are tested, host-free):
+
+1. **Confirm the standard answers.** Only values the operator has CONFIRMED
+   (`careercoach_get_answers` / `careercoach_confirm_answers`) ever fill a form — a draft never does.
+2. **Render + capture the résumé.** `careercoach_render_resume` → `browser_open` → `browser_pdf`,
+   so an upload-able PDF lands in the browser's capture folder.
+3. **Prepare, then read the live form.** On Greenhouse, `careercoach_prepare_application` fetches the
+   job's public question schema up front; either way the live form is read with `browser_form_read`
+   and turned into a plan by `careercoach_plan_fill`, drawing values **only** from confirmed answers.
+4. **Ask only about what's unmapped** — the required fields with no confirmed answer, the selects
+   whose answer matched no option. Never guess, never fuzzy-match a dropdown.
+5. **Fill** with `browser_select` (country before number on phone fields), `browser_fill` and
+   `browser_upload` — résumé first on Ashby, whose autofill can overwrite typed values.
+6. **Verify the read-back.** `browser_form_read` again → `careercoach_verify_fill` until it reports
+   `VERIFIED`; a silently-reverted react-select is exactly what this catches.
+7. **Hand off for a captcha, login or attestation.** `careercoach_handoff` pauses for the operator to
+   complete that one human-only step in a **visible browser** — the console **Browser panel** (a live
+   CDP screencast viewport), or the real window the browser plugin's `headed` setting opens. The coach
+   **never solves or bypasses a captcha**; it fills everything else. Because a captcha or login can
+   re-render the form and clear fields, a completed handoff requires a fresh read-back + verify before
+   any submit.
+8. **Submit once, behind the gate.** `careercoach_request_submit` → the operator approves → exactly
+   one `browser_click` on submit. Then confirm the confirmation page and
+   `careercoach_track_application` with status `applied`.
+
+**Support scope.** **Greenhouse** (public schema prep + live form) and **Ashby** (live form; no public
+per-job schema, so a résumé upload leads and every field is re-read after autofill) are supported.
+**Lever and Workday are not supported yet** — there's no adapter, so the coach uses the same live-form
+path with extra care and says so.
 
 ### Submit gate
 

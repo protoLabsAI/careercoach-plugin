@@ -53,6 +53,7 @@ def register(registry) -> None:
     _register_formfill_tools(registry)
     _register_prepare_tool(registry)
     _register_submit_gate(registry)
+    _register_handoff(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_profile_middleware(registry)
@@ -1270,6 +1271,146 @@ def _register_submit_middleware(registry) -> None:
             return await handler(request)
 
     registry.register_middleware(lambda config: _SubmitGateMiddleware())
+
+
+# ── the visible-browser handoff: the one step only a human can do (#4032 phase 4c) ─
+# Where a human is genuinely required — a captcha, a login/sign-in, a legal attestation — the agent
+# fills everything else and hands over a VISIBLE browser for that one step: the interactive Browser
+# panel (agent_browser's live CDP screencast viewport in the console) or the real window the browser
+# plugin's ``headed`` setting opens. Solving or bypassing a captcha is an explicit NON-GOAL, so this
+# tool never touches one — it only pauses for the operator, with the same ``interrupt`` + headless
+# refusal as the submit gate (and the same guarded, lazy import). Because a captcha or login can
+# re-render the form and clear fields, a Done comes back with a MANDATORY read-back before any submit
+# can be requested. It creates no grant and clicks nothing.
+_HANDOFF_REASONS = {
+    "captcha": "a captcha / 'confirm you're human' challenge",
+    "login": "a login / sign-in step",
+    "attestation": "a legal attestation or declaration you must personally agree to",
+    "other": "a step only a human can complete",
+}
+
+# Explicit done words only — default-deny, like the submit gate's approve words. Anything that is not
+# an unambiguous "done" is a cancel, so a vague or empty answer stops rather than marching on to submit.
+_HANDOFF_DONE_WORDS = frozenset(
+    {"done", "complete", "completed", "finish", "finished", "ready", "continue", "proceed", "ok", "okay", "yes"}
+)
+
+
+def _handoff_interrupt(payload: dict):
+    """Pause the turn with ``langgraph.types.interrupt`` for the visible-browser handoff and return
+    the operator's answer. Imported lazily and guarded like every other host seam. The
+    ``GraphInterrupt`` it raises to pause is a bubble-up signal the runtime must receive, so it is
+    NEVER caught here (see ``_is_graph_bubble``)."""
+    from langgraph.types import interrupt
+
+    return interrupt(payload)
+
+
+def _is_handoff_done(answer) -> bool:
+    """Parse a handoff answer into Done (``True``) / Cancel (``False``). Accepts a bare string, a
+    bool, or a choice object (``{"choice": "done"}`` / ``value`` / ``decision`` / …). Default-deny:
+    only an explicit Done returns ``True``, so an ambiguous answer never reads as "step completed"."""
+    value = answer
+    if isinstance(answer, dict):
+        for key in ("choice", "value", "decision", "action", "response", "answer", "done"):
+            if answer.get(key) not in (None, ""):
+                value = answer.get(key)
+                break
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in _HANDOFF_DONE_WORDS
+
+
+def _handoff_card(session_id: str, reason: str) -> dict:
+    """The card an operator sees in the handoff interrupt: what step to complete, in which visible
+    browser, the reminder not to submit, and the explicit Done / Cancel choice."""
+    what = _HANDOFF_REASONS[reason]
+    prompt = (
+        f"A step on this page needs you: {what}.\n\n"
+        "Open the live page in a VISIBLE browser — the Browser panel (the live viewport in the "
+        "console), or the real window if you've turned on the browser's `headed` setting — and "
+        f"complete ONLY this one step ({reason}). The agent has already filled everything it can.\n\n"
+        "Do NOT submit the application unless you mean to — submitting is approved separately through "
+        "its own card. Choose Done once the step is complete, or Cancel to stop."
+    )
+    return {
+        "type": "careercoach_handoff",
+        "title": "Finish one step in the visible browser",
+        "reason": reason,
+        "session_id": session_id,
+        "options": ["done", "cancel"],
+        "prompt": prompt,
+    }
+
+
+def _register_handoff(registry) -> None:
+    """Register ``careercoach_handoff`` — the visible-browser handoff. It shares the submit gate's
+    ``interrupt`` + headless-refusal pattern but creates no grant and clicks nothing: it hands a
+    human the page for the one step only they can do, then requires a fresh read-back before submit."""
+
+    from . import formfill, submitgate
+
+    @tool
+    def careercoach_handoff(session_id: str, reason: str) -> str:
+        """Hand the OPERATOR a visible browser to complete the one step only a human can do — a
+        captcha, a login/sign-in, or a legal attestation — while the agent has filled everything
+        else. `reason` is one of: captcha, login, attestation, other.
+
+        This NEVER solves, answers or bypasses a captcha, and it clicks nothing: it pauses the turn
+        and asks the operator to open the live page in a VISIBLE browser (the console's Browser
+        panel, or the real window if the browser plugin's `headed` setting is on), complete ONLY the
+        named step, and NOT submit the form unless they mean to. The card offers Done / Cancel.
+
+        On Done it returns the mandatory next step: re-read the form with browser_form_read and run
+        careercoach_verify_fill(session_id, <that JSON>) — a captcha or login can re-render the form
+        and clear filled fields, so this read-back is required and must report VERIFIED before any
+        careercoach_request_submit. On Cancel it tells you to stop. On a headless or autonomous turn
+        with no operator to answer, it REFUSES WITHOUT pausing and tells you to stop and report: a
+        human has to finish this step in an interactive session.
+
+        `session_id` is the id from careercoach_plan_fill, carried into the read-back instruction.
+        Use this only for a genuine human-required step — never to get past a bot check."""
+        try:
+            sid = (session_id or "").strip()
+            key = (reason or "").strip().lower()
+            if key not in _HANDOFF_REASONS:
+                return (
+                    f"Unknown handoff reason {reason!r}. Use one of: {', '.join(_HANDOFF_REASONS)}. This hands "
+                    "a human the step only they can do (a captcha, a login, a legal attestation); it never "
+                    "solves or bypasses a captcha."
+                )
+            if _turn_is_headless():
+                return (
+                    f"Handoff not possible: this is a headless or autonomous turn with no operator to complete "
+                    f"the {key} step in a visible browser. I can't and won't solve or bypass it myself — stop "
+                    "here and report that a human needs to finish this step in an interactive session."
+                )
+            answer = _handoff_interrupt(_handoff_card(sid, key))
+            # A human just had the live page in a visible browser; whatever they did — and the
+            # captcha / login / attestation itself — can re-render the form and clear filled fields,
+            # so the verification made BEFORE the handoff no longer describes it. Drop that
+            # verification and revoke any live submit grant, so the mandatory browser_form_read +
+            # careercoach_verify_fill (and a fresh careercoach_request_submit approval) are required
+            # before any submit can go through — the stale pre-handoff state can no longer authorize
+            # one. Done or Cancel alike: control left the agent either way.
+            if sid:
+                formfill.invalidate_verification(sid)
+            submitgate.clear()
+            if _is_handoff_done(answer):
+                verify = f'careercoach_verify_fill("{sid}", <that JSON>)' if sid else "careercoach_verify_fill"
+                return (
+                    f"Operator completed the {key} step. Before any submit, re-read the form with "
+                    f"browser_form_read and run {verify} — a {key} can re-render the form and clear filled "
+                    "fields, so this read-back is mandatory and must report VERIFIED before "
+                    "careercoach_request_submit. Never request submit on a form you haven't re-read since the handoff."
+                )
+            return "Operator cancelled the handoff; stop."
+        except Exception as e:  # noqa: BLE001 — a tool returns a readable string, never raises…
+            if _is_graph_bubble(e):  # …except langgraph's pause signal, which must reach the runtime
+                raise
+            return f"Could not hand off to the operator: {e}"
+
+    registry.register_tool(careercoach_handoff)
 
 
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────
