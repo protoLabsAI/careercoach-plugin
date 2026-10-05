@@ -766,13 +766,13 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
     if rows:
         for i, r in enumerate(rows, 1):
             action = r.get("action", "")
-            label = r.get("label", "")
+            target = r.get("target") or r.get("label", "")
             if action == formfill.SKIP:
-                out.append(f"  {i}. [skip]   {label} — optional, no saved answer; leave blank")
+                out.append(f"  {i}. [skip]   {target} — optional, no saved answer; leave blank")
                 continue
             value = r.get("value", "")
             shown = value if action != formfill.UPLOAD else f"{value}  (browser_upload this file)"
-            out.append(f"  {i}. [{action}] {label} -> {shown}")
+            out.append(f"  {i}. [{action}] {target} -> {shown}")
     else:
         out.append("  (nothing to fill from saved answers)")
 
@@ -787,7 +787,10 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
         out.append("  (nothing — every required field has a confirmed answer; fill without asking)")
     for u in unmapped:
         req = "required" if u.get("required") else "optional"
-        line = f"  - {u.get('label', '')} ({req}): {u.get('reason', 'no confirmed answer')}."
+        label = u.get("label", "")
+        loc = u.get("target")
+        head = label if (not loc or loc == label) else f"{label} [{loc}]"  # name the field when its label is shared
+        line = f"  - {head} ({req}): {u.get('reason', 'no confirmed answer')}."
         if u.get("answer"):
             line += f" Your answer {u['answer']!r} matched no option."
         if u.get("options"):
@@ -886,9 +889,11 @@ def _register_formfill_tools(registry) -> None:
                 return "VERIFIED — every field matches the plan and no required field is empty."
             lines = [f"NOT verified — {len(mismatches)} field(s) need fixing:"]
             for i, m in enumerate(mismatches, 1):
-                lines.append(
-                    f"  {i}. {m.get('label', '')}: expected {m.get('expected', '')!r}, found {m.get('actual', '')!r}"
-                )
+                label = m.get("label", "")
+                loc = m.get("target")
+                # name the field by its locator when its label is shared by another field
+                where = label if (not loc or loc == label) else f"{label} [{loc}]"
+                lines.append(f"  {i}. {where}: expected {m.get('expected', '')!r}, found {m.get('actual', '')!r}")
             lines.append(
                 "Fix these (browser_select / browser_fill / browser_upload), then re-read the form and verify again."
             )

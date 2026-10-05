@@ -185,7 +185,103 @@ def test_optional_unmapped_is_skipped_and_required_unmapped_is_listed(formfill):
     assert not any(r["label"] == "Email" for r in plan["rows"])
 
 
+# ── same-label file fields: route the résumé, never onto the cover letter ───────────────────
+def two_attach_fields(*, resume_required=True, cover_required=False):
+    """The GitLab-Greenhouse shape that broke: BOTH file inputs are labelled "Attach"; only the
+    name/id (``resume`` vs ``cover_letter``) tells the résumé apart from the cover letter."""
+    return [
+        field("Attach", "file", name="resume", id="resume", required=resume_required),
+        field("Attach", "file", name="cover_letter", id="cover_letter", required=cover_required),
+    ]
+
+
+def test_every_plan_row_carries_an_identity_and_target(formfill):
+    # r3: every row carries the field's id/name (when present) and a `target` locator, `#id` preferred.
+    confirmed = {"email": "ada@example.com", "linkedin_url": "https://linkedin.com/in/ada"}
+    plan = formfill.build_plan(greenhouse_form(), confirmed)
+    assert all(r.get("target") for r in plan["rows"]), "every row has a target locator"
+    email = next(r for r in plan["rows"] if r["label"] == "Email")
+    assert email["id"] == "email" and email["name"] == "email" and email["target"] == "#email"
+
+
+def test_an_extra_keyed_by_id_routes_the_resume_only_to_the_resume_field(formfill):
+    # The live bug: the plan uploaded the résumé to BOTH "Attach" fields. Keyed by id "resume", the
+    # answer fills the résumé field ALONE — the cover-letter "Attach" never receives the résumé.
+    plan = formfill.build_plan(two_attach_fields(), {}, {"resume": "resume-gitlab.pdf"})
+
+    uploads = [r for r in plan["rows"] if r["action"] == "upload"]
+    assert len(uploads) == 1, "exactly one upload — the résumé"
+    assert uploads[0]["target"] == "#resume" and uploads[0]["id"] == "resume"
+    assert uploads[0]["value"] == "resume-gitlab.pdf"
+    assert all(r.get("target") != "#cover_letter" for r in uploads)  # never the cover letter
+
+    # the cover letter is optional here → a blank skip row, never the résumé upload
+    cover = next(r for r in plan["rows"] if r.get("target") == "#cover_letter")
+    assert cover["action"] == "skip" and cover["value"] == ""
+    assert "resume-gitlab.pdf" not in [r.get("value") for r in plan["rows"] if r.get("target") == "#cover_letter"]
+
+
+def test_an_extra_keyed_by_a_shared_label_fills_none_and_lists_each(formfill):
+    # Keyed by the shared label "Attach" (not an id/name): the answer can't be routed to one field, so
+    # it fills NEITHER — each look-alike is handed back asking the operator to re-key by id or name.
+    plan = formfill.build_plan(
+        two_attach_fields(resume_required=True, cover_required=True), {}, {"Attach": "resume-gitlab.pdf"}
+    )
+    assert not any(r["action"] == "upload" for r in plan["rows"]), "a shared-label answer fills no field"
+
+    attach = [u for u in plan["unmapped"] if u["label"] == "Attach"]
+    assert len(attach) == 2
+    assert {u["target"] for u in attach} == {"#resume", "#cover_letter"}
+    assert all("key the answer by id or name" in u["reason"] for u in attach)
+
+
+def test_a_resume_value_is_never_planned_onto_the_cover_letter_field(formfill):
+    # Even if the operator mis-keys the résumé onto the cover-letter field by id, the résumé PDF is
+    # DROPPED — that field takes only an explicit cover-letter answer, never the résumé.
+    plan = formfill.build_plan(two_attach_fields(cover_required=True), {}, {"cover_letter": "resume-gitlab.pdf"})
+
+    assert all("resume-gitlab.pdf" not in str(r.get("value", "")) for r in plan["rows"])
+    cover_um = next(u for u in plan["unmapped"] if u.get("target") == "#cover_letter")
+    assert cover_um["required"] is True  # dropped résumé + no real cover letter → asked about
+
+
+def test_a_greenhouse_resume_file_with_no_answer_is_asked_about_not_auto_filled(formfill):
+    # Without the Ashby flag a résumé file field is NEVER auto-uploaded; with no supplied path it is
+    # handed back asking for the rendered PDF (the same shape as Ashby's missing-résumé message).
+    form = [field("Resume/CV", "file", name="resume", id="resume", required=True)]
+    plan = formfill.build_plan(form, {})
+    assert plan["rows"] == [], "the résumé is not auto-filled on the Greenhouse path"
+    assert not any(r.get("resume") for r in plan["rows"])
+    um = next(u for u in plan["unmapped"] if u["target"] == "#resume")
+    assert um["required"] is True and "résumé" in um["reason"] and "careercoach_render_resume" in um["reason"]
+
+
 # ── diff: plan vs. the form read back ─────────────────────────────────────────────────────
+def test_diff_matches_same_label_file_fields_by_identity(formfill):
+    # Both "Attach" fields read back: the résumé landed on #resume, the (optional) cover letter is
+    # blank. Each row is compared against its OWN field by id, so there is no mismatch.
+    plan = formfill.build_plan(two_attach_fields(), {}, {"resume": "resume-gitlab.pdf"})
+    after = [
+        field("Attach", "file", name="resume", id="resume", required=True, value="resume-gitlab.pdf"),
+        field("Attach", "file", name="cover_letter", id="cover_letter", required=False, value=""),
+    ]
+    assert formfill.diff(plan, after) == []
+
+
+def test_diff_flags_the_resume_landing_on_the_cover_letter_field(formfill):
+    # The résumé was uploaded to the WRONG field: #resume is empty, #cover_letter holds the résumé.
+    # Matching rows to fields by id catches it as a mismatch on #resume — the shared label can't mask it.
+    plan = formfill.build_plan(two_attach_fields(), {}, {"resume": "resume-gitlab.pdf"})
+    after = [
+        field("Attach", "file", name="resume", id="resume", required=True, value=""),
+        field("Attach", "file", name="cover_letter", id="cover_letter", required=False, value="resume-gitlab.pdf"),
+    ]
+    mism = formfill.diff(plan, after)
+    assert len(mism) == 1
+    assert mism[0]["target"] == "#resume"
+    assert mism[0]["expected"] == "resume-gitlab.pdf" and mism[0]["actual"] == ""
+
+
 def test_diff_catches_a_react_select_reverting_to_afghanistan(formfill):
     form = [field("Phone country", "select", name="phone_country", required=True, options=COUNTRIES)]
     plan = formfill.build_plan(form, {"phone_country": "United States"})
@@ -195,7 +291,13 @@ def test_diff_catches_a_react_select_reverting_to_afghanistan(formfill):
     ]
     mism = formfill.diff(plan, after)
     assert len(mism) == 1
-    assert mism[0] == {"label": "Phone country", "expected": "United States", "actual": "Afghanistan"}
+    # the field has no id, so its target locator is the label itself
+    assert mism[0] == {
+        "label": "Phone country",
+        "target": "Phone country",
+        "expected": "United States",
+        "actual": "Afghanistan",
+    }
 
 
 def test_diff_ignores_phone_formatting_differences(formfill):

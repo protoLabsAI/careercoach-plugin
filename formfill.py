@@ -85,6 +85,11 @@ ASHBY_PLAN_NOTE = (
 # sample is a DIFFERENT document: it must never receive the résumé PDF, so it falls through to the
 # normal "no confirmed answer → ask the operator" path instead of being mislabelled a résumé upload.
 _RESUME_FIELD = re.compile(r"r[eé]sum[eé]|\bcv\b|curriculum\s+vitae")
+# The cover-letter file field — matched by label/name/id the same way. Greenhouse labels BOTH the
+# résumé and the cover-letter file inputs "Attach"; only the name/id (``resume`` vs ``cover_letter``)
+# tells them apart. This field must NEVER receive the résumé PDF (see ``_is_resume_value``): it takes
+# an explicit cover-letter answer or nothing at all.
+_COVER_LETTER_FIELD = re.compile(r"cover[\s_-]?letter")
 
 
 def _norm(text: object) -> str:
@@ -222,6 +227,25 @@ def _is_resume_field(field: dict) -> bool:
     return _RESUME_FIELD.search(_hay(field)) is not None
 
 
+def _is_cover_letter_field(field: dict) -> bool:
+    """Whether a file field is the cover letter (matched on its label/name/id). Greenhouse labels both
+    the résumé and the cover-letter inputs "Attach", so the label alone can't tell them apart — the
+    name/id does. A cover-letter field never receives the résumé PDF (see ``_is_resume_value``)."""
+    return _COVER_LETTER_FIELD.search(_hay(field)) is not None
+
+
+def _is_resume_value(value: object) -> bool:
+    """Whether a value is the résumé PDF (or its placeholder instruction) — something that must never be
+    planned onto a cover-letter file field. Matches the Ashby résumé instruction and any path/URL whose
+    file name starts with ``resume`` (the shape a rendered résumé takes, e.g. ``resume-gitlab.pdf``)."""
+    s = str(value if value is not None else "").strip()
+    if not s:
+        return False
+    if s == RESUME_UPLOAD_VALUE:
+        return True
+    return _basename(s).lower().startswith("resume")
+
+
 # ── build_plan ──────────────────────────────────────────────────────────────────────────────
 def _draft_values() -> dict[str, str]:
     """Keys that have a non-empty DRAFT value (proposed but not confirmed). Used ONLY to tell the
@@ -263,8 +287,12 @@ def build_plan(
     unconfirmed}`` (plus a ``note`` for Ashby), persisted so ``verify_fill`` can diff against it later.
 
     ``confirmed`` is ``answers.confirmed()`` (the only values ever typed, besides ``extra``).
-    ``extra`` maps a field LABEL to an operator-supplied answer for a one-off question in this
-    session. ``ats`` names the applicant-tracking system (e.g. ``"ashby"``) so the plan can apply
+    ``extra`` maps a field KEY to an operator-supplied answer for a one-off question in this session.
+    The key is matched to a field by its ``id`` first, then ``name``, then ``label`` — so an answer
+    keyed by id/name fills exactly that field. A key that is a LABEL shared by several fields (and not
+    pinned to one of them by id/name) is ambiguous: it fills NONE of them — each such field is handed
+    to ``unmapped`` asking the operator to re-key by id or name. ``ats`` names the applicant-tracking
+    system (e.g. ``"ashby"``) so the plan can apply
     system-specific rules. ``company`` / ``role`` / ``posting`` are the identity of THIS
     application — the operator-facing company and role, plus the posting itself (its URL, when the
     caller has one). All three are folded into the ``session_id`` (see ``_session_id``) so two
@@ -276,11 +304,19 @@ def build_plan(
     read-back mints a new verification_id and A's grant can no longer authorize a submit
     (bd-4t17 / bd-ywmm.4). For each field:
 
-    * a row ``{label, kind, key, value, action}`` is emitted when a value is known — from
-      ``confirmed`` (via ``classify``) or from ``extra`` by label. ``action`` is ``fill`` /
-      ``select`` / ``upload`` by field kind; a ``select`` value must match one of the field's
-      options (exact, then case-insensitive), else the field goes to ``unmapped`` with its options
-      — never a fuzzy pick. A Yes/No button group reads as ``select`` and keeps its exact options.
+    Every row and every ``unmapped`` entry carries the field's identity — its ``label`` plus ``id``
+    and ``name`` (when present) and a ``target`` locator, the most specific selector for the field
+    (``#<id>`` when it has an id, else the label). This is what keeps two file fields both labelled
+    "Attach" (résumé vs cover letter) distinguishable downstream — the plan, the fill and the
+    read-back diff all key off the identity, not the shared label. For each field:
+
+    * a row ``{label, kind, id?, name?, target, key, value, action}`` is emitted when a value is
+      known — from ``confirmed`` (via ``classify``) or from ``extra`` (by id, name, then label).
+      ``action`` is ``fill`` / ``select`` / ``upload`` by field kind; a ``select`` value must match
+      one of the field's options (exact, then case-insensitive), else the field goes to ``unmapped``
+      with its options — never a fuzzy pick. A Yes/No button group reads as ``select`` and keeps its
+      exact options. A cover-letter file field NEVER receives the résumé PDF: a résumé-looking value
+      routed to it is dropped, and the field takes only an explicit cover-letter answer.
     * the phone COUNTRY row is ordered before the phone NUMBER row.
     * a REQUIRED field with no known value goes to ``unmapped`` (ask the operator). An OPTIONAL one
       with no value becomes a ``skip`` row.
@@ -296,13 +332,26 @@ def build_plan(
     instead of guessing a file. Any OTHER required file field (a cover letter, transcript, writing
     sample) is NOT the résumé: it takes the ordinary path — a supplied path uploads, otherwise it is
     asked about — so the résumé PDF is never uploaded into the wrong field.
+
+    **Greenhouse / generic** (no ``ats``): a résumé file field (matched by ``_is_resume_field``) with
+    no supplied path is handed to ``unmapped`` asking for the résumé PDF — it is NEVER auto-filled
+    here (the auto-upload is Ashby-only). The operator renders the PDF and supplies its path keyed by
+    the field's id or name.
     """
     confirmed = dict(confirmed or {})
-    extra_by_label = {_norm(k): str(v if v is not None else "") for k, v in (extra or {}).items()}
+    extra_norm = {_norm(k): str(v if v is not None else "") for k, v in (extra or {}).items()}
     drafts = _draft_values()
     is_ashby = _norm(ats) == "ashby"
 
     fields = form_fields if isinstance(form_fields, list) else []
+    # How many fields each normalized label covers — an extra answer keyed by a label shared by more
+    # than one field can't be routed to a single field, so it fills none of them (asked about instead).
+    label_counts: dict[str, int] = {}
+    for f in fields:
+        if isinstance(f, dict):
+            lab = _norm(str(f.get("label") or f.get("name") or f.get("id") or ""))
+            if lab:
+                label_counts[lab] = label_counts.get(lab, 0) + 1
     rows: list[dict] = []
     unmapped: list[dict] = []
     unconfirmed: list[dict] = []
@@ -311,6 +360,8 @@ def build_plan(
     for field in fields:
         if not isinstance(field, dict):
             continue
+        fid = str(field.get("id") or "").strip()
+        fname = str(field.get("name") or "").strip()
         label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
         kind = str(field.get("kind") or "").strip()
         options = _options(field)
@@ -318,14 +369,52 @@ def build_plan(
         required = _is_required(field)
         key = classify(field)
 
-        # Where the value comes from: a confirmed standard answer first, then the operator's extra.
+        # Identity carried on every row / unmapped entry so same-label fields stay distinguishable:
+        # id and name when present, and ``target`` — the most specific locator (``#id`` else the label).
+        ident = {"label": label, "kind": kind}
+        if fid:
+            ident["id"] = fid
+        if fname:
+            ident["name"] = fname
+        ident["target"] = f"#{fid}" if fid else label
+
+        # Where the value comes from: a confirmed standard answer first, then the operator's extra —
+        # keyed by the field's id, then name, then label. An extra keyed by a LABEL shared by several
+        # fields (and not pinned to one of them by id/name) is ambiguous and fills none of them.
         value = None
+        shared_label = False
         if key is not None and key in confirmed:
             value = confirmed[key]
-        elif _norm(label) in extra_by_label and extra_by_label[_norm(label)].strip():
-            value = extra_by_label[_norm(label)].strip()
+        else:
+            nid, nname, nlabel = _norm(fid), _norm(fname), _norm(label)
+            if nid and extra_norm.get(nid, "").strip():
+                value = extra_norm[nid].strip()
+            elif nname and extra_norm.get(nname, "").strip():
+                value = extra_norm[nname].strip()
+            elif nlabel and extra_norm.get(nlabel, "").strip():
+                if label_counts.get(nlabel, 0) > 1:
+                    shared_label = True  # ambiguous: the key names a label several fields share
+                else:
+                    value = extra_norm[nlabel].strip()
+
+        # A cover-letter file field NEVER receives the résumé PDF (or its placeholder): that is the
+        # wrong document here, so the value is dropped and the field is treated as having no answer.
+        if action == UPLOAD and _is_cover_letter_field(field) and value is not None and _is_resume_value(value):
+            value = None
 
         if value is None:
+            # An extra keyed by a shared label can't be routed to one field — ask the operator to
+            # re-key it by this field's id or name rather than applying it to all the look-alikes.
+            if shared_label:
+                unmapped.append(
+                    {
+                        **ident,
+                        "key": key,
+                        "required": required,
+                        "reason": "label shared by several fields — key the answer by id or name",
+                    }
+                )
+                continue
             # Ashby: the required RÉSUMÉ file always uploads the generated résumé — the operator never
             # has to supply a path. Scoped to the résumé field itself (``_is_resume_field``): a required
             # cover letter / transcript is a different document and must NOT get the résumé PDF, so it
@@ -335,8 +424,7 @@ def build_plan(
                 if resume_ready:
                     rows.append(
                         {
-                            "label": label,
-                            "kind": kind,
+                            **ident,
                             "key": key,
                             "value": RESUME_UPLOAD_VALUE,
                             "action": UPLOAD,
@@ -347,14 +435,27 @@ def build_plan(
                 else:
                     unmapped.append(
                         {
-                            "label": label,
-                            "kind": kind,
+                            **ident,
                             "key": key,
                             "required": True,
                             "reason": "a résumé is required but none can be rendered yet — complete the "
                             "profile (run careercoach_render_resume; it names the missing fields)",
                         }
                     )
+                continue
+            # Greenhouse / generic: a résumé file field with no supplied path is asked about — never
+            # auto-filled here (the auto-upload is Ashby-only). The operator renders the PDF and
+            # supplies its path keyed by the field's id or name.
+            if not is_ashby and action == UPLOAD and _is_resume_field(field):
+                unmapped.append(
+                    {
+                        **ident,
+                        "key": key,
+                        "required": required,
+                        "reason": "a résumé PDF is required — render it with careercoach_render_resume → "
+                        "browser_pdf, then supply its path as an extra answer keyed by this field's id or name",
+                    }
+                )
                 continue
             # No value to fill. A draft is a confirm-me; otherwise required→ask, optional→skip.
             if key is not None and key in drafts:
@@ -363,11 +464,9 @@ def build_plan(
                     unconfirmed.append({"label": label, "key": key, "draft": drafts[key]})
                 continue
             if required:
-                unmapped.append(
-                    {"label": label, "kind": kind, "key": key, "required": True, "reason": "no confirmed answer"}
-                )
+                unmapped.append({**ident, "key": key, "required": True, "reason": "no confirmed answer"})
             else:
-                rows.append({"label": label, "kind": kind, "key": key, "value": "", "action": SKIP})
+                rows.append({**ident, "key": key, "value": "", "action": SKIP})
             continue
 
         if action == SELECT and options:
@@ -375,8 +474,7 @@ def build_plan(
             if picked is None:
                 unmapped.append(
                     {
-                        "label": label,
-                        "kind": kind,
+                        **ident,
                         "key": key,
                         "required": required,
                         "reason": "answer matches no option",
@@ -387,7 +485,7 @@ def build_plan(
                 continue
             value = picked
 
-        rows.append({"label": label, "kind": kind, "key": key, "value": value, "action": action})
+        rows.append({**ident, "key": key, "value": value, "action": action})
 
     _order_phone(rows)
     if is_ashby:
@@ -432,48 +530,82 @@ def _values_equal(expected: str, actual: str, row: dict) -> bool:
     return _norm(expected) == _norm(actual)
 
 
-def _index_by_label(fields) -> dict[str, dict]:
-    out: dict[str, dict] = {}
+def _indexes(fields) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+    """Three lookups over the read-back fields — by id, by name, by (resolved) label — so a plan row
+    can be matched to its OWN field by the most specific identity it carries. ``setdefault`` keeps the
+    first field for any collision; two fields that share only a label stay separable by id/name."""
+    by_id: dict[str, dict] = {}
+    by_name: dict[str, dict] = {}
+    by_label: dict[str, dict] = {}
     if isinstance(fields, list):
         for f in fields:
-            if isinstance(f, dict):
-                out.setdefault(_norm(f.get("label") or f.get("name") or f.get("id")), f)
-    return out
+            if not isinstance(f, dict):
+                continue
+            fid, fname = _norm(f.get("id")), _norm(f.get("name"))
+            flabel = _norm(f.get("label") or f.get("name") or f.get("id"))
+            if fid:
+                by_id.setdefault(fid, f)
+            if fname:
+                by_name.setdefault(fname, f)
+            if flabel:
+                by_label.setdefault(flabel, f)
+    return by_id, by_name, by_label
+
+
+def _match_field(row: dict, by_id: dict, by_name: dict, by_label: dict) -> dict | None:
+    """The read-back field a plan row refers to, matched by id first, then name, then label — so two
+    fields that share a label (a résumé and a cover letter both labelled "Attach") are compared each
+    against its own field, not collapsed onto whichever came first."""
+    rid, rname, rlabel = _norm(row.get("id")), _norm(row.get("name")), _norm(row.get("label"))
+    if rid and rid in by_id:
+        return by_id[rid]
+    if rname and rname in by_name:
+        return by_name[rname]
+    if rlabel and rlabel in by_label:
+        return by_label[rlabel]
+    return None
 
 
 def diff(plan: dict, form_fields_after) -> list[dict]:
-    """Compare a plan to the form read back after filling: a list of ``{label, expected, actual}``.
+    """Compare a plan to the form read back after filling: a list of ``{label, target, expected, actual}``.
 
     Every planned row (except ``skip``) whose read-back value differs — normalized per field type
-    — is a mismatch. A required field that is still empty is reported too (so an unmapped-but-
-    required field the operator never filled is caught). An empty list means every planned field
-    landed and nothing required is blank."""
+    — is a mismatch. Each row is matched to its OWN read-back field by identity (id, then name, then
+    label), so two fields sharing a label are compared independently and ``target`` names which one.
+    A required field that is still empty is reported too (so an unmapped-but-required field the
+    operator never filled is caught); the required-empty pass uses the same identity, so a field a
+    row already covered is not double-reported. An empty list means every planned field landed and
+    nothing required is blank."""
     rows = plan.get("rows", []) if isinstance(plan, dict) else []
-    after = _index_by_label(form_fields_after)
+    by_id, by_name, by_label = _indexes(form_fields_after)
     mismatches: list[dict] = []
-    covered: set[str] = set()
+    covered: set[int] = set()  # id() of each matched read-back field, so a covered field isn't re-reported
 
     for row in rows:
         if not isinstance(row, dict) or row.get("action") == SKIP:
             continue
         label = row.get("label", "")
-        covered.add(_norm(label))
-        field = after.get(_norm(label))
+        target = row.get("target") or label
+        field = _match_field(row, by_id, by_name, by_label)
+        if field is not None:
+            covered.add(id(field))
         actual = str((field or {}).get("value") or "") if field else ""
         expected = str(row.get("value") or "")
         if not _values_equal(expected, actual, row):
-            mismatches.append({"label": label, "expected": expected, "actual": actual})
+            mismatches.append({"label": label, "target": target, "expected": expected, "actual": actual})
 
     for field in form_fields_after if isinstance(form_fields_after, list) else []:
         if not isinstance(field, dict) or not _is_required(field):
             continue
+        if id(field) in covered:
+            continue  # already flagged as a planned-row mismatch above
         label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
+        raw_id = str(field.get("id") or "").strip()
+        target = f"#{raw_id}" if raw_id else label
         value = str(field.get("value") or "")
         if value.strip():
             continue
-        if _norm(label) in covered:
-            continue  # already flagged as a planned-row mismatch above
-        mismatches.append({"label": label, "expected": "(required — not yet filled)", "actual": ""})
+        mismatches.append({"label": label, "target": target, "expected": "(required — not yet filled)", "actual": ""})
 
     return mismatches
 
