@@ -187,8 +187,9 @@ def test_the_middleware_frame_carries_the_answers_note(plugin, profile, answers)
 
     reg = FakeRegistry()
     plugin.register(reg)
-    assert len(reg.middlewares) == 1, "langchain is a dev dependency, so the profile middleware registers"
-    mw = reg.middlewares[0](None)
+    assert reg.middlewares, "langchain is a dev dependency, so the profile middleware registers"
+    # The submit gate also registers a middleware — pick the operator-profile one.
+    mw = next(m for m in (f(None) for f in reg.middlewares) if type(m).__name__ == "_ProfileMiddleware")
     mw.before_agent({}, None)
 
     captured: dict = {}

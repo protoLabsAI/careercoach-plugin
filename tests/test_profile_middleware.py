@@ -70,8 +70,12 @@ def mw(plugin, profile, monkeypatch, tmp_path):
     monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
     reg = FakeRegistry()
     plugin.register(reg)
-    assert len(reg.middlewares) == 1, "langchain is a dev dependency, so the profile middleware must register"
-    return reg.middlewares[0](None)
+    assert reg.middlewares, "langchain is a dev dependency, so the profile middleware must register"
+    for factory in reg.middlewares:  # the submit gate also registers a middleware — pick the profile one
+        instance = factory(None)
+        if type(instance).__name__ == "_ProfileMiddleware":
+            return instance
+    raise AssertionError("the operator-profile middleware must register")
 
 
 def _run(mw, model, *, tools=(), asynchronous=False):

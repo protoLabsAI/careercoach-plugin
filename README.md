@@ -279,6 +279,31 @@ careercoach-plugin/
   Remotive (remote jobs, no key); add a JSearch/RapidAPI key for Google-for-Jobs breadth. Only
   `jobsource.py` makes outbound calls, and the manifest declares exactly those two hosts.
 
+### Submit gate
+
+Phase 3's one hard non-goal is **submitting an application without explicit operator consent**. A
+line in a skill can't enforce that, and neither can a tool the agent decides to call on its own, so
+the gate is built in two unforgeable halves (`submitgate.py`, host-free and tested):
+
+- **Consent comes through an interrupt, not a model decision.** `careercoach_request_submit` first
+  refuses — *without asking anyone* — unless the fill session is `VERIFIED` (its latest
+  `careercoach_verify_fill` read-back diff was empty) and its plan is unchanged since. Only then does
+  it pause the turn with `langgraph.types.interrupt` and show the operator an approval card (company,
+  role, the planned field→value table). It grants a **one-shot, time-limited** authorization (120s)
+  **only** on an explicit approve; a decline, a vague answer, or a **headless/autonomous turn with no
+  operator to answer** all refuse, and the headless case never interrupts. Nothing else in the plugin
+  creates a grant.
+- **Submit clicks are blocked, not trusted.** An `AgentMiddleware` (`wrap_tool_call`) inspects every
+  tool call and short-circuits any **submit-like** browser call — a submit/apply/finish click, an
+  Enter/Return press, a `.submit()` / `requestSubmit` eval — unless a live grant exists, which it then
+  consumes. A blocked call returns a `ToolMessage` on the same `tool_call_id` and the browser tool
+  never runs. Non-submit calls pass through untouched.
+
+**The limits, stated plainly.** This is **defense in depth over the browser tools — it does not
+sandbox the browser.** It stops the *agent* from clicking submit without an operator's unforgeable
+approval; it cannot stop a human. The **operator can always submit by hand** in the visible browser,
+and on a host without the middleware seam the gate degrades to the browser tools' own confirmations.
+
 ## Upgrading
 
 - **0.8.0** — a *relative* `packet_root` setting or `CAREERCOACH_PACKET_DIR` value now resolves under the
