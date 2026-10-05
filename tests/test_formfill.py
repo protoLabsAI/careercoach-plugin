@@ -403,6 +403,41 @@ def test_an_extra_keyed_by_a_shared_label_fills_none_and_lists_each(formfill):
     assert all("key the answer by id or name" in u["reason"] for u in attach)
 
 
+def test_a_shared_label_extra_still_falls_back_to_the_confirmed_standard_answer(formfill):
+    # Regression (#23 review): an EXTRA keyed by a label several fields share is ambiguous and can't be
+    # routed, so it is dropped — but that ambiguity is the EXTRA's alone. A confirmed standard answer
+    # that classifies to the field is unambiguous and must still fill it. The `not shared_label` guard
+    # on the confirmed fallback used to silently drop the confirmed answer whenever the field's label
+    # happened to be shared.
+    form = [
+        field("Email", "email", name="email_1", id="email_1", required=True),
+        field("Email", "email", name="email_2", id="email_2", required=True),
+    ]
+    confirmed = {"email": "ada@example.com"}
+    extra = {"Email": "typo@example.com"}  # keyed by the shared label → ambiguous, dropped
+    plan = formfill.build_plan(form, confirmed, extra)
+    assert plan["unmapped"] == [], "a confirmed standard answer fills a shared-label field"
+    rows = [r for r in plan["rows"] if r["label"] == "Email"]
+    assert len(rows) == 2
+    assert all(r["value"] == "ada@example.com" and r["source"] == "standard" for r in rows)
+    assert "typo@example.com" not in [r.get("value") for r in plan["rows"]]
+
+
+def test_a_shared_label_field_with_no_standard_answer_is_still_unmapped(formfill):
+    # The other half of the regression: with NO confirmed standard answer to fall back to, a
+    # shared-label extra still fills none of the look-alikes — each is asked about, as before.
+    form = [
+        field("Reference", "text", name="ref_1", id="ref_1", required=True),
+        field("Reference", "text", name="ref_2", id="ref_2", required=True),
+    ]
+    plan = formfill.build_plan(form, {}, {"Reference": "Jane Doe"})
+    assert not any(r["action"] != "skip" for r in plan["rows"]), "a shared-label extra fills no field"
+    refs = [u for u in plan["unmapped"] if u["label"] == "Reference"]
+    assert len(refs) == 2
+    assert {u["target"] for u in refs} == {"#ref_1", "#ref_2"}
+    assert all("key the answer by id or name" in u["reason"] for u in refs)
+
+
 def test_a_resume_value_is_never_planned_onto_the_cover_letter_field(formfill):
     # Even if the operator mis-keys the résumé onto the cover-letter field by id, the résumé PDF is
     # DROPPED — that field takes only an explicit cover-letter answer, never the résumé.

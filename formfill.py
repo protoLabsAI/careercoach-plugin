@@ -363,8 +363,10 @@ def build_plan(
     ``extra`` maps a field KEY to an operator-supplied answer for a one-off question in this session.
     The key is matched to a field by its ``id`` first, then ``name``, then ``label`` — so an answer
     keyed by id/name fills exactly that field. A key that is a LABEL shared by several fields (and not
-    pinned to one of them by id/name) is ambiguous: it fills NONE of them — each such field is handed
-    to ``unmapped`` asking the operator to re-key by id or name. ``extra`` WINS over a classified
+    pinned to one of them by id/name) is ambiguous: that EXTRA fills NONE of them — but a confirmed
+    standard answer that classifies to the field still fills it (the shared-label ambiguity drops the
+    extra, not the fallback). Only a shared-label field with no confirmed answer either is handed to
+    ``unmapped`` asking the operator to re-key by id or name. ``extra`` WINS over a classified
     standard answer: when both a one-off ``extra`` and a confirmed standard answer would fill a field,
     the ``extra`` is used (the standard answer is only the fallback), and each row records its
     ``source`` (``"extra"`` or ``"standard"``). ``ats`` names the applicant-tracking
@@ -468,8 +470,14 @@ def build_plan(
         # extra exists. (The precedence was backwards before: a classified standard answer beat the
         # operator's explicit one-off, so a confirmed location landed on a Yes/No "do you live here?"
         # question.) An extra keyed by a LABEL shared by several fields (and not pinned to one of them
-        # by id/name) is ambiguous and fills none of them. ``source`` ("extra" / "standard") is
-        # recorded on the row so the read-back and the operator can see which answer was used.
+        # by id/name) is ambiguous: it can't fill ANY of them, so ``shared_label`` marks it so that
+        # the extra is dropped — but the ambiguity is the EXTRA's alone. A confirmed standard answer
+        # classifies to THIS field unambiguously, so it still fills in as the fallback (``shared_label``
+        # must NOT gate the confirmed branch: doing so silently dropped a confirmed answer whenever its
+        # field's label happened to be shared). Only when there is no confirmed answer either does the
+        # shared-label field go to ``unmapped`` asking the operator to re-key by id/name. ``source``
+        # ("extra" / "standard") is recorded on the row so the read-back and the operator can see which
+        # answer was used.
         value = None
         source = None
         shared_label = False
@@ -483,7 +491,7 @@ def build_plan(
                 shared_label = True  # ambiguous: the key names a label several fields share
             else:
                 value, source = extra_norm[nlabel].strip(), "extra"
-        if value is None and not shared_label and key is not None and key in confirmed:
+        if value is None and key is not None and key in confirmed:
             value, source = confirmed[key], "standard"
 
         # A cover-letter-ONLY file field NEVER receives the résumé PDF (or its placeholder): that is
