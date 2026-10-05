@@ -51,6 +51,7 @@ def register(registry) -> None:
     _register_packet_tools(registry, cfg)
     _register_answers_tools(registry)
     _register_formfill_tools(registry)
+    _register_submit_gate(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_profile_middleware(registry)
@@ -60,7 +61,7 @@ def register(registry) -> None:
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
         "[careercoach] registered: tracker + job-search + packet/profile + standard-answers + "
-        "form-fill tools, rubric knobs, crew, profile injection, dashboard, watch"
+        "form-fill tools, submit gate, rubric knobs, crew, profile injection, dashboard, watch"
     )
 
 
@@ -858,6 +859,262 @@ def _register_formfill_tools(registry) -> None:
             return f"Could not verify the fill: {e}"
 
     registry.register_tools([careercoach_plan_fill, careercoach_verify_fill])
+
+
+# ── the HARD submit gate: operator approval card (interrupt) + submit-click middleware (#4032 3c) ─
+# Phase 3's non-goal is "submitting without explicit operator consent". A skill line can't enforce
+# that and neither can a tool the agent calls on its own, so consent comes from the operator through
+# an interrupt the model can't forge, and submit clicks are BLOCKED unless that consent exists.
+# Pure logic (grant state + submit detection) lives in submitgate.py (host-free, tested); these are
+# the thin agent/host surface. This is defense in depth OVER the browser tools — it does not sandbox
+# the browser, and the operator can still submit by hand in the visible browser.
+def _turn_is_headless() -> bool:
+    """Whether this turn has no operator who could answer an approval card.
+
+    An ``interrupt`` only resolves inside a resumable graph run — one carrying a checkpointer and a
+    thread to resume (an interactive chat turn). Called outside one — a headless/autonomous turn
+    (the ``apply`` workflow, a background surface, a cron'd fleet member), or host-free — there's no
+    operator to pause for, so ``request_submit`` refuses rather than hang a turn no one will answer.
+    An explicit host headless/autonomous flag on the run config wins if present. Guarded: fails
+    CLOSED (treats the turn as headless) when the signal can't be read."""
+    try:
+        from langgraph.config import get_config
+    except Exception:  # noqa: BLE001 — no langgraph: an interrupt can't be answered at all
+        return True
+    try:
+        cfg = get_config()
+    except Exception:  # noqa: BLE001 — outside a runnable context → no operator to ask
+        return True
+    configurable = (cfg.get("configurable") or {}) if isinstance(cfg, dict) else {}
+    if any(bool(configurable.get(k)) for k in ("headless", "is_headless", "autonomous", "is_autonomous")):
+        return True
+    return not configurable.get("thread_id")
+
+
+def _submitgate_interrupt(payload: dict):
+    """Pause the turn with ``langgraph.types.interrupt`` and return the operator's answer. Imported
+    lazily and guarded like every other host seam. The ``GraphInterrupt`` it raises to pause is a
+    bubble-up signal the graph runtime must receive, so it is NEVER caught here (see ``_is_graph_bubble``)."""
+    from langgraph.types import interrupt
+
+    return interrupt(payload)
+
+
+def _is_graph_bubble(exc: BaseException) -> bool:
+    """Whether ``exc`` is langgraph's pause/resume bubble-up (``GraphBubbleUp`` — base of
+    ``GraphInterrupt``). A tool catching one would break the human-in-the-loop pause, so the submit
+    tool re-raises it instead of turning it into a string. Guarded: no langgraph → nothing bubbles."""
+    try:
+        from langgraph.errors import GraphBubbleUp
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(exc, GraphBubbleUp)
+
+
+# Explicit approve words only — default-deny, modelled on the delegates consent path. Anything
+# that isn't an unambiguous yes is a decline, so a vague or empty answer never authorizes a submit.
+_SUBMIT_APPROVE_WORDS = frozenset(
+    {"approve", "approved", "yes", "y", "ok", "okay", "confirm", "confirmed", "allow", "accept", "submit"}
+)
+
+
+def _is_submit_approval(answer) -> bool:
+    """Parse an interrupt answer into approve (``True``) / decline (``False``). Accepts a bare
+    string, a bool, or a choice object (``{"choice": "approve"}`` / ``value`` / ``decision`` / …).
+    Default-deny: only an explicit approve returns ``True``."""
+    value = answer
+    if isinstance(answer, dict):
+        for key in ("choice", "value", "decision", "action", "response", "answer", "approved"):
+            if answer.get(key) not in (None, ""):
+                value = answer.get(key)
+                break
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in _SUBMIT_APPROVE_WORDS
+
+
+def _submit_ready(session, session_id: str) -> tuple[bool, str]:
+    """Whether a fill session is safe to authorize for submit: it must be VERIFIED — its latest
+    ``careercoach_verify_fill`` read-back diff was empty, AND that verification describes the plan as
+    it stands now. "Changed since it was verified" is enforced upstream: ``formfill`` resets
+    verification on every ``build_plan`` write (a session is keyed by its rows hash, so a changed
+    plan is a different session, and a re-plan of the SAME rows comes back unverified until read back
+    again). So a plan that was re-planned or changed since its last verification reads as not-verified
+    here and is refused WITHOUT asking the operator. Returns ``(ok, reason)`` — ``reason`` is empty
+    when ``ok``."""
+    if not isinstance(session, dict):
+        return False, "no fill plan was found for this session."
+    if not session.get("verified"):
+        return False, (
+            "this form isn't VERIFIED — its latest read-back diff wasn't empty, or the plan was "
+            "re-planned or changed since it was last verified."
+        )
+    return True, ""
+
+
+def _submit_approval_card(session, session_id: str) -> dict:
+    """The approval card an operator sees in the interrupt: company, role, and the planned
+    field→value table (skip rows excluded, upload rows flagged), plus the explicit choices."""
+    from . import formfill
+
+    rows = session.get("rows", []) if isinstance(session, dict) else []
+    fields: list[dict] = []
+    table_lines: list[str] = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("action") == formfill.SKIP:
+            continue
+        label = str(r.get("label", ""))
+        value = str(r.get("value", ""))
+        action = str(r.get("action", ""))
+        fields.append({"label": label, "value": value, "action": action})
+        shown = f"{value}  (upload)" if action == formfill.UPLOAD else value
+        table_lines.append(f"  {label} -> {shown}")
+
+    company = str((session or {}).get("company") or "").strip()
+    role = str((session or {}).get("role") or "").strip()
+    who = " — ".join(x for x in (role, company) if x) or "this application"
+    prompt = (
+        f"Submit this job application? ({who})\n\n"
+        + ("Planned answers:\n" + "\n".join(table_lines) if table_lines else "(no planned fields)")
+        + "\n\nApprove to authorize ONE submit click (valid 120s); decline to stop."
+    )
+    return {
+        "type": "careercoach_submit_approval",
+        "title": "Approve submitting this job application?",
+        "company": company,
+        "role": role,
+        "session_id": session_id,
+        "fields": fields,
+        "options": ["approve", "decline"],
+        "prompt": prompt,
+    }
+
+
+def _register_submit_gate(registry) -> None:
+    """Register ``careercoach_request_submit`` (the operator-approval tool) and the middleware that
+    blocks submit-like browser calls without a live grant. The middleware is the enforcement; the
+    tool is the only path that ever creates a grant."""
+    from . import formfill, submitgate
+
+    @tool
+    def careercoach_request_submit(session_id: str) -> str:
+        """Ask the OPERATOR to authorize submitting a filled application, then (only on their
+        explicit approval) unlock exactly one submit click for 120 seconds.
+
+        This is a HARD gate, not a suggestion: the submit-gate middleware BLOCKS every submit-like
+        browser call (a submit/finish click, an Enter press, a ``.submit()`` eval) unless this tool
+        has recorded an operator grant, and the grant is one-shot and time-limited. A job board's
+        "Apply" / "Apply now" button only OPENS the form and is not gated. It is defense in depth
+        over the browser tools — it does not sandbox the browser, and the operator can always submit
+        by hand in the visible browser.
+
+        `session_id` is the id from careercoach_plan_fill. This REFUSES, without asking the operator,
+        unless that session is VERIFIED (careercoach_verify_fill found no mismatches on the latest
+        read-back) and its plan is unchanged since. On a headless or autonomous turn (no operator to
+        answer) it also refuses and does not pause. On approval it authorizes one click; on decline
+        it tells you not to submit. The flow: browser_form_read → careercoach_plan_fill → fill →
+        careercoach_verify_fill until VERIFIED → careercoach_request_submit → click submit →
+        browser_form_read/snapshot to confirm the confirmation page."""
+        try:
+            sid = (session_id or "").strip()
+            session = formfill.load_session(sid)
+            if session is None:
+                return (
+                    f"No fill plan found for session {sid!r}. Run careercoach_plan_fill, fill the form, "
+                    "and careercoach_verify_fill until VERIFIED before requesting submit."
+                )
+            ready, reason = _submit_ready(session, sid)
+            if not ready:
+                return (
+                    f"Submit not authorized — {reason} Fix the form and run careercoach_verify_fill until "
+                    "it reports VERIFIED, then request submit again."
+                )
+            if _turn_is_headless():
+                return (
+                    "Submit not authorized: this is a headless or autonomous turn with no operator to "
+                    "approve it. I will not submit an application without an explicit operator approval — "
+                    "run this again in an interactive session, or submit by hand in the browser."
+                )
+            answer = _submitgate_interrupt(_submit_approval_card(session, sid))
+            if _is_submit_approval(answer):
+                submitgate.grant(sid)
+                return (
+                    "Submit authorized for one click within 120s: click the form's submit button now, "
+                    "then browser_form_read/snapshot to confirm the confirmation page."
+                )
+            return "Operator declined; do not submit."
+        except Exception as e:  # noqa: BLE001 — a tool returns a readable string, never raises…
+            if _is_graph_bubble(e):  # …except langgraph's pause signal, which must reach the runtime
+                raise
+            return f"Could not request submit approval: {e}"
+
+    registry.register_tool(careercoach_request_submit)
+    _register_submit_middleware(registry)
+
+
+def _register_submit_middleware(registry) -> None:
+    """The enforcement: an ``AgentMiddleware`` that intercepts every tool call and short-circuits a
+    submit-like one unless a live operator grant exists AND the session it was approved for is still
+    VERIFIED (the grant is then consumed). Guarded like the profile middleware — if
+    ``AgentMiddleware`` isn't importable (older host) the plugin still registers; it just can't block
+    (the browser tools' own confirmations remain the only guard)."""
+    try:
+        from langchain.agents.middleware import AgentMiddleware
+    except ImportError:  # pragma: no cover — no langchain agents
+        log.debug("[careercoach] AgentMiddleware unavailable; submit gate middleware skipped")
+        return
+
+    from langchain_core.messages import ToolMessage
+
+    from . import formfill, submitgate
+
+    BLOCKED = (
+        "Blocked by careercoach submit gate: no operator authorization. Run careercoach_verify_fill "
+        "until VERIFIED, then careercoach_request_submit."
+    )
+
+    class _SubmitGateMiddleware(AgentMiddleware):
+        """Block submit-like browser calls unless an operator grant is live AND still tied to a
+        VERIFIED fill session.
+
+        A grant is one-shot and created only by ``careercoach_request_submit`` after the operator
+        approves the interrupt — the model can't forge it. A ``browser_click`` carries no session
+        id, so the gate can't read a session off the click itself; instead it checks the live grant
+        AGAINST the session it was approved for — spending it only while ``formfill`` still reports
+        that session verified. A grant whose plan was re-planned or changed (verification reset) is
+        therefore inert, and can't authorize a submit against a form that is no longer the one the
+        operator saw. On a submit-like call with such a grant the grant is consumed and the call
+        runs; otherwise the call is short-circuited with a ``ToolMessage`` carrying the SAME
+        ``tool_call_id`` (so the transcript stays valid) and the browser tool never runs. Every
+        non-submit call passes through untouched."""
+
+        def _blocked(self, request):
+            """A ``ToolMessage`` to return instead of running the tool, or ``None`` to pass through."""
+            call = getattr(request, "tool_call", None) or {}
+            name = call.get("name", "")
+            args = call.get("args", {})
+            if not submitgate.is_submit_like(name, args):
+                return None  # not submit-like — never touch it
+            # A live grant alone isn't enough. The click names no session, so THIS is where the gate
+            # checks the grant against the session it was approved for: the grant's session must
+            # still be VERIFIED in formfill. A re-plan resets verification, so a stale grant for a
+            # changed plan can't authorize a submit. Only then is the one-shot grant spent.
+            sid = submitgate.active_grant()
+            if sid and formfill.is_verified(sid) and submitgate.consume(sid):
+                return None  # live grant for a still-verified session; let exactly this call through
+            return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name)
+
+        def wrap_tool_call(self, request, handler):
+            blocked = self._blocked(request)
+            return blocked if blocked is not None else handler(request)
+
+        async def awrap_tool_call(self, request, handler):
+            blocked = self._blocked(request)
+            if blocked is not None:
+                return blocked
+            return await handler(request)
+
+    registry.register_middleware(lambda config: _SubmitGateMiddleware())
 
 
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────

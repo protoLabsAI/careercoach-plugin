@@ -356,18 +356,21 @@ def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
     names = [t.name for t in registry.tools]
     # 3 tracker/search + 12 packet/profile tools + 3 standard-answers tools + 2 form-fill tools +
-    # the 3 rubric-knob tools (the vendored testkit stands in for graph.sdk's Knobs/make_knob_tools,
-    # so the guarded knob path runs host-free).
-    assert len(names) == 23 and len(set(names)) == 23
+    # the submit-gate tool + the 3 rubric-knob tools (the vendored testkit stands in for graph.sdk's
+    # Knobs/make_knob_tools, so the guarded knob path runs host-free).
+    assert len(names) == 24 and len(set(names)) == 24
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     assert {"careercoach_get_answers", "careercoach_propose_answer", "careercoach_confirm_answers"} <= set(names)
     assert {"careercoach_plan_fill", "careercoach_verify_fill"} <= set(names)
+    assert "careercoach_request_submit" in set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE
     # The research → evaluate → write crew (graph.subagents.config is stood in by the testkit too).
     assert {c.name for c in registry.subagents} == {"company_researcher", "job_evaluator", "application_writer"}
-    assert len(registry.middlewares) == 1  # the operator-profile frame (langchain is a dev dep)
+    # the operator-profile frame + the submit-gate enforcement (both need langchain, a dev dep)
+    mw_names = {type(f(None)).__name__ for f in registry.middlewares}
+    assert mw_names == {"_ProfileMiddleware", "_SubmitGateMiddleware"}
     assert "careercoach:new_matches" in registry.verifiers  # goal verifier wired (VerifyResult is stubbed)
     assert "careercoach-watch" not in registry.surfaces  # auto-scan off by default
 

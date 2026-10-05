@@ -433,7 +433,12 @@ def _save(sessions: dict) -> None:
 
 
 def _save_session(session_id: str, record: dict) -> None:
-    """Persist one planning session, preserving any verification already recorded for it."""
+    """Persist one planning session. A (re)built plan ALWAYS starts UNVERIFIED: ``verified``
+    describes one fill-then-read-back cycle, so writing a plan — even an identical one whose rows
+    hash to the same id — cannot carry a prior ``verified`` flag forward. The browser must be filled
+    and read back (``verify_fill``) again before the plan counts as verified; this is what stops a
+    re-plan from arriving already-verified and being submitted without a read-back. Only ``created``
+    survives a rewrite."""
     with _store._locked("fill_sessions"):
         sessions = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         prior = sessions.get(session_id, {})
@@ -441,9 +446,9 @@ def _save_session(session_id: str, record: dict) -> None:
             **record,
             "session_id": session_id,
             "created": prior.get("created") or _now_ts(),
-            "verified": prior.get("verified", False),
-            "last_diff": prior.get("last_diff"),
-            "verified_at": prior.get("verified_at", ""),
+            "verified": False,
+            "last_diff": None,
+            "verified_at": "",
         }
         sessions[session_id] = merged
         _save(sessions)
