@@ -85,32 +85,49 @@ _KEY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pronouns", re.compile(r"pronoun")),
 )
 
-# Hints that a "country" field is the dial-code half of a phone input (an intl-tel-input widget,
-# or a "Country code" select beside the number) rather than, say, country of residence.
-_PHONE_CTX = ("phone", "tel", "mobile", "cell", "dial", "intl-tel", "intltel", " iti", "iti-", "iti_")
+# Hints that a field is the dial-code / number half of a phone input. The WORD-like terms are
+# matched with WORD BOUNDARIES, never as bare substrings: a label that merely contains them —
+# "Tell us why…", "Hotel", "Miscellaneous", "excellent" — must NOT read as a phone field, or its
+# free-text answer would be overwritten with the confirmed phone number. The MARKERS are
+# intl-tel-input widget signatures that legitimately appear as substrings of a name/id.
+_PHONE_WORD = re.compile(r"\b(?:tele)?phone\b|\btel\b|\bmobile\b|\bcell\b|\bdial\b")
+_PHONE_MARKERS = ("intl-tel", "intltel", " iti", "iti-", "iti_")
+_COUNTRY = re.compile(r"\bcountry\b")
+
+
+def _phone_key(hay: str) -> str | None:
+    """``phone_country`` / ``phone_number`` / ``None`` for a field, from its phone context. A
+    "country" field is the dial-code half only inside a phone widget (an intl-tel-input, or a
+    "country code" select); a phone/mobile/tel field with no country is the number."""
+    phone_ctx = _PHONE_WORD.search(hay) is not None or any(m in hay for m in _PHONE_MARKERS)
+    has_country = _COUNTRY.search(hay) is not None or "countrycode" in hay
+    if has_country and (phone_ctx or "country code" in hay or "countrycode" in hay):
+        return "phone_country"
+    if phone_ctx and not has_country:
+        return "phone_number"
+    return None
 
 
 def classify(field: dict) -> str | None:
     """Map one ``browser_form_read`` field to a ``answers.STANDARD_KEYS`` key, or ``None``.
 
-    Normalized label/name/id matching against a per-key pattern table. Phone is special: a
-    "country" field in a phone context (an intl-tel-input, a "country code" select) is
-    ``phone_country``; a phone/mobile/tel field is ``phone_number``. Everything else matches the
-    table. A field that matches no key, or two different keys, returns ``None`` — it never guesses
-    between two keys, and an ambiguous field is one for the operator to resolve."""
+    Normalized label/name/id matching against a per-key pattern table, plus a context-dependent
+    phone rule (country-in-a-phone-widget → ``phone_country``, phone/mobile/tel → ``phone_number``).
+    The phone match is folded into the SAME candidate set as the table, so a field that reads as
+    both a phone input AND another key is ambiguous and returns ``None``. A field that matches no
+    key, or two different keys, returns ``None`` — it never guesses between two keys, and an
+    ambiguous field is one for the operator to resolve."""
     if not isinstance(field, dict):
         return None
     hay = _hay(field)
     if not hay:
         return None
 
-    phone_ctx = any(h in hay for h in _PHONE_CTX)
-    if "country" in hay and (phone_ctx or "country code" in hay or "countrycode" in hay):
-        return "phone_country"
-    if phone_ctx and "country" not in hay:
-        return "phone_number"
-
     matched = {key for key, pat in _KEY_PATTERNS if pat.search(hay)}
+    phone_key = _phone_key(hay)
+    if phone_key is not None:
+        matched.add(phone_key)
+
     if len(matched) == 1:
         return next(iter(matched))
     return None  # no match, or ambiguous between keys → never guess

@@ -83,6 +83,30 @@ def test_classify_never_guesses_between_two_keys(formfill):
     assert formfill.classify(field("Are you authorized to work, or do you require sponsorship?")) is None
 
 
+def test_phone_substrings_in_free_text_are_not_phone_fields(formfill):
+    # "tel"/"cell" as a SUBSTRING of an ordinary word must not classify as phone — otherwise the
+    # confirmed phone number would be typed into a free-text question and reported VERIFIED.
+    assert formfill.classify(field("Tell us why you want to join")) is None
+    assert formfill.classify(field("Which hotel did you stay at?")) is None
+    assert formfill.classify(field("Any miscellaneous notes?")) is None
+    assert formfill.classify(field("What is your excellent trait?")) is None
+    # a free-text country question (no phone context) is not the dial-code field either
+    assert formfill.classify(field("Country of residence")) is None
+    # the real phone fields still classify
+    assert formfill.classify(field("Telephone", "tel", name="telephone")) == "phone_number"
+    assert formfill.classify(field("Mobile number", "tel", name="mobile")) == "phone_number"
+
+
+def test_a_phone_substring_question_is_not_filled_with_the_phone_number(formfill):
+    # The confirmed phone number must not leak into a free-text question that merely says "tell".
+    confirmed = {"phone_number": "555-123-4567"}
+    form = [field("Tell us why you want to join", "textarea", name="motivation", required=True)]
+    plan = formfill.build_plan(form, confirmed)
+    assert plan["rows"] == [], "a free-text question is never auto-filled from the phone answer"
+    assert "555-123-4567" not in [r.get("value") for r in plan["rows"]]
+    assert {u["label"] for u in plan["unmapped"]} == {"Tell us why you want to join"}  # asked, not guessed
+
+
 # ── build_plan ────────────────────────────────────────────────────────────────────────────
 def test_phone_country_row_is_ordered_before_the_number(formfill):
     confirmed = {"phone_number": "555-123-4567", "phone_country": "United States"}
