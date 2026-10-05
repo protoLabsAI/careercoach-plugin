@@ -51,6 +51,7 @@ def register(registry) -> None:
     _register_packet_tools(registry, cfg)
     _register_answers_tools(registry)
     _register_formfill_tools(registry)
+    _register_prepare_tool(registry)
     _register_submit_gate(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
@@ -859,6 +860,73 @@ def _register_formfill_tools(registry) -> None:
             return f"Could not verify the fill: {e}"
 
     registry.register_tools([careercoach_plan_fill, careercoach_verify_fill])
+
+
+# ── ATS schema prep: fetch the PUBLIC question schema before opening the page (#4032 phase 4a) ─
+# Greenhouse publishes each job's application questions on its public Job Board API. Fetching them up
+# front lets the coach prepare every answer it already holds and surface ONLY the genuinely new
+# required questions to the operator — before a browser is even opened. URL detection + schema→field
+# conversion live in ats.py (host-free, tested); the one network call (httpx) is there too and never
+# raises. This tool is the thin async surface. The schema plan is PREPARATION: the live read-back diff
+# (browser_form_read → careercoach_plan_fill → careercoach_verify_fill) stays mandatory before submit.
+def _register_prepare_tool(registry) -> None:
+    @tool
+    async def careercoach_prepare_application(url: str, company: str = "", role: str = "") -> str:
+        """Prepare answers for a job application BEFORE opening the page, from the ATS's public
+        question schema. Give it the posting `url` (optionally `company` / `role`).
+
+        For a Greenhouse job URL — `job-boards.greenhouse.io/<board>/jobs/<id>`, the older
+        `boards.greenhouse.io/<board>/jobs/<id>` form — it fetches the job's public application
+        questions, builds a fill plan from your CONFIRMED standard answers (careercoach_get_answers),
+        and returns that plan plus an explicit "Ask the operator about ONLY these:" list: the required
+        questions it has no confirmed answer for. Values are drawn ONLY from confirmed answers; a
+        select answer is never fuzzy-matched; nothing is invented.
+
+        This is PREPARATION, not verification. It lets you resolve genuinely new questions with the
+        operator before the browser opens — but the LIVE form stays the source of truth: once the page
+        is open you MUST browser_form_read → careercoach_plan_fill → fill → browser_form_read again →
+        careercoach_verify_fill, and that read-back diff must be empty before any submit. The returned
+        session_id is for this schema plan.
+
+        For a non-Greenhouse or unrecognised URL — and a company careers page using `?gh_jid=<id>`,
+        where the board token isn't in the URL so the schema can't be fetched — it returns a readable
+        message telling you to use the live-form path (browser_form_read → careercoach_plan_fill)."""
+        from . import answers, ats, formfill
+
+        live_path = (
+            "Open the application in the browser and use the live-form path: "
+            "browser_form_read → careercoach_plan_fill → fill → careercoach_verify_fill."
+        )
+        try:
+            detected = ats.detect(url)
+            if not detected:
+                return f"{url!r} isn't a recognised Greenhouse job URL, so there's no public schema to prepare from. {live_path}"
+            board, job_id = detected.get("board"), detected.get("job_id")
+            if not board:
+                return (
+                    f"Found a Greenhouse job id ({job_id}) but not the board token — this looks like a "
+                    f"company careers page using gh_jid, so the public schema can't be fetched. {live_path}"
+                )
+            api_json, err = await ats.fetch_schema(board, job_id)
+            if err:
+                return f"Couldn't prepare from the Greenhouse schema: {err} {live_path}"
+            fields = ats.greenhouse_fields(api_json)
+            if not fields:
+                return f"The Greenhouse schema had no fillable questions to prepare from. {live_path}"
+
+            plan = formfill.build_plan(fields, answers.confirmed())
+            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            title = (api_json.get("title") if isinstance(api_json, dict) else "") or ""
+            preamble = (
+                f"Prepared from the Greenhouse public schema for {title or 'this role'} "
+                f"(board {board!r}, job {job_id}). This is PREPARATION — resolve the questions below with "
+                "the operator now, but the live read-back is still required before any submit.\n"
+            )
+            return preamble + "\n" + _render_plan(plan, company or "", role or title)
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Could not prepare the application: {e}"
+
+    registry.register_tool(careercoach_prepare_application)
 
 
 # ── the HARD submit gate: operator approval card (interrupt) + submit-click middleware (#4032 3c) ─

@@ -17,9 +17,10 @@ guide_url: "https://github.com/protoLabsAI/careercoach-plugin#quick-start"   # S
 min_protoagent_version: "0.34.0"
 # Declarative posture (ADR 0071) — company research still runs through the agent's own
 # web_search/fetch_url tools, but the live job source (careercoach_search_jobs) + the
-# background job-watch call two job APIs directly, so `network` lists exactly those hosts.
+# background job-watch call two job APIs directly, and careercoach_prepare_application fetches a
+# Greenhouse job's public application schema, so `network` lists exactly those hosts.
 capabilities:
-  network: ["jsearch.p.rapidapi.com", "remotive.com"]
+  network: ["jsearch.p.rapidapi.com", "remotive.com", "boards-api.greenhouse.io"]
   # the operator profile + application tracker live under the instance root
   # (<instance_root>/careercoach); role-packet files go to the configured workspace
   # (packet_root, default ~/CareerCoach).
