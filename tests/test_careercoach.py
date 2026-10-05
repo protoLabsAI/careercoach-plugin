@@ -355,9 +355,9 @@ def test_skills_declare_real_tools(plugin, registry):
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
     names = [t.name for t in registry.tools]
-    # 3 tracker/search + 11 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
+    # 3 tracker/search + 12 packet/profile tools + the 3 rubric-knob tools (the vendored testkit
     # stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
-    assert len(names) == 17 and len(set(names)) == 17
+    assert len(names) == 18 and len(set(names)) == 18
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
