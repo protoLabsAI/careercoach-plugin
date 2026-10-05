@@ -842,8 +842,17 @@ def _register_formfill_tools(registry) -> None:
                 return err
             ats_norm = (ats or "").strip().lower()
             resume_ready = _resume_renderable() if ats_norm == "ashby" else True
-            plan = formfill.build_plan(fields, answers.confirmed(), extra, ats=ats_norm, resume_ready=resume_ready)
-            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            company_s, role_s = (company or "").strip(), (role or "").strip()
+            plan = formfill.build_plan(
+                fields,
+                answers.confirmed(),
+                extra,
+                ats=ats_norm,
+                resume_ready=resume_ready,
+                company=company_s,
+                role=role_s,
+            )
+            formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             return _render_plan(plan, company or "", role or "")
         except Exception as e:  # noqa: BLE001 — a tool never raises
             return f"Could not build a fill plan: {e}"
@@ -960,8 +969,14 @@ def _register_prepare_tool(registry) -> None:
             if not fields:
                 return f"The Greenhouse schema had no fillable questions to prepare from. {live_path}"
 
-            plan = formfill.build_plan(fields, answers.confirmed())
-            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            company_s, role_s = (company or "").strip(), (role or "").strip()
+            # Fold the posting URL into the session id: prepare lets company/role default to "", so
+            # without the URL two different postings with identical questions would share one id and
+            # one verification slot — a grant for A could then be spent on B (bd-ywmm.4).
+            plan = formfill.build_plan(
+                fields, answers.confirmed(), company=company_s, role=role_s, posting=(url or "").strip()
+            )
+            formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             title = (api_json.get("title") if isinstance(api_json, dict) else "") or ""
             preamble = (
                 f"Prepared from the Greenhouse public schema for {title or 'this role'} "
@@ -1051,11 +1066,13 @@ def _submit_ready(session, session_id: str) -> tuple[bool, str]:
     """Whether a fill session is safe to authorize for submit: it must be VERIFIED — its latest
     ``careercoach_verify_fill`` read-back diff was empty, AND that verification describes the plan as
     it stands now. "Changed since it was verified" is enforced upstream: ``formfill`` resets
-    verification on every ``build_plan`` write (a session is keyed by its rows hash, so a changed
-    plan is a different session, and a re-plan of the SAME rows comes back unverified until read back
-    again). So a plan that was re-planned or changed since its last verification reads as not-verified
-    here and is refused WITHOUT asking the operator. Returns ``(ok, reason)`` — ``reason`` is empty
-    when ``ok``."""
+    verification on every ``build_plan`` write, so a re-plan of this session comes back unverified
+    until read back again. Verification is also EXCLUSIVE — planning or verifying any other form
+    clears this one — so a grant for form A reads as not-verified here once form B is planned. A plan
+    that was re-planned or superseded since its last verification is refused WITHOUT asking the
+    operator. This is the pre-interrupt gate; the grant itself binds to the specific verification
+    EVENT (``formfill.current_verification``), so submit safety does not depend on session ids being
+    unique per application. Returns ``(ok, reason)`` — ``reason`` is empty when ``ok``."""
     if not isinstance(session, dict):
         return False, "no fill plan was found for this session."
     if not session.get("verified"):
@@ -1149,9 +1166,27 @@ def _register_submit_gate(registry) -> None:
                     "approve it. I will not submit an application without an explicit operator approval — "
                     "run this again in an interactive session, or submit by hand in the browser."
                 )
+            # Capture the verification event the operator is about to approve. The grant binds to this
+            # exact (session_id, verification_id) pair, not to the session id alone — so it authorizes
+            # ONLY this read-back, never a later one or a colliding form's.
+            vid = formfill.current_verification(sid)
+            if not vid:
+                return (
+                    "Submit not authorized — this form isn't VERIFIED right now. Run "
+                    "careercoach_verify_fill until it reports VERIFIED, then request submit again."
+                )
             answer = _submitgate_interrupt(_submit_approval_card(session, sid))
             if _is_submit_approval(answer):
-                submitgate.grant(sid)
+                # If the verification changed while the approval card was open — a re-plan, a
+                # re-verification, or another form read back — the approval no longer matches the
+                # current form, so refuse rather than grant against a stale event.
+                if formfill.current_verification(sid) != vid:
+                    return (
+                        "Submit not authorized — the form was re-planned or re-verified while the "
+                        "approval card was open, so the approval no longer matches the current form. "
+                        "Run careercoach_verify_fill until VERIFIED, then request submit again."
+                    )
+                submitgate.grant(sid, vid)
                 return (
                     "Submit authorized for one click within 120s: click the form's submit button now, "
                     "then browser_form_read/snapshot to confirm the confirmation page."
@@ -1188,19 +1223,22 @@ def _register_submit_middleware(registry) -> None:
     )
 
     class _SubmitGateMiddleware(AgentMiddleware):
-        """Block submit-like browser calls unless an operator grant is live AND still tied to a
-        VERIFIED fill session.
+        """Block submit-like browser calls unless an operator grant is live AND still tied to the
+        exact verification event it was approved for.
 
         A grant is one-shot and created only by ``careercoach_request_submit`` after the operator
         approves the interrupt — the model can't forge it. A ``browser_click`` carries no session
-        id, so the gate can't read a session off the click itself; instead it checks the live grant
-        AGAINST the session it was approved for — spending it only while ``formfill`` still reports
-        that session verified. A grant whose plan was re-planned or changed (verification reset) is
-        therefore inert, and can't authorize a submit against a form that is no longer the one the
-        operator saw. On a submit-like call with such a grant the grant is consumed and the call
-        runs; otherwise the call is short-circuited with a ``ToolMessage`` carrying the SAME
-        ``tool_call_id`` (so the transcript stays valid) and the browser tool never runs. Every
-        non-submit call passes through untouched."""
+        id, so the gate can't read a session off the click itself; instead it checks the live grant's
+        ``(session_id, verification_id)`` pair AGAINST ``formfill.current_verification`` — spending it
+        only while that session's CURRENT verification is still the exact id granted. A grant whose
+        plan was re-planned (id cleared), re-verified (new id), or displaced by a colliding form B's
+        read-back (also a new id) is therefore inert, and can't authorize a submit against anything
+        but the one form+read-back the operator saw. Binding to the verification_id — not the session
+        id, which two forms can share — is what makes this hold even on an id collision. On a
+        submit-like call with a matching grant the grant is consumed and the call runs; otherwise the
+        call is short-circuited with a ``ToolMessage`` carrying the SAME ``tool_call_id`` (so the
+        transcript stays valid) and the browser tool never runs. Every non-submit call passes through
+        untouched."""
 
         def _blocked(self, request):
             """A ``ToolMessage`` to return instead of running the tool, or ``None`` to pass through."""
@@ -1210,12 +1248,16 @@ def _register_submit_middleware(registry) -> None:
             if not submitgate.is_submit_like(name, args):
                 return None  # not submit-like — never touch it
             # A live grant alone isn't enough. The click names no session, so THIS is where the gate
-            # checks the grant against the session it was approved for: the grant's session must
-            # still be VERIFIED in formfill. A re-plan resets verification, so a stale grant for a
-            # changed plan can't authorize a submit. Only then is the one-shot grant spent.
-            sid = submitgate.active_grant()
-            if sid and formfill.is_verified(sid) and submitgate.consume(sid):
-                return None  # live grant for a still-verified session; let exactly this call through
+            # checks the grant against the exact verification event it was approved for: the grant's
+            # (session_id, verification_id) pair must still be the session's CURRENT verification in
+            # formfill. A re-plan clears that id, and a re-verification — of this form OR of a form B
+            # that collides onto its session id — mints a NEW id, so a stale grant no longer matches
+            # and can't authorize a submit. Only on an exact match is the one-shot grant spent.
+            grant = submitgate.active_grant()
+            if grant is not None:
+                sid, vid = grant
+                if vid and formfill.current_verification(sid) == vid and submitgate.consume(sid, vid):
+                    return None  # live grant for the still-current verification; let this call through
             return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name)
 
         def wrap_tool_call(self, request, handler):

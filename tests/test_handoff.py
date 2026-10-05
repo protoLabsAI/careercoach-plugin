@@ -119,8 +119,9 @@ def test_handoff_invalidates_the_pre_handoff_verification_and_grant(handoff, mon
     plan = formfill.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
     sid = plan["session_id"]
     formfill.record_verification(sid, [])  # empty mismatches → verified, as the pre-handoff fill was
-    submitgate.grant(sid)  # a pre-handoff submit grant, as if request_submit had already been approved
-    assert formfill.is_verified(sid) and submitgate.active_grant() == sid
+    vid = formfill.current_verification(sid)  # the read-back minted a verification event the grant binds to
+    submitgate.grant(sid, vid)  # a pre-handoff submit grant, as if request_submit had already been approved
+    assert formfill.is_verified(sid) and submitgate.active_grant() == (sid, vid)
 
     monkeypatch.setattr(handoff.plugin, "_turn_is_headless", lambda: False)
     monkeypatch.setattr(handoff.plugin, "_handoff_interrupt", lambda payload: answer)

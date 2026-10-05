@@ -12,6 +12,7 @@ Four layers, all host-free:
 from __future__ import annotations
 
 import importlib
+import json
 import types
 
 import pytest
@@ -37,10 +38,27 @@ def gate(plugin, iso, monkeypatch):
     return types.SimpleNamespace(
         plugin=plugin,
         tool=tools["careercoach_request_submit"],
+        plan_fill=tools["careercoach_plan_fill"],
+        verify_fill=tools["careercoach_verify_fill"],
         middleware=middleware,
         formfill=importlib.import_module(plugin.__name__ + ".formfill"),
         submitgate=importlib.import_module(plugin.__name__ + ".submitgate"),
+        answers=importlib.import_module(plugin.__name__ + ".answers"),
     )
+
+
+def _grant_current(gate, sid):
+    """Record the one-shot submit grant bound to ``sid``'s CURRENT verification event — what
+    ``careercoach_request_submit`` does after an operator approves."""
+    gate.submitgate.grant(sid, gate.formfill.current_verification(sid))
+
+
+def _sid_from_plan_output(text: str) -> str:
+    """The session_id line out of a rendered careercoach_plan_fill plan."""
+    for line in text.splitlines():
+        if line.strip().startswith("session_id:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"no session_id in plan output:\n{text}")
 
 
 class FakeReq:
@@ -101,29 +119,38 @@ def test_grant_is_one_shot_and_expires(submitgate, monkeypatch):
     clock = {"t": 1000.0}
     monkeypatch.setattr(submitgate, "_now", lambda: clock["t"])
 
-    submitgate.grant("sid-1", ttl_s=120)
-    assert submitgate.active_grant() == "sid-1"
+    submitgate.grant("sid-1", "vid-1", ttl_s=120)
+    assert submitgate.active_grant() == ("sid-1", "vid-1")
 
     # One-shot: the first consume wins, the second finds nothing.
-    assert submitgate.consume("sid-1") is True
-    assert submitgate.consume("sid-1") is False
+    assert submitgate.consume("sid-1", "vid-1") is True
+    assert submitgate.consume("sid-1", "vid-1") is False
     assert submitgate.active_grant() is None
 
     # Expiry: a fresh grant is gone once the clock passes its TTL.
-    submitgate.grant("sid-2", ttl_s=120)
-    assert submitgate.active_grant() == "sid-2"
+    submitgate.grant("sid-2", "vid-2", ttl_s=120)
+    assert submitgate.active_grant() == ("sid-2", "vid-2")
     clock["t"] = 1000.0 + 121
     assert submitgate.active_grant() is None
-    assert submitgate.consume("sid-2") is False
+    assert submitgate.consume("sid-2", "vid-2") is False
 
 
-def test_grant_supersedes_prior_and_is_session_scoped(submitgate, monkeypatch):
+def test_grant_requires_an_exact_pair_match(submitgate, monkeypatch):
     monkeypatch.setattr(submitgate, "_now", lambda: 0.0)
-    submitgate.grant("sid-A")
-    submitgate.grant("sid-B")  # a fresh grant supersedes the old one
-    assert submitgate.active_grant() == "sid-B"
-    assert submitgate.consume("sid-A") is False  # the superseded one can't authorize anything
-    assert submitgate.consume("sid-B") is True
+    submitgate.grant("sid-A", "vid-A")
+    submitgate.grant("sid-B", "vid-B")  # a fresh grant supersedes the old one
+    assert submitgate.active_grant() == ("sid-B", "vid-B")
+    assert submitgate.consume("sid-A", "vid-A") is False  # the superseded one can't authorize anything
+    assert submitgate.consume("sid-B", "vid-A") is False  # right session, WRONG verification → no spend
+    assert submitgate.consume("sid-B", "") is False  # an empty verification never matches
+    assert submitgate.active_grant() == ("sid-B", "vid-B")  # none of the mismatches consumed it
+    assert submitgate.consume("sid-B", "vid-B") is True  # only the exact pair spends it
+
+
+def test_grant_needs_a_non_empty_verification_id(submitgate, monkeypatch):
+    monkeypatch.setattr(submitgate, "_now", lambda: 0.0)
+    submitgate.grant("sid-A", "")  # a session with no current verification can't be granted
+    assert submitgate.active_grant() is None
 
 
 # ── the blocking middleware ─────────────────────────────────────────────────────────────────
@@ -140,8 +167,9 @@ def test_middleware_blocks_without_a_grant(gate):
 
 
 def test_middleware_allows_exactly_one_call_with_a_grant(gate):
-    sid = _verified_session(gate.formfill)  # a grant is only spent while its session stays VERIFIED
-    gate.submitgate.grant(sid)
+    # Case (c): the happy path — a verified, approved, granted form submits exactly ONCE.
+    sid = _verified_session(gate.formfill)  # a grant is only spent while its verification stays current
+    _grant_current(gate, sid)
     calls = []
 
     def handler(req):
@@ -166,9 +194,9 @@ def test_middleware_passes_non_submit_calls_untouched(gate):
     assert result == "RAN" and len(ran) == 1
     # A non-submit call does not touch the grant (so it can't starve a real submit of its grant).
     sid = _verified_session(gate.formfill)
-    gate.submitgate.grant(sid)
+    _grant_current(gate, sid)
     gate.middleware.wrap_tool_call(FakeReq("browser_form_read", {}), lambda req: "RAN")
-    assert gate.submitgate.active_grant() == sid
+    assert gate.submitgate.active_grant()[0] == sid
 
 
 def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate):
@@ -176,7 +204,7 @@ def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate)
     # neither is a submit, so with a live grant the middleware passes them through untouched and
     # does NOT consume the one-shot grant, leaving it for the real submit click.
     sid = _verified_session(gate.formfill)
-    gate.submitgate.grant(sid)
+    _grant_current(gate, sid)
     ran = []
     for label in ("Apply", "Apply now", "Apply filters"):
         out = gate.middleware.wrap_tool_call(
@@ -184,7 +212,7 @@ def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate)
         )
         assert out == "RAN"
     assert ran == ["Apply", "Apply now", "Apply filters"]  # every harmless click ran
-    assert gate.submitgate.active_grant() == sid  # the grant is still live for the real submit
+    assert gate.submitgate.active_grant()[0] == sid  # the grant is still live for the real submit
 
     submit = gate.middleware.wrap_tool_call(
         FakeReq("browser_click", {"selector": "Submit application"}), lambda req: "SUBMITTED"
@@ -198,8 +226,8 @@ def test_middleware_checks_the_grant_against_its_session_not_just_that_one_is_li
     # grant's session to still be VERIFIED: re-planning resets verification, so the still-live grant
     # becomes inert and can't authorize a submit against a form that is no longer the verified one.
     sid = _verified_session(gate.formfill)
-    gate.submitgate.grant(sid)
-    assert gate.submitgate.active_grant() == sid  # a grant is live…
+    _grant_current(gate, sid)
+    assert gate.submitgate.active_grant()[0] == sid  # a grant is live…
 
     gate.formfill.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
     assert gate.formfill.is_verified(sid) is False  # …but a re-plan reset verification
@@ -209,7 +237,180 @@ def test_middleware_checks_the_grant_against_its_session_not_just_that_one_is_li
     )
     assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
     assert out.tool_call_id == "c9"
-    assert gate.submitgate.active_grant() == sid  # the inert grant was NOT spent on the blocked call
+    assert gate.submitgate.active_grant()[0] == sid  # the inert grant was NOT spent on the blocked call
+
+
+def test_middleware_blocks_a_submit_after_a_different_form_is_planned(gate):
+    # Case (b): the bd-4t17 hole — the operator approves form A (grant live for 120s), then the agent plans and
+    # fills a DIFFERENT form B and clicks submit on B. Verification is exclusive to the newest plan,
+    # so planning B unverifies A — A's grant goes inert and the submit on B is BLOCKED, even though
+    # A's grant never expired and was never re-planned itself.
+    sid_a = _verified_session(gate.formfill, company="Acme", role="ML Engineer")
+    _grant_current(gate, sid_a)
+    assert gate.submitgate.active_grant()[0] == sid_a  # a grant for A is live…
+
+    # Plan a genuinely different form B (different rows → different session id).
+    plan_b = gate.formfill.build_plan(
+        [{"label": "Phone", "kind": "text", "required": True}], {"phone_number": "555-0100"}, {}
+    )
+    assert plan_b["session_id"] != sid_a
+    assert gate.formfill.is_verified(sid_a) is False  # …but planning B revoked A's verification
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cB"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cB"
+    assert gate.submitgate.active_grant()[0] == sid_a  # the inert grant was NOT spent on the blocked click
+
+
+def test_middleware_blocks_a_submit_after_a_same_fields_different_company_form(gate):
+    # The exact bd-4t17 collision: form B has the SAME fields and answers as the approved form A, but
+    # is a different application (different company). Because the session id folds in company/role, B
+    # gets a DIFFERENT id — it does not reuse A's slot and re-verify it — so planning B unverifies A
+    # (verification is exclusive) and A's still-live grant can't authorize a submit on B.
+    ff = gate.formfill
+    rows = [{"label": "Email", "kind": "text", "required": True}]
+    confirmed = {"email": "ada@example.com"}
+
+    sid_a = ff.build_plan(rows, confirmed, {}, company="Acme", role="ML Engineer")["session_id"]
+    ff.update_session(sid_a, company="Acme", role="ML Engineer")
+    ff.record_verification(sid_a, [])  # A verified and approved
+    _grant_current(gate, sid_a)
+    assert gate.submitgate.active_grant()[0] == sid_a and ff.is_verified(sid_a) is True
+
+    # Same fields + answers, DIFFERENT company → a genuinely different application, so a different id.
+    sid_b = ff.build_plan(rows, confirmed, {}, company="Globex", role="ML Engineer")["session_id"]
+    assert sid_b != sid_a, "same rows but a different company must not collide onto A's id"
+    assert ff.is_verified(sid_a) is False  # planning B revoked A's verification
+    assert ff.is_verified(sid_b) is False  # and a freshly planned B is unverified
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cC"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cC"
+    assert gate.submitgate.active_grant()[0] == sid_a  # the inert grant was NOT spent on the blocked click
+
+
+def test_middleware_blocks_a_submit_after_a_same_fields_different_posting_form(gate):
+    # The bd-ywmm.4 residue the review caught: careercoach_prepare_application defaults company/role
+    # to "" but carries the posting URL. Two DIFFERENT postings with identical questions and blank
+    # company/role must NOT collide onto one slot — else a clean read-back of B would re-verify A and
+    # A's live grant would authorize a submit on B. The posting URL is folded into the id, so B is a
+    # genuinely different session: planning it unverifies A (verification is exclusive) and the submit
+    # on B is BLOCKED.
+    ff = gate.formfill
+    rows = [{"label": "Email", "kind": "text", "required": True}]
+    confirmed = {"email": "ada@example.com"}
+
+    sid_a = ff.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/acme/jobs/1")["session_id"]
+    ff.record_verification(sid_a, [])  # A verified and approved
+    _grant_current(gate, sid_a)
+    assert gate.submitgate.active_grant()[0] == sid_a and ff.is_verified(sid_a) is True
+
+    # Same fields + answers + blank company/role, DIFFERENT posting → a different application, so a
+    # different id — not a silent reuse of A's slot.
+    sid_b = ff.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/globex/jobs/2")["session_id"]
+    assert sid_b != sid_a, "same rows + blank identity but a different posting must not collide onto A"
+    assert ff.is_verified(sid_a) is False  # planning B revoked A's verification
+    assert ff.is_verified(sid_b) is False  # and a freshly planned B is unverified
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cD"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cD"
+    assert gate.submitgate.active_grant()[0] == sid_a  # the inert grant was NOT spent on the blocked click
+
+
+def test_middleware_blocks_a_submit_after_a_colliding_plan_fill_form(gate, monkeypatch):
+    # Case (a), the residue the review caught: careercoach_plan_fill passes NO posting, so two forms
+    # with identical rows and blank company/role COLLIDE onto one session id. Verifying B therefore
+    # can't be kept apart by the id — but the grant binds to A's verification_id, and B's clean
+    # read-back mints a brand-new one, so A's grant goes inert and the submit on B is BLOCKED and left
+    # unconsumed. This drives the real careercoach_plan_fill / careercoach_verify_fill tools.
+    gate.answers.propose("email", "ada@example.com")
+    gate.answers.confirm(["email"])
+    form = [{"label": "Email", "kind": "text", "required": True}]
+    filled = [{"label": "Email", "kind": "text", "required": True, "value": "ada@example.com"}]
+
+    # Plan + verify + operator-approve + grant form A, all through the tools.
+    sid_a = _sid_from_plan_output(gate.plan_fill.invoke({"form_json": json.dumps(form), "company": "", "role": ""}))
+    gate.verify_fill.invoke({"session_id": sid_a, "form_json": json.dumps(filled)})
+    assert gate.formfill.is_verified(sid_a) is True
+    monkeypatch.setattr(gate.plugin, "_turn_is_headless", lambda: False)
+    monkeypatch.setattr(gate.plugin, "_submitgate_interrupt", lambda payload: "approve")
+    assert "authorized" in gate.tool.invoke({"session_id": sid_a}).lower()
+    grant = gate.submitgate.active_grant()
+    assert grant is not None and grant[0] == sid_a
+
+    # Plan form B through the SAME careercoach_plan_fill path — identical rows, blank company/role →
+    # it collides onto A's id — then read B back cleanly.
+    sid_b = _sid_from_plan_output(gate.plan_fill.invoke({"form_json": json.dumps(form), "company": "", "role": ""}))
+    assert sid_b == sid_a, "identical rows + blank identity collide onto one id (the plan_fill hole)"
+    gate.verify_fill.invoke({"session_id": sid_b, "form_json": json.dumps(filled)})
+    assert gate.formfill.is_verified(sid_b) is True  # the session reads as verified again…
+    assert gate.formfill.current_verification(sid_a) != grant[1]  # …but under a NEW verification_id
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cA"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cA"
+    assert gate.submitgate.active_grant() == grant  # the inert grant was NOT spent on the blocked click
+
+
+def test_middleware_blocks_a_submit_after_reverifying_the_same_form(gate):
+    # Case (d): the operator approves form A and a grant goes live. A is then read back AGAIN, still
+    # clean — a fresh verification event that mints a NEW verification_id. The session is STILL
+    # verified, but the grant holds the OLD id, so it no longer matches the session's current
+    # verification and the submit is BLOCKED. (This is the case the coarse is_verified check alone
+    # would have wrongly allowed.)
+    sid = _verified_session(gate.formfill)
+    vid_1 = gate.formfill.current_verification(sid)
+    gate.submitgate.grant(sid, vid_1)
+    assert gate.submitgate.active_grant() == (sid, vid_1)
+
+    gate.formfill.record_verification(sid, [])  # re-verify the SAME form → a fresh verification_id
+    vid_2 = gate.formfill.current_verification(sid)
+    assert vid_2 and vid_2 != vid_1 and gate.formfill.is_verified(sid) is True
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cR"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cR"
+    assert gate.submitgate.active_grant() == (sid, vid_1)  # the inert grant was NOT spent
+
+
+def test_verification_id_lifecycle(gate):
+    # Case (e): the verification_id lifecycle via formfill — minted on a clean verify, cleared on a
+    # dirty diff and on a plan write, and different across two clean verifies of the same session.
+    ff = gate.formfill
+    form = [{"label": "Email", "kind": "text", "required": True}]
+    confirmed = {"email": "ada@example.com"}
+
+    sid = ff.build_plan(form, confirmed, {})["session_id"]
+    assert ff.current_verification(sid) == ""  # a fresh plan carries no verification event
+
+    ff.record_verification(sid, [])  # a clean read-back mints one
+    vid_1 = ff.current_verification(sid)
+    assert vid_1
+
+    ff.record_verification(sid, [])  # a second clean read-back mints a DIFFERENT one
+    vid_2 = ff.current_verification(sid)
+    assert vid_2 and vid_2 != vid_1
+
+    ff.record_verification(sid, [{"label": "Email", "expected": "x", "actual": "y"}])  # a dirty diff clears it
+    assert ff.current_verification(sid) == "" and ff.is_verified(sid) is False
+
+    ff.record_verification(sid, [])  # clean again → yet another fresh id
+    vid_3 = ff.current_verification(sid)
+    assert vid_3 and vid_3 not in (vid_1, vid_2)
+
+    ff.build_plan(form, confirmed, {})  # a plan WRITE (same id) retires the verification event
+    assert ff.current_verification(sid) == "" and ff.is_verified(sid) is False
 
 
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────
@@ -289,7 +490,8 @@ def test_request_submit_grants_only_on_approve(gate, monkeypatch):
     out = gate.tool.invoke({"session_id": sid})
 
     assert "authorized" in out.lower()
-    assert gate.submitgate.active_grant() == sid  # the approve created the one-shot grant
+    grant = gate.submitgate.active_grant()  # the approve created the one-shot grant…
+    assert grant == (sid, gate.formfill.current_verification(sid))  # …bound to the current verification
     # The card the operator saw carried company, role and the planned field→value table.
     card = seen["payload"]
     assert card["company"] == "Acme" and card["role"] == "ML Engineer" and card["session_id"] == sid

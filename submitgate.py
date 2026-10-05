@@ -7,13 +7,18 @@ unless that consent exists. This module is the enforceable half.
 
 Two pure, host-free pieces:
 
-* **grant state** — an in-process, one-shot, time-limited authorization keyed by the fill
-  ``session_id`` (``formfill.py``). ``careercoach_request_submit`` records one ONLY after an
-  operator approves an interrupt; the submit-gate middleware spends it on the next submit-like
-  browser call — but only while that session is still VERIFIED (the middleware rechecks
-  ``formfill``, so a grant can't authorize a submit after its plan was re-planned or changed) — and
-  nothing else creates one. It lives in memory on purpose: an authorization to click submit should
-  not survive a restart, a checkpoint, or a copy to another turn.
+* **grant state** — an in-process, one-shot, time-limited authorization bound to a
+  ``(session_id, verification_id)`` PAIR: the fill session (``formfill.py``) plus the specific
+  read-back event (``formfill.current_verification``) the operator approved. ``careercoach_request_submit``
+  records one ONLY after an operator approves an interrupt; the submit-gate middleware spends it on
+  the next submit-like browser call — but only while that session's CURRENT verification is still the
+  exact one granted (the middleware rechecks ``formfill``, so a grant can't authorize a submit after
+  its plan was re-planned, re-verified, or displaced) — and nothing else creates one. Binding to the
+  verification_id, not the session id alone, is what makes a grant exclusive to ONE verification: two
+  forms can collide on a single session id, but each clean read-back mints its own fresh
+  verification_id, so a grant for form A can never be spent on a colliding form B. It lives in memory
+  on purpose: an authorization to click submit should not survive a restart, a checkpoint, or a copy
+  to another turn.
 * **submit detection** — ``is_submit_like(tool_name, args)`` recognises the browser calls that
   would send an application (a submit/finish click, an Enter press, a ``.submit()`` eval), so the
   middleware knows which calls to gate. It does NOT gate a job board's "Apply" / "Apply now" button
@@ -39,15 +44,17 @@ __all__ = ["GRANT_TTL_S", "grant", "consume", "active_grant", "clear", "is_submi
 GRANT_TTL_S = 120
 
 _lock = threading.Lock()
-# session_id -> monotonic expiry deadline. At most one grant is ever live (``grant`` supersedes any
-# prior one). Keying it by session lets ``consume`` / ``active_grant`` NAME the authorized session,
-# and lets a later approval for a different session supersede an earlier one. It does NOT, on its
-# own, bind a particular browser click to a session: a ``browser_click`` carries no session id, so
-# the middleware can only spend the single live grant on the next submit-like call. The binding to a
-# specific fill plan is enforced one level up, in the middleware, which spends a grant ONLY while
-# ``formfill`` still reports that session VERIFIED — so a grant can't survive a re-plan (which resets
-# verification) to authorize a submit against a changed plan. See ``_register_submit_middleware``.
-_grants: dict[str, float] = {}
+# session_id -> (verification_id, monotonic expiry deadline). At most one grant is ever live
+# (``grant`` supersedes any prior one). Each grant names BOTH the authorized session and the specific
+# read-back event (``verification_id``) the operator approved, and a later approval supersedes an
+# earlier one. It does NOT, on its own, bind a particular browser click to a session: a
+# ``browser_click`` carries no session id, so the middleware can only spend the single live grant on
+# the next submit-like call. The binding to a specific verified plan is enforced one level up, in the
+# middleware, which spends a grant ONLY while ``formfill.current_verification(session_id)`` still
+# equals the granted ``verification_id`` — so a grant can't survive a re-plan (which clears the id),
+# a re-verification (which mints a NEW id), or a colliding form B's read-back (also a new id) to
+# authorize a submit against anything but the one event approved. See ``_register_submit_middleware``.
+_grants: dict[str, tuple[str, float]] = {}
 
 
 def _now() -> float:
@@ -57,47 +64,59 @@ def _now() -> float:
 
 def _prune(now: float) -> None:
     """Drop every expired grant (caller holds ``_lock``)."""
-    for sid in [s for s, deadline in _grants.items() if deadline <= now]:
+    for sid in [s for s, (_vid, deadline) in _grants.items() if deadline <= now]:
         _grants.pop(sid, None)
 
 
-def grant(session_id: str, ttl_s: int = GRANT_TTL_S) -> None:
-    """Record a ONE-SHOT, time-limited grant for ``session_id`` (a ``formfill`` fill session).
+def grant(session_id: str, verification_id: str, ttl_s: int = GRANT_TTL_S) -> None:
+    """Record a ONE-SHOT, time-limited grant for the ``(session_id, verification_id)`` PAIR.
 
-    The next submit-like tool call consumes it (``consume``); it expires ``ttl_s`` seconds from
-    now even if never used. A fresh grant supersedes any earlier one, so authorizations can't
-    accumulate. Only ``careercoach_request_submit``'s approved-interrupt path calls this — nothing
-    else in the plugin does."""
+    ``session_id`` is a ``formfill`` fill session; ``verification_id`` is the token that session's
+    clean read-back minted (``formfill.current_verification``) — together they name the ONE
+    verification event the operator approved. The next submit-like tool call consumes it
+    (``consume``), but only on an EXACT pair match; it expires ``ttl_s`` seconds from now even if
+    never used. A fresh grant supersedes any earlier one, so authorizations can't accumulate. Only
+    ``careercoach_request_submit``'s approved-interrupt path calls this — nothing else in the plugin
+    does.
+
+    Both halves must be non-empty: a session with no current verification can't be granted, so there
+    is never a grant that a mere session-id collision could satisfy."""
     sid = str(session_id or "").strip()
-    if not sid:
+    vid = str(verification_id or "").strip()
+    if not sid or not vid:
         return
     with _lock:
         _grants.clear()  # one live grant at a time
-        _grants[sid] = _now() + max(0, int(ttl_s))
+        _grants[sid] = (vid, _now() + max(0, int(ttl_s)))
 
 
-def consume(session_id: str) -> bool:
-    """Spend the grant for ``session_id``: ``True`` if a live (unexpired) grant existed and is now
-    gone, else ``False``. One-shot — a second call for the same session returns ``False``."""
+def consume(session_id: str, verification_id: str) -> bool:
+    """Spend the grant for the ``(session_id, verification_id)`` pair: ``True`` if a live (unexpired)
+    grant for that EXACT pair existed and is now gone, else ``False``. One-shot — a second call for
+    the same pair returns ``False`` — and a mismatch on EITHER half (wrong session, or the right
+    session but a different/empty verification) returns ``False`` without spending anything, so a
+    grant for one verification is never consumed by another."""
     sid = str(session_id or "").strip()
+    vid = str(verification_id or "").strip()
     with _lock:
         now = _now()
         _prune(now)
-        deadline = _grants.get(sid)
-        if deadline is not None and deadline > now:
+        entry = _grants.get(sid)
+        if entry is not None and vid and entry[0] == vid and entry[1] > now:
             _grants.pop(sid, None)
             return True
         return False
 
 
-def active_grant() -> str | None:
-    """The ``session_id`` of the live (unexpired) grant, or ``None``. Prunes expired grants."""
+def active_grant() -> tuple[str, str] | None:
+    """The ``(session_id, verification_id)`` of the live (unexpired) grant, or ``None``. Prunes
+    expired grants."""
     with _lock:
         now = _now()
         _prune(now)
-        for sid, deadline in _grants.items():
+        for sid, (vid, deadline) in _grants.items():
             if deadline > now:
-                return sid
+                return (sid, vid)
         return None
 
 

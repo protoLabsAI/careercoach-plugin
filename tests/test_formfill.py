@@ -259,6 +259,123 @@ def test_rebuilding_a_plan_resets_verification(formfill):
     assert rec["last_diff"] is None and rec["verified_at"] == "" and rec["created"] == created
 
 
+# ── verification is EXCLUSIVE to the newest plan / read-back ────────────────────────────────
+def test_planning_a_different_form_clears_a_prior_sessions_verification(formfill):
+    # The bd-4t17 hole: a grant for form A must not survive planning form B. Verification is
+    # exclusive to the newest plan, so planning B (different rows → different session id) strips
+    # A's verified flag in the same write, even though A was never re-planned or read back.
+    form_a = [field("Email", "email", name="email", required=True)]
+    plan_a = formfill.build_plan(form_a, {"email": "ada@example.com"})
+    sid_a = plan_a["session_id"]
+    formfill.record_verification(sid_a, [])  # A is now verified
+    assert formfill.is_verified(sid_a) is True
+
+    form_b = [field("Phone", "tel", name="phone", required=True)]
+    plan_b = formfill.build_plan(form_b, {"phone_number": "555-123-4567"})
+    sid_b = plan_b["session_id"]
+    assert sid_b != sid_a, "a different form must hash to a different session id"
+
+    assert formfill.is_verified(sid_a) is False, "planning B revoked A's verification"
+    assert formfill.is_verified(sid_b) is False, "a freshly planned B is unverified"
+    # A's last read-back result is untouched — it just no longer authorizes a submit.
+    assert formfill.load_session(sid_a)["last_diff"] == []
+
+
+def test_verifying_b_leaves_a_unverified(formfill):
+    # Verifying form B marks B verified and keeps A false — the two can never both be verified.
+    plan_a = formfill.build_plan([field("Email", "email", name="email", required=True)], {"email": "ada@example.com"})
+    sid_a = plan_a["session_id"]
+    plan_b = formfill.build_plan([field("Phone", "tel", name="phone", required=True)], {"phone_number": "555-0100"})
+    sid_b = plan_b["session_id"]
+
+    formfill.record_verification(sid_b, [])
+    assert formfill.is_verified(sid_b) is True
+    assert formfill.is_verified(sid_a) is False
+
+
+def test_at_most_one_session_is_verified_after_any_sequence(formfill):
+    def verified_count():
+        return sum(1 for rec in formfill.load_sessions_checked()[0].values() if rec.get("verified"))
+
+    forms = {
+        "a": [field("Email", "email", name="email", required=True)],
+        "b": [field("Phone", "tel", name="phone", required=True)],
+        "c": [field("LinkedIn Profile", "text", name="linkedin")],
+    }
+    sids = {k: formfill.build_plan(f, {}, {f[0]["label"]: "x"})["session_id"] for k, f in forms.items()}
+    assert len(set(sids.values())) == 3  # three distinct sessions
+
+    # A sequence of plans and verifications: after every step, never more than one is verified.
+    formfill.record_verification(sids["a"], [])
+    assert verified_count() == 1 and formfill.is_verified(sids["a"])
+
+    formfill.record_verification(sids["b"], [])
+    assert verified_count() == 1 and formfill.is_verified(sids["b"]) and not formfill.is_verified(sids["a"])
+
+    formfill.build_plan(forms["c"], {}, {forms["c"][0]["label"]: "x"})  # re-planning C unverifies everything
+    assert verified_count() == 0
+
+    formfill.record_verification(sids["c"], [])
+    formfill.record_verification(sids["c"], [{"label": "x", "expected": "y", "actual": "z"}])  # a mismatch
+    assert verified_count() == 0  # a non-empty diff unverifies C and touches nothing else
+
+
+def test_a_different_application_with_identical_fields_gets_a_distinct_session(formfill):
+    # The bd-4t17 COLLISION: form B has the SAME fields and answers as the approved form A but is a
+    # DIFFERENT application. The session id folds in the operator-facing company/role, so B (different
+    # company, or different role) never collides onto A's id — verifying B clears A instead of reviving
+    # it. If the id were the rows hash alone, A and B would share a slot and a clean read-back of B
+    # would re-verify A, letting A's live grant through on a form the operator never saw.
+    rows = [field("Email", "email", name="email", required=True)]
+    confirmed = {"email": "ada@example.com"}
+    sid_a = formfill.build_plan(rows, confirmed, company="Acme", role="ML Engineer")["session_id"]
+    sid_company = formfill.build_plan(rows, confirmed, company="Globex", role="ML Engineer")["session_id"]
+    sid_role = formfill.build_plan(rows, confirmed, company="Acme", role="Staff Engineer")["session_id"]
+    assert len({sid_a, sid_company, sid_role}) == 3  # same fields/answers, three distinct applications
+
+    formfill.record_verification(sid_a, [])
+    assert formfill.is_verified(sid_a) is True
+    # Reading back the different-company form must NOT re-verify A; it clears A and verifies only itself.
+    formfill.record_verification(sid_company, [])
+    assert formfill.is_verified(sid_company) is True
+    assert formfill.is_verified(sid_a) is False
+
+
+def test_blank_identity_postings_with_identical_fields_get_distinct_sessions(formfill):
+    # The bd-ywmm.4 residue the review caught: careercoach_prepare_application defaults company and
+    # role to "" but always has the posting URL in hand. If the id hashed only rows+company+role, two
+    # DIFFERENT postings with identical questions and blank company/role would collide onto one slot,
+    # and a clean read-back of B would re-verify A — letting A's live grant through on a form the
+    # operator never saw. Folding the posting into the id keeps them distinct even with blank identity.
+    rows = [field("Email", "email", name="email", required=True)]
+    confirmed = {"email": "ada@example.com"}
+    sid_a = formfill.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/acme/jobs/1")["session_id"]
+    sid_b = formfill.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/globex/jobs/2")["session_id"]
+    assert sid_a != sid_b, "same rows + blank company/role but a different posting must not collide"
+
+    formfill.record_verification(sid_a, [])
+    assert formfill.is_verified(sid_a) is True
+    # A clean read-back of the OTHER posting must not revive A: it clears A and verifies only itself.
+    formfill.record_verification(sid_b, [])
+    assert formfill.is_verified(sid_b) is True
+    assert formfill.is_verified(sid_a) is False
+
+
+def test_re_planning_the_same_application_keeps_its_id(formfill):
+    # The flip side of the collision fix: re-planning the SAME application (same company, role and
+    # rows) keeps the id, so _save_session resets exactly that session's verification — the existing
+    # re-plan-resets-verification guard still holds once company/role are part of the id.
+    rows = [field("Email", "email", name="email", required=True)]
+    first = formfill.build_plan(rows, {"email": "ada@example.com"}, company="Acme", role="ML Engineer")
+    sid = first["session_id"]
+    formfill.record_verification(sid, [])
+    assert formfill.is_verified(sid) is True
+
+    again = formfill.build_plan(rows, {"email": "ada@example.com"}, company="Acme", role="ML Engineer")
+    assert again["session_id"] == sid  # identical application → same id
+    assert formfill.is_verified(sid) is False  # and its verification was reset by the re-plan
+
+
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_formfill_has_no_host_imports():
     from pathlib import Path
