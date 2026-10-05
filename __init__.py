@@ -49,6 +49,7 @@ def register(registry) -> None:
     _register_tracker_tools(registry)
     _register_jobsearch_tool(registry, cfg)
     _register_packet_tools(registry, cfg)
+    _register_answers_tools(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_profile_middleware(registry)
@@ -57,8 +58,8 @@ def register(registry) -> None:
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
-        "[careercoach] registered: tracker + job-search + packet/profile tools, rubric knobs, "
-        "crew, profile injection, dashboard, watch"
+        "[careercoach] registered: tracker + job-search + packet/profile + standard-answers tools, "
+        "rubric knobs, crew, profile injection, dashboard, watch"
     )
 
 
@@ -555,6 +556,125 @@ def _register_packet_tools(registry, cfg) -> None:
     )
 
 
+# ── agent tools: saved standard application answers (confirm once, reuse confirmed) ─
+# The confirm-once ATS fields. Pure logic lives in answers.py (host-free, tested); these tools are
+# the thin agent surface. Form filling draws ONLY from the confirmed set — an improvised answer is
+# exactly the failure this replaces, so a draft is shown to the operator and confirmed before use.
+def _unknown_answer_key(key: str) -> str:
+    from . import answers
+
+    return f"Unknown answer key {key!r}. Valid keys: {', '.join(answers.STANDARD_KEYS)}."
+
+
+def _register_answers_tools(registry) -> None:
+    from . import answers, profile
+
+    @tool
+    def careercoach_get_answers() -> str:
+        """List the operator's saved standard application answers — the fields every ATS form asks
+        for (email, phone, work authorization, sponsorship, LinkedIn, voluntary self-ID, pronouns) —
+        each with its value and whether it is CONFIRMED or still a DRAFT, plus which keys are
+        missing. Only confirmed answers may be used to fill a form; a draft must be shown to the
+        operator and confirmed with careercoach_confirm_answers first. On first use, if nothing is
+        stored yet, this seeds drafts from the verified profile (and defaults the self-ID fields to
+        "Decline to self-identify") for the operator to review — it never records anything as
+        confirmed on their behalf."""
+        try:
+            stored, err = answers.load_checked()
+            if err:
+                # An unreadable file is reported, never seeded or written over — a seed now would
+                # replace everything in it (see answers._load_strict).
+                path = answers._path()
+                out = [
+                    f"Your saved standard answers file is unreadable ({err}): {path}",
+                    "Nothing was changed, and nothing it holds can fill a form until it's fixed.",
+                ]
+                backup = profile.backup_path(path)
+                if backup.is_file():
+                    out.append(f"The version before the coach's last change is {backup}, if fixing the file is harder.")
+                return "\n".join(out)
+            if not stored:
+                answers.seed_from_profile(profile.load_profile())
+                stored, _ = answers.load_checked()
+            lines = [
+                "Standard application answers — ONLY confirmed values may fill a form; a draft must "
+                "be shown to the operator and confirmed first.",
+                "",
+            ]
+            missing: list[str] = []
+            for key, desc in answers.STANDARD_KEYS.items():
+                entry = stored.get(key)
+                if entry and entry.get("value"):
+                    tag = (
+                        "confirmed" if entry.get("status") == answers.CONFIRMED else "DRAFT — not used until confirmed"
+                    )
+                    lines.append(f"  {key}: {entry['value']}  [{tag}] — {desc}")
+                else:
+                    missing.append(key)
+            n = len(answers.confirmed())
+            total = len(answers.STANDARD_KEYS)
+            lines += ["", f"{n}/{total} confirmed."]
+            if missing:
+                lines.append("Missing (never recorded): " + ", ".join(missing))
+            lines.append(
+                "Propose a value with careercoach_propose_answer; after showing the operator the exact "
+                "values and getting their explicit OK, confirm them with careercoach_confirm_answers."
+            )
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Could not read your standard answers: {e}"
+
+    @tool
+    def careercoach_propose_answer(key: str, value: str) -> str:
+        """Save a DRAFT value for one standard application answer (e.g. key="phone_number",
+        value="555-123-4567", or key="authorized_us", value="yes"). A draft is never used to fill a
+        form until the operator confirms it with careercoach_confirm_answers. Changing a value that
+        was already confirmed sends it back to draft, so it must be confirmed again. If `key` isn't
+        one of the valid keys, this returns an error listing them (see careercoach_get_answers)."""
+        key = (key or "").strip()
+        try:
+            answers.propose(key, value)
+        except KeyError:
+            return _unknown_answer_key(key)
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Not saved: {e}"
+        return (
+            f"Saved {key} as a draft: {(value or '').strip()!r}. It will NOT be used to fill a form "
+            "until the operator confirms it with careercoach_confirm_answers."
+        )
+
+    @tool
+    def careercoach_confirm_answers(keys: str) -> str:
+        """Promote the listed draft answers to CONFIRMED — `keys` is a comma-separated list, e.g.
+        "phone_number, authorized_us, linkedin_url". Call this ONLY after you have shown the operator
+        the exact values (careercoach_get_answers) and received their explicit confirmation in this
+        conversation; never confirm on their behalf. Confirmed values are the only ones ever used to
+        fill a form. If any key isn't a valid key, this returns an error listing the valid keys."""
+        requested = [k.strip() for k in (keys or "").split(",") if k.strip()]
+        if not requested:
+            return "No keys given. Pass a comma-separated list of the keys the operator confirmed."
+        unknown = [k for k in requested if k not in answers.STANDARD_KEYS]
+        if unknown:
+            return _unknown_answer_key(", ".join(unknown))
+        try:
+            promoted = answers.confirm(requested)
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Not confirmed: {e}"
+        skipped = [k for k in requested if k not in promoted]
+        out: list[str] = []
+        if promoted:
+            out.append("Confirmed: " + ", ".join(promoted) + ". These may now be used to fill a form.")
+        if skipped:
+            out.append(
+                "Nothing to confirm for: "
+                + ", ".join(skipped)
+                + " — no value is stored yet; propose one first with careercoach_propose_answer."
+            )
+        return "\n".join(out) or "Nothing confirmed."
+
+    registry.register_tools([careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers])
+
+
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────
 def _register_rubric_knobs(registry) -> None:
     """Expose the four rubric weights as agent-tunable knobs + named presets, so the fit
@@ -708,6 +828,35 @@ def _stash_for_prompt_capture(text: str) -> None:
         log.debug("[careercoach] prompt-capture stash failed", exc_info=True)
 
 
+def _standard_answers_note() -> str:
+    """One always-on line for the profile block: how many standard application answers are confirmed,
+    and the rule that unconfirmed ones never fill a form. Kept to a single line so always-on context
+    stays small; "" on any failure, so it can never break a turn."""
+    try:
+        from . import answers
+
+        total = len(answers.STANDARD_KEYS)
+        n = len(answers.confirmed())
+        return f"{n}/{total} standard answers confirmed; unconfirmed answers are never used to fill a form."
+    except Exception:  # noqa: BLE001 — context injection must never break a turn
+        return ""
+
+
+def _with_standard_answers(block: str) -> str:
+    """Splice the standard-answers note into the ``<operator_profile>`` block, just before its
+    closing tag, so it rides along with the always-on profile context (recomputed per call, so a
+    freshly confirmed answer shows without re-reading the whole profile)."""
+    note = _standard_answers_note()
+    if not block or not note:
+        return block
+    closing = "</operator_profile>"
+    stripped = block.rstrip()
+    if stripped.endswith(closing):
+        head = stripped[: -len(closing)].rstrip("\n")
+        return f"{head}\n\n{note}\n{closing}"
+    return f"{block}\n{note}"
+
+
 def _register_profile_middleware(registry) -> None:
     """Put the operator's profile in front of the model on every call.
 
@@ -773,6 +922,7 @@ def _register_profile_middleware(registry) -> None:
             block = self._current()
             if not block:
                 return request  # nothing known yet; /setup-coach owns the cold start
+            block = _with_standard_answers(block)
             msgs = list(getattr(request, "messages", None) or [])
             msgs.append(_context_frame(block))
             _stash_for_prompt_capture(block)
