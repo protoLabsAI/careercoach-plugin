@@ -87,8 +87,10 @@ ASHBY_PLAN_NOTE = (
 _RESUME_FIELD = re.compile(r"r[eé]sum[eé]|\bcv\b|curriculum\s+vitae")
 # The cover-letter file field — matched by label/name/id the same way. Greenhouse labels BOTH the
 # résumé and the cover-letter file inputs "Attach"; only the name/id (``resume`` vs ``cover_letter``)
-# tells them apart. This field must NEVER receive the résumé PDF (see ``_is_resume_value``): it takes
-# an explicit cover-letter answer or nothing at all.
+# tells them apart. A cover-letter-ONLY field must NEVER receive the résumé PDF (see
+# ``_is_resume_value``): it takes an explicit cover-letter answer or nothing at all. A COMBINED field
+# that matches BOTH this and ``_RESUME_FIELD`` (e.g. "Resume/Cover Letter") is a résumé field too and
+# does accept the résumé — the drop-the-résumé guard skips it.
 _COVER_LETTER_FIELD = re.compile(r"cover[\s_-]?letter")
 
 
@@ -230,7 +232,9 @@ def _is_resume_field(field: dict) -> bool:
 def _is_cover_letter_field(field: dict) -> bool:
     """Whether a file field is the cover letter (matched on its label/name/id). Greenhouse labels both
     the résumé and the cover-letter inputs "Attach", so the label alone can't tell them apart — the
-    name/id does. A cover-letter field never receives the résumé PDF (see ``_is_resume_value``)."""
+    name/id does. A cover-letter-ONLY field never receives the résumé PDF (see ``_is_resume_value``);
+    a COMBINED field also matching ``_is_resume_field`` ("Resume/Cover Letter") is excepted from that
+    drop, because it is a résumé field too and the résumé is a valid document for it."""
     return _COVER_LETTER_FIELD.search(_hay(field)) is not None
 
 
@@ -315,8 +319,10 @@ def build_plan(
       ``action`` is ``fill`` / ``select`` / ``upload`` by field kind; a ``select`` value must match
       one of the field's options (exact, then case-insensitive), else the field goes to ``unmapped``
       with its options — never a fuzzy pick. A Yes/No button group reads as ``select`` and keeps its
-      exact options. A cover-letter file field NEVER receives the résumé PDF: a résumé-looking value
-      routed to it is dropped, and the field takes only an explicit cover-letter answer.
+      exact options. A cover-letter-ONLY file field NEVER receives the résumé PDF: a résumé-looking
+      value routed to it is dropped, and the field takes only an explicit cover-letter answer. A
+      COMBINED field also matching ``_is_resume_field`` (e.g. "Resume/Cover Letter") is excepted —
+      it is a résumé field too, so the résumé routing (Ashby auto-upload / Greenhouse ask) applies.
     * the phone COUNTRY row is ordered before the phone NUMBER row.
     * a REQUIRED field with no known value goes to ``unmapped`` (ask the operator). An OPTIONAL one
       with no value becomes a ``skip`` row.
@@ -397,9 +403,18 @@ def build_plan(
                 else:
                     value = extra_norm[nlabel].strip()
 
-        # A cover-letter file field NEVER receives the résumé PDF (or its placeholder): that is the
-        # wrong document here, so the value is dropped and the field is treated as having no answer.
-        if action == UPLOAD and _is_cover_letter_field(field) and value is not None and _is_resume_value(value):
+        # A cover-letter-ONLY file field NEVER receives the résumé PDF (or its placeholder): that is
+        # the wrong document, so the value is dropped and the field is treated as having no answer.
+        # A COMBINED field (its label/name/id matches BOTH ``cover letter`` AND ``_is_resume_field`` —
+        # e.g. "Resume/Cover Letter") is a résumé field too and legitimately takes the résumé, so the
+        # guard skips it; the résumé routing below (Ashby auto-upload / Greenhouse ask) then applies.
+        if (
+            action == UPLOAD
+            and _is_cover_letter_field(field)
+            and not _is_resume_field(field)
+            and value is not None
+            and _is_resume_value(value)
+        ):
             value = None
 
         if value is None:

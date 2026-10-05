@@ -256,6 +256,47 @@ def test_a_greenhouse_resume_file_with_no_answer_is_asked_about_not_auto_filled(
     assert um["required"] is True and "résumé" in um["reason"] and "careercoach_render_resume" in um["reason"]
 
 
+def combined_resume_cover_field(*, required=True):
+    """A SINGLE file field whose label/name/id match BOTH the résumé and the cover-letter patterns —
+    the "Resume/Cover Letter" combined input some boards render. The drop-the-résumé guard must NOT
+    fire on it: it is a résumé field too, so the résumé is a valid document for it."""
+    return [field("Resume/Cover Letter", "file", name="resume_cover", id="resume_cover", required=required)]
+
+
+def test_a_combined_resume_cover_letter_field_accepts_the_resume(formfill):
+    # Regression: a combined field matches both patterns, so the cover-letter guard used to drop the
+    # résumé and leave it unfillable. A supplied résumé path must upload to it (keyed by id).
+    plan = formfill.build_plan(combined_resume_cover_field(), {}, {"resume_cover": "resume-gitlab.pdf"})
+    uploads = [r for r in plan["rows"] if r["action"] == "upload"]
+    assert len(uploads) == 1, "the combined field uploads the résumé — it is not dropped"
+    assert uploads[0]["target"] == "#resume_cover" and uploads[0]["value"] == "resume-gitlab.pdf"
+    assert not any(u.get("target") == "#resume_cover" for u in plan["unmapped"])
+
+
+def test_a_combined_field_with_no_answer_is_asked_about_as_a_resume_not_dropped(formfill):
+    # With no supplied path the combined field is treated as a résumé on the Greenhouse path: asked
+    # about (render the PDF), NOT silently dropped to a blank skip row by the cover-letter guard.
+    plan = formfill.build_plan(combined_resume_cover_field(), {})
+    assert plan["rows"] == [], "the combined résumé field is not left as a blank skip"
+    um = next(u for u in plan["unmapped"] if u["target"] == "#resume_cover")
+    assert um["required"] is True and "careercoach_render_resume" in um["reason"]
+
+
+def test_an_optional_combined_field_on_ashby_still_accepts_a_supplied_resume(formfill):
+    # Regression (the other half of the guard bug): an OPTIONAL combined field on Ashby had its
+    # supplied résumé dropped and silently became a skip row. The résumé must upload instead.
+    plan = formfill.build_plan(
+        combined_resume_cover_field(required=False),
+        {},
+        {"resume_cover": "resume-acme.pdf"},
+        ats="ashby",
+        resume_ready=True,
+    )
+    uploads = [r for r in plan["rows"] if r["action"] == "upload"]
+    assert len(uploads) == 1 and uploads[0]["value"] == "resume-acme.pdf"
+    assert not any(r["action"] == "skip" and r.get("target") == "#resume_cover" for r in plan["rows"])
+
+
 # ── diff: plan vs. the form read back ─────────────────────────────────────────────────────
 def test_diff_matches_same_label_file_fields_by_identity(formfill):
     # Both "Attach" fields read back: the résumé landed on #resume, the (optional) cover letter is
