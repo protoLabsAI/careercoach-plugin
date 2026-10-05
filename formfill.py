@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 from datetime import UTC, datetime
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 
@@ -267,10 +268,13 @@ def build_plan(
     system-specific rules. ``company`` / ``role`` / ``posting`` are the identity of THIS
     application — the operator-facing company and role, plus the posting itself (its URL, when the
     caller has one). All three are folded into the ``session_id`` (see ``_session_id``) so two
-    DIFFERENT applications with identical fields and answers never share an id — a submit grant
-    approved for one can therefore never be spent on the other (bd-4t17 / bd-ywmm.4). ``posting`` is
-    what keeps two blank-identity postings (company and role both empty, as from
-    ``careercoach_prepare_application``) distinct when only their URL differs. For each field:
+    different applications USUALLY get distinct ids. This is a convenience, NOT the submit-safety
+    guarantee: ids can still collide (e.g. two blank-identity plans through
+    ``careercoach_plan_fill``, which passes no posting). Submit safety does not rest on id
+    uniqueness — a submit grant is bound to one verification EVENT (``verification_id``, see
+    ``record_verification`` / ``current_verification``), so even when B collides onto A's id, B's
+    read-back mints a new verification_id and A's grant can no longer authorize a submit
+    (bd-4t17 / bd-ywmm.4). For each field:
 
     * a row ``{label, kind, key, value, action}`` is emitted when a value is known — from
       ``confirmed`` (via ``classify``) or from ``extra`` by label. ``action`` is ``fill`` /
@@ -498,19 +502,18 @@ def _rows_hash(rows: list[dict]) -> str:
 def _session_id(rows: list[dict], company: str = "", role: str = "", posting: str = "") -> str:
     """The session id for a plan: a short hash of the plan rows AND the application's identity — the
     operator-facing company + role and, when known, the POSTING itself (its URL / board+job id),
-    all normalized. Two DIFFERENT applications never share an id: a different company, a different
-    role, OR a different posting each yields a distinct id, even when the fields and answers are
-    byte-for-byte identical — so a verification or submit grant approved for one application can
-    never be carried onto another (bd-4t17 / bd-ywmm.4: the operator approves "submit <role> at
-    <company> on this posting with these answers"; anything else is a different approval).
+    all normalized. Folding the identity in keeps two different applications on distinct ids in the
+    common case — a different company, role, or posting each yields a different id even when the
+    fields and answers are byte-for-byte identical — which is handy for labelling and lets a re-plan
+    of the SAME application (same company, role, posting and rows) keep its id, so ``_save_session``
+    resets exactly that one session's verification on a re-plan.
 
-    The posting is what closes the blank-identity gap: ``careercoach_prepare_application`` defaults
-    company and role to ``""`` but always has the posting URL in hand, so two different postings with
-    identical questions and no company/role would otherwise hash to the SAME id and share one
-    verification slot — a clean read-back of B re-verifying A. Folding the posting in keeps them
-    distinct regardless. Re-planning the SAME application (same company, role, posting and rows)
-    keeps the id, which is what lets ``_save_session`` reset exactly that one session's verification
-    on a re-plan."""
+    But this is NOT where submit safety lives, and ids CAN still collide — most plainly when
+    ``careercoach_plan_fill`` is called with blank company/role and no posting for two forms that
+    read back identically. The guarantee that a grant approved for form A can't authorize a submit on
+    a colliding form B is carried by the per-read-back ``verification_id`` (``record_verification`` /
+    ``current_verification``), not by this id being unique: even on a collision, B's clean read-back
+    mints a brand-new verification_id that A's grant does not hold (bd-4t17 / bd-ywmm.4)."""
     payload = json.dumps(
         {"rows": rows, "company": _norm(company), "role": _norm(role), "posting": _norm(posting)},
         sort_keys=True,
@@ -570,32 +573,39 @@ def _clear_other_verifications(sessions: dict, keep: str) -> None:
     """Mark every stored session EXCEPT ``keep`` unverified (caller holds the ``fill_sessions``
     lock). Verification is EXCLUSIVE to the newest plan/read-back — at most one session is verified
     at a time — so writing or verifying one session strips the ``verified`` flag off all the others
-    in the SAME atomic write. Only ``verified`` / ``verified_at`` drop; each session's ``last_diff``
-    is left as is (its last read-back result stands, it just no longer authorizes a submit)."""
+    in the SAME atomic write. ``verified`` / ``verified_at`` drop and ``verification_id`` is cleared
+    to "" (so no stale verification event can match a grant); each session's ``last_diff`` is left as
+    is (its last read-back result stands, it just no longer authorizes a submit)."""
     for sid, rec in sessions.items():
         if sid == keep or not isinstance(rec, dict):
             continue
         rec["verified"] = False
         rec["verified_at"] = ""
+        rec["verification_id"] = ""
 
 
 def _save_session(session_id: str, record: dict) -> None:
     """Persist one planning session. A (re)built plan ALWAYS starts UNVERIFIED: ``verified``
     describes one fill-then-read-back cycle, so writing a plan — even an identical one whose rows
-    hash to the same id — cannot carry a prior ``verified`` flag forward. The browser must be filled
-    and read back (``verify_fill``) again before the plan counts as verified; this is what stops a
-    re-plan from arriving already-verified and being submitted without a read-back. Only ``created``
-    survives a rewrite.
+    hash to the same id — cannot carry a prior ``verified`` flag forward. It also clears the
+    ``verification_id`` to "", retiring whatever verification event a prior clean read-back had
+    stamped (see ``record_verification``): a submit grant binds to that exact id, so a plan write
+    makes any grant for this session inert even before a new read-back happens. The browser must be
+    filled and read back (``verify_fill``) again before the plan counts as verified; this is what
+    stops a re-plan from arriving already-verified and being submitted without a read-back. Only
+    ``created`` survives a rewrite.
 
-    Verification is EXCLUSIVE to the newest plan: writing session S also clears ``verified`` on every
-    OTHER stored session in the same atomic write, so at most one session is ever verified — always
-    the latest one planned or read back. A live submit grant for form A therefore stops passing
-    ``is_verified(A)`` the moment any other form is planned, which is what keeps a grant for A from
-    authorizing a submit on a form the operator never saw. This only bites because a different
-    application gets a different session id: the id folds in the application's identity — company,
-    role AND the posting URL (see ``_session_id``) — so planning form B is a genuinely OTHER session
-    even when B's fields and answers are identical to A's, and even when both were prepared with no
-    company/role (the posting URL still differs). It does not silently reuse A's slot and re-verify it."""
+    Verification is EXCLUSIVE to the newest plan: writing session S also clears ``verified`` /
+    ``verification_id`` on every OTHER stored session in the same atomic write, so at most one session
+    is ever verified — always the latest one planned or read back.
+
+    These two facts are what close the bd-4t17 hole, and neither depends on session ids being unique
+    per application. A submit grant is bound to the ``(session_id, verification_id)`` pair current
+    when the operator approved. Planning any form — including a form B that COLLIDES onto A's session
+    id — writes a plan here, which clears that session's ``verification_id`` (and, until B is read
+    back, leaves it ``""``). A later clean read-back of B mints a BRAND-NEW ``verification_id``
+    (``secrets.token_hex``), never the one A's grant holds. So an id collision can no longer authorize
+    a submit: the grant's verification_id simply won't match the session's current one."""
     with _store._locked("fill_sessions"):
         sessions = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         prior = sessions.get(session_id, {})
@@ -606,6 +616,7 @@ def _save_session(session_id: str, record: dict) -> None:
             "verified": False,
             "last_diff": None,
             "verified_at": "",
+            "verification_id": "",  # a plan write retires any prior verification event / grant
         }
         _clear_other_verifications(sessions, session_id)  # at most one verified session, ever
         sessions[session_id] = merged
@@ -632,12 +643,19 @@ def record_verification(session_id: str, mismatches: list[dict]) -> dict:
     """Store the latest diff for a session plus a hash of its plan rows, and mark it ``verified``
     only when the diff is empty. Returns the updated record (an empty one if the session is gone).
 
+    An EMPTY diff stamps a fresh random ``verification_id`` (``secrets.token_hex(16)``) on the record
+    together with ``verified=True``: that token identifies this ONE read-back event, and a submit
+    grant binds to it. Two clean read-backs of the SAME session therefore get two DIFFERENT
+    verification_ids, so re-verifying a session after a grant was approved makes that grant inert.
+    A NON-EMPTY diff clears ``verification_id`` to "" along with ``verified`` — a failed read-back
+    authorizes nothing.
+
     Verification is EXCLUSIVE to the newest read-back: an empty diff marks THIS session verified and
-    clears ``verified`` on every OTHER stored session in the same atomic write, so at most one session
-    is verified at a time. A non-empty diff leaves the others alone — it only unverifies this one.
-    Because distinct applications get distinct ids (``_session_id`` folds in company/role), reading
-    back form B can never re-verify form A's slot: B is a different session, so verifying it clears
-    A rather than reviving it."""
+    clears ``verified`` / ``verification_id`` on every OTHER stored session in the same atomic write,
+    so at most one session is verified at a time. A non-empty diff leaves the others alone — it only
+    unverifies this one. Reading back a form B can never revive form A's grant: whether B is a
+    distinct session or one that collides onto A's id, B's clean read-back mints its OWN fresh
+    verification_id, which is not the one A's grant holds."""
     verified = not mismatches
     with _store._locked("fill_sessions"):
         sessions = _load_strict()
@@ -648,6 +666,7 @@ def record_verification(session_id: str, mismatches: list[dict]) -> dict:
         rec["rows_hash"] = _rows_hash(rec.get("rows", []))
         rec["verified"] = verified
         rec["verified_at"] = _now_ts() if verified else ""
+        rec["verification_id"] = secrets.token_hex(16) if verified else ""
         if verified:
             _clear_other_verifications(sessions, session_id)  # at most one verified session, ever
         _save(sessions)
@@ -659,10 +678,27 @@ def is_verified(session_id: str) -> bool:
 
     Verification is EXCLUSIVE: at most one session is verified at a time — always the latest one
     planned or read back (see ``_save_session`` / ``record_verification``). So planning or verifying
-    ANY other form flips this session back to ``False``, and a stale submit grant for it goes inert.
-    "Any other form" is enforced by the session id folding in the application's identity — company,
-    role AND the posting URL (``_session_id``): a different application — even one whose fields and
-    answers match, even one prepared with no company/role but a different posting URL — is a different
-    id, so it trips this reset instead of colliding onto the grant's session and keeping it verified."""
+    ANY other form flips this session back to ``False``. This is a coarse signal; the submit gate does
+    NOT rely on it alone, because two forms can collide on one session id. The gate binds to the
+    session's ``verification_id`` (``current_verification``) instead, so an id collision cannot keep a
+    stale grant alive."""
     rec = load_session(session_id)
     return bool(rec and rec.get("verified"))
+
+
+def current_verification(session_id: str) -> str:
+    """The ``verification_id`` of the session's latest clean read-back, or "" when the session is not
+    currently verified (no session, an empty read-back never happened, or a later plan/dirty read-back
+    retired it).
+
+    This is the identity a submit grant is bound to. ``record_verification`` mints a fresh random
+    token on every clean read-back and ``_save_session`` / a dirty diff clear it, so the value names
+    exactly ONE verification event. ``careercoach_request_submit`` reads it before the approval
+    interrupt and grants with that exact token; the submit-gate middleware allows a submit only while
+    this still returns that same non-empty token. A re-plan or a re-verification (including one from a
+    form B that collides onto this session id) changes or clears it, so the old grant stops matching —
+    the guarantee the bd-4t17 hole needed, with no dependence on session ids being unique."""
+    rec = load_session(session_id)
+    if not (rec and rec.get("verified")):
+        return ""
+    return str(rec.get("verification_id") or "")
