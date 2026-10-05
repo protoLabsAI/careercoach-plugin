@@ -265,6 +265,37 @@ def test_middleware_blocks_a_submit_after_a_same_fields_different_company_form(g
     assert gate.submitgate.active_grant() == sid_a  # the inert grant was NOT spent on the blocked click
 
 
+def test_middleware_blocks_a_submit_after_a_same_fields_different_posting_form(gate):
+    # The bd-ywmm.4 residue the review caught: careercoach_prepare_application defaults company/role
+    # to "" but carries the posting URL. Two DIFFERENT postings with identical questions and blank
+    # company/role must NOT collide onto one slot — else a clean read-back of B would re-verify A and
+    # A's live grant would authorize a submit on B. The posting URL is folded into the id, so B is a
+    # genuinely different session: planning it unverifies A (verification is exclusive) and the submit
+    # on B is BLOCKED.
+    ff = gate.formfill
+    rows = [{"label": "Email", "kind": "text", "required": True}]
+    confirmed = {"email": "ada@example.com"}
+
+    sid_a = ff.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/acme/jobs/1")["session_id"]
+    ff.record_verification(sid_a, [])  # A verified and approved
+    gate.submitgate.grant(sid_a)
+    assert gate.submitgate.active_grant() == sid_a and ff.is_verified(sid_a) is True
+
+    # Same fields + answers + blank company/role, DIFFERENT posting → a different application, so a
+    # different id — not a silent reuse of A's slot.
+    sid_b = ff.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/globex/jobs/2")["session_id"]
+    assert sid_b != sid_a, "same rows + blank identity but a different posting must not collide onto A"
+    assert ff.is_verified(sid_a) is False  # planning B revoked A's verification
+    assert ff.is_verified(sid_b) is False  # and a freshly planned B is unverified
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cD"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cD"
+    assert gate.submitgate.active_grant() == sid_a  # the inert grant was NOT spent on the blocked click
+
+
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────
 def test_request_submit_refuses_unverified_session(gate, monkeypatch):
     # A planned-but-not-verified session (no read-back diff recorded yet).

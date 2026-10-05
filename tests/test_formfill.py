@@ -341,6 +341,26 @@ def test_a_different_application_with_identical_fields_gets_a_distinct_session(f
     assert formfill.is_verified(sid_a) is False
 
 
+def test_blank_identity_postings_with_identical_fields_get_distinct_sessions(formfill):
+    # The bd-ywmm.4 residue the review caught: careercoach_prepare_application defaults company and
+    # role to "" but always has the posting URL in hand. If the id hashed only rows+company+role, two
+    # DIFFERENT postings with identical questions and blank company/role would collide onto one slot,
+    # and a clean read-back of B would re-verify A — letting A's live grant through on a form the
+    # operator never saw. Folding the posting into the id keeps them distinct even with blank identity.
+    rows = [field("Email", "email", name="email", required=True)]
+    confirmed = {"email": "ada@example.com"}
+    sid_a = formfill.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/acme/jobs/1")["session_id"]
+    sid_b = formfill.build_plan(rows, confirmed, posting="https://job-boards.greenhouse.io/globex/jobs/2")["session_id"]
+    assert sid_a != sid_b, "same rows + blank company/role but a different posting must not collide"
+
+    formfill.record_verification(sid_a, [])
+    assert formfill.is_verified(sid_a) is True
+    # A clean read-back of the OTHER posting must not revive A: it clears A and verifies only itself.
+    formfill.record_verification(sid_b, [])
+    assert formfill.is_verified(sid_b) is True
+    assert formfill.is_verified(sid_a) is False
+
+
 def test_re_planning_the_same_application_keeps_its_id(formfill):
     # The flip side of the collision fix: re-planning the SAME application (same company, role and
     # rows) keeps the id, so _save_session resets exactly that session's verification — the existing

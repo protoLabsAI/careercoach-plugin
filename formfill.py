@@ -255,17 +255,22 @@ def _order_resume_first(rows: list[dict]) -> list[dict]:
     return rows
 
 
-def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True, company="", role="") -> dict:
+def build_plan(
+    form_fields, confirmed, extra=None, ats=None, resume_ready=True, company="", role="", posting=""
+) -> dict:
     """Plan how to fill a form read by ``browser_form_read``: ``{session_id, rows, unmapped,
     unconfirmed}`` (plus a ``note`` for Ashby), persisted so ``verify_fill`` can diff against it later.
 
     ``confirmed`` is ``answers.confirmed()`` (the only values ever typed, besides ``extra``).
     ``extra`` maps a field LABEL to an operator-supplied answer for a one-off question in this
     session. ``ats`` names the applicant-tracking system (e.g. ``"ashby"``) so the plan can apply
-    system-specific rules. ``company`` / ``role`` are the operator-facing identity of THIS
-    application: they're folded into the ``session_id`` (see ``_session_id``) so two DIFFERENT
-    applications with identical fields and answers never share an id — a submit grant approved for
-    one can therefore never be spent on the other (bd-4t17). For each field:
+    system-specific rules. ``company`` / ``role`` / ``posting`` are the identity of THIS
+    application — the operator-facing company and role, plus the posting itself (its URL, when the
+    caller has one). All three are folded into the ``session_id`` (see ``_session_id``) so two
+    DIFFERENT applications with identical fields and answers never share an id — a submit grant
+    approved for one can therefore never be spent on the other (bd-4t17 / bd-ywmm.4). ``posting`` is
+    what keeps two blank-identity postings (company and role both empty, as from
+    ``careercoach_prepare_application``) distinct when only their URL differs. For each field:
 
     * a row ``{label, kind, key, value, action}`` is emitted when a value is known — from
       ``confirmed`` (via ``classify``) or from ``extra`` by label. ``action`` is ``fill`` /
@@ -383,7 +388,7 @@ def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True, 
     _order_phone(rows)
     if is_ashby:
         _order_resume_first(rows)
-    session_id = _session_id(rows, company, role)
+    session_id = _session_id(rows, company, role, posting)
     plan = {"session_id": session_id, "rows": rows, "unmapped": unmapped, "unconfirmed": unconfirmed}
     if is_ashby:
         plan["note"] = ASHBY_PLAN_NOTE
@@ -485,21 +490,29 @@ def _now_ts() -> str:
 def _rows_hash(rows: list[dict]) -> str:
     """A stable short hash of the plan rows — the fingerprint ``record_verification`` stores so a
     diff is tied to the plan it verified. (The SESSION ID is derived separately, by ``_session_id``,
-    which also folds in the operator-facing company/role.)"""
+    which also folds in the application's identity — company/role and the posting URL.)"""
     payload = json.dumps(rows, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
-def _session_id(rows: list[dict], company: str = "", role: str = "") -> str:
-    """The session id for a plan: a short hash of the plan rows AND the operator-facing identity
-    (company + role, normalized). Two applications with identical fields and answers but a different
-    company OR role get DIFFERENT ids — so a verification or submit grant for one is never carried
-    onto the other (bd-4t17: the operator approves "submit <role> at <company> with these answers";
-    anything else is a different approval). Re-planning the SAME application (same company, role and
-    rows) keeps the id, which is what lets ``_save_session`` reset exactly that one session's
-    verification on a re-plan."""
+def _session_id(rows: list[dict], company: str = "", role: str = "", posting: str = "") -> str:
+    """The session id for a plan: a short hash of the plan rows AND the application's identity — the
+    operator-facing company + role and, when known, the POSTING itself (its URL / board+job id),
+    all normalized. Two DIFFERENT applications never share an id: a different company, a different
+    role, OR a different posting each yields a distinct id, even when the fields and answers are
+    byte-for-byte identical — so a verification or submit grant approved for one application can
+    never be carried onto another (bd-4t17 / bd-ywmm.4: the operator approves "submit <role> at
+    <company> on this posting with these answers"; anything else is a different approval).
+
+    The posting is what closes the blank-identity gap: ``careercoach_prepare_application`` defaults
+    company and role to ``""`` but always has the posting URL in hand, so two different postings with
+    identical questions and no company/role would otherwise hash to the SAME id and share one
+    verification slot — a clean read-back of B re-verifying A. Folding the posting in keeps them
+    distinct regardless. Re-planning the SAME application (same company, role, posting and rows)
+    keeps the id, which is what lets ``_save_session`` reset exactly that one session's verification
+    on a re-plan."""
     payload = json.dumps(
-        {"rows": rows, "company": _norm(company), "role": _norm(role)},
+        {"rows": rows, "company": _norm(company), "role": _norm(role), "posting": _norm(posting)},
         sort_keys=True,
         ensure_ascii=False,
     )
@@ -579,9 +592,10 @@ def _save_session(session_id: str, record: dict) -> None:
     the latest one planned or read back. A live submit grant for form A therefore stops passing
     ``is_verified(A)`` the moment any other form is planned, which is what keeps a grant for A from
     authorizing a submit on a form the operator never saw. This only bites because a different
-    application gets a different session id: the id folds in the operator-facing company/role (see
-    ``_session_id``), so planning form B is a genuinely OTHER session even when B's fields and answers
-    are identical to A's — it does not silently reuse A's slot and re-verify it."""
+    application gets a different session id: the id folds in the application's identity — company,
+    role AND the posting URL (see ``_session_id``) — so planning form B is a genuinely OTHER session
+    even when B's fields and answers are identical to A's, and even when both were prepared with no
+    company/role (the posting URL still differs). It does not silently reuse A's slot and re-verify it."""
     with _store._locked("fill_sessions"):
         sessions = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         prior = sessions.get(session_id, {})
@@ -646,8 +660,9 @@ def is_verified(session_id: str) -> bool:
     Verification is EXCLUSIVE: at most one session is verified at a time — always the latest one
     planned or read back (see ``_save_session`` / ``record_verification``). So planning or verifying
     ANY other form flips this session back to ``False``, and a stale submit grant for it goes inert.
-    "Any other form" is enforced by the session id folding in company/role (``_session_id``): a
-    different application — even one whose fields and answers match — is a different id, so it trips
-    this reset instead of colliding onto the grant's session and keeping it verified."""
+    "Any other form" is enforced by the session id folding in the application's identity — company,
+    role AND the posting URL (``_session_id``): a different application — even one whose fields and
+    answers match, even one prepared with no company/role but a different posting URL — is a different
+    id, so it trips this reset instead of colliding onto the grant's session and keeping it verified."""
     rec = load_session(session_id)
     return bool(rec and rec.get("verified"))
