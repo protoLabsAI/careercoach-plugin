@@ -1,0 +1,1266 @@
+{
+  "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8698330002",
+  "data_compliance": [
+    {
+      "type": "gdpr",
+      "requires_consent": false,
+      "requires_processing_consent": false,
+      "requires_retention_consent": false,
+      "retention_period": null,
+      "demographic_data_consent_applies": false
+    }
+  ],
+  "internal_job_id": 6475727002,
+  "location": {
+    "name": "Remote, Canada; Remote, United States"
+  },
+  "metadata": [
+    {
+      "id": 4595831002,
+      "name": "Quota Coverage Type",
+      "value": "n/a",
+      "value_type": "single_select"
+    }
+  ],
+  "id": 8698330002,
+  "updated_at": "2026-09-29T10:38:50-04:00",
+  "requisition_id": "6801",
+  "title": "Fullstack Engineer (TypeScript), AI Engineering: Duo Client SDK",
+  "company_name": "GitLab",
+  "first_published": "2026-08-20T21:22:41-04:00",
+  "language": "en",
+  "application_deadline": null,
+  "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h3&gt;&lt;strong&gt;An overview of this role&lt;/strong&gt;&lt;/h3&gt;\n&lt;p&gt;As a Fullstack Engineer on the Duo Client SDK team at GitLab, you&#39;ll build the shared foundation for every GitLab Duo client. Today, the logic that powers Duo in editors lives inside the GitLab Language Server. We&#39;re extracting it into a true software development kit (SDK): a set of well-versioned TypeScript packages that editor extensions, our web-based Duo Chat on GitLab.com, and eventually external applications can use.&lt;/p&gt;\n&lt;p&gt;You&#39;ll work in TypeScript across frontend and backend systems. You&#39;ll design the SDK&#39;s Node.js core and public application programming interface (API), and work in the clients that use it. The work rewards care about interfaces, versioning, and backward compatibility as much as features because other engineers will depend on what you build.&lt;/p&gt;\n&lt;p&gt;You&#39;ll have senior and staff engineers alongside you to help with design. You&#39;ll own the implementation of scoped packages and ship improvements with minimal guidance while collaborating with the team on larger architectural changes.&lt;/p&gt;\n&lt;p&gt;Some examples of our projects:&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;The Duo Client SDK, extracting versioned, publishable packages from the GitLab Language Server&lt;/li&gt;\n&lt;li&gt;The GitLab Language Server, rebuilt on top of the SDK as our polyglot surface&lt;/li&gt;\n&lt;li&gt;Duo Chat on the web, as one of the SDK&#39;s first consumers&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h3&gt;&lt;strong&gt;What you&#39;ll do&lt;/strong&gt;&lt;/h3&gt;\n&lt;ul&gt;\n&lt;li&gt;Develop secure, well-tested, and performant TypeScript features that solve technical problems of moderate scope and complexity.&lt;/li&gt;\n&lt;li&gt;Ship small features and improvements with minimal guidance, writing tests with every merge request and contributing to code reviews and design discussions.&lt;/li&gt;\n&lt;li&gt;Extract and publish TypeScript packages from the GitLab Language Server, migrating consumers incrementally so no parallel implementation is left to drift.&lt;/li&gt;\n&lt;li&gt;Design durable public APIs with clear interfaces, semantic versioning, changelogs, and deprecation paths for external consumers.&lt;/li&gt;\n&lt;li&gt;Build isomorphic core packages that isolate platform-specific behavior in adapters at the edges.&lt;/li&gt;\n&lt;li&gt;Build and improve SDK client surfaces, including Vue 3 components in Duo Chat on the web, in collaboration with product, design, and engineering teams.&lt;/li&gt;\n&lt;li&gt;Strengthen credential handling across hosts, including bearer tokens, session cookies, and CSRF protection.&lt;/li&gt;\n&lt;li&gt;Optimize bundle size, startup cost, and dependency weight for browser consumers, and support a Tier 2 on-call rotation for urgent engineering issues.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h3&gt;&lt;strong&gt;What you&#39;ll bring&lt;/strong&gt;&lt;/h3&gt;\n&lt;ul&gt;\n&lt;li&gt;Strong proficiency with TypeScript across frontend and backend systems, including experience building and maintaining Node.js services.&lt;/li&gt;\n&lt;li&gt;Experience with modern build and packaging tools, including monorepos, multi-module builds, ECMAScript modules (ESM), and dependency management.&lt;/li&gt;\n&lt;li&gt;Experience with Vue 3 and the Composition API, or comparable component-based frontend experience and a willingness to learn Vue.&lt;/li&gt;\n&lt;li&gt;Experience designing APIs that other people use, with the ability to explain what you&#39;d do differently.&lt;/li&gt;\n&lt;li&gt;Understanding of the differences between running code in Node.js and in the browser, and how to write code that works in both.&lt;/li&gt;\n&lt;li&gt;A security-minded development approach, including careful credential handling and performance optimization.&lt;/li&gt;\n&lt;li&gt;Ability to communicate clearly and concisely in writing about technical problems, propose iterative solutions, and work effectively in an agile environment.&lt;/li&gt;\n&lt;li&gt;Self-motivation, strong organizational skills, and the judgment to ask for help when needed while thriving in a fully remote organization aligned with GitLab&#39;s values.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h3&gt;&lt;strong&gt;About the team&lt;/strong&gt;&lt;/h3&gt;\n&lt;p&gt;The Duo Client SDK team sits in GitLab&#39;s AI Clients stage and works closely with teams building GitLab Duo experiences.&amp;nbsp;We collaborate across client surfaces to make thoughtful technical decisions as the platform evolves.&amp;nbsp;We work fully remotely and asynchronously across regions, in the open, following GitLab&#39;s values of transparency and open communication.&lt;/p&gt;\n&lt;div class=&quot;c-message_actions__container c-message__actions&quot;&gt;&amp;nbsp;&lt;/div&gt;\n&lt;div&gt;&lt;span style=&quot;font-size: xx-small;&quot;&gt;&lt;span style=&quot;color: white;&quot;&gt;Remote-Global&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;content-pay-transparency&quot;&gt;&lt;div class=&quot;pay-input&quot;&gt;&lt;div class=&quot;description&quot;&gt;&lt;p&gt;&lt;em&gt;The base salary range for this role’s listed level is currently for residents of the&amp;nbsp;United States only. This range is intended to reflect the role&#39;s base salary rate in locations throughout the US.&amp;nbsp;Grade level and salary ranges are determined through interviews and a review of education, experience, knowledge, skills, abilities of the applicant, equity with other team members, alignment with market data,&amp;nbsp;and geographic location.&amp;nbsp;The base salary range does not include any bonuses, equity, or benefits. See more information on our &lt;a class=&quot;waffle-rich-text-link&quot; href=&quot;https://about.gitlab.com/handbook/total-rewards/benefits/general-and-entity-benefits/&quot; data-sheets-formula-bar-text-link=&quot;https://bit.ly/GLBeneUS&quot; data-sheets-formula-bar-text-style=&quot;font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:&#39;&#39;Arial&#39;&#39;;font-style:normal;text-decoration-skip-ink:none;&quot;&gt;benefits&lt;/a&gt;&lt;span data-sheets-formula-bar-text-style=&quot;font-size:12px;color:#000000;font-weight:normal;text-decoration:none;font-family:&#39;Arial&#39;;font-style:normal;text-decoration-skip-ink:none;&quot;&gt; and &lt;/span&gt;&lt;a class=&quot;waffle-rich-text-link&quot; href=&quot;https://about.gitlab.com/handbook/stock-options/&quot; data-sheets-formula-bar-text-link=&quot;https://bit.ly/GLequity&quot; data-sheets-formula-bar-text-style=&quot;font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:&#39;&#39;Arial&#39;&#39;;font-style:normal;text-decoration-skip-ink:none;&quot;&gt;equity&lt;/a&gt;. Sales roles are also eligible for incentive pay targeted at up to 100% of the offered base salary.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;div class=&quot;title&quot;&gt;United States Salary Range&lt;/div&gt;&lt;div class=&quot;pay-range&quot;&gt;&lt;span&gt;$115,200&lt;/span&gt;&lt;span class=&quot;divider&quot;&gt;&amp;mdash;&lt;/span&gt;&lt;span&gt;$194,400 USD&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;content-conclusion&quot;&gt;&lt;h4&gt;&lt;strong&gt;How GitLab Supports Full-Time Employees&lt;/strong&gt;&lt;/h4&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;a href=&quot;https://about.gitlab.com/handbook/total-rewards/benefits/general-and-entity-benefits/&quot;&gt;Benefits to support your health, finances, and well-being&lt;/a&gt;&lt;/li&gt;\n&lt;li&gt;&lt;a href=&quot;https://handbook.gitlab.com/handbook/people-group/time-off-and-absence/time-off-types/#flexible-paid-time-off-pto&quot;&gt;Flexible Paid Time Off&amp;nbsp;&lt;/a&gt;&lt;/li&gt;\n&lt;li&gt;&lt;a href=&quot;https://handbook.gitlab.com/handbook/company/culture/inclusion/tmrg-tmag/&quot;&gt;Team Member Resource Groups&lt;/a&gt;&lt;/li&gt;\n&lt;li&gt;&lt;a href=&quot;https://handbook.gitlab.com/handbook/total-rewards/stock-options/&quot;&gt;Equity Compensation &amp;amp; Employee Stock Purchase Plan&lt;/a&gt;&lt;/li&gt;\n&lt;li&gt;&lt;a href=&quot;https://handbook.gitlab.com/handbook/people-group/learning-and-development/growth-and-development/&quot;&gt;Growth and Development Fund&lt;/a&gt;&lt;/li&gt;\n&lt;li&gt;&lt;a href=&quot;https://about.gitlab.com/handbook/total-rewards/benefits/general-and-entity-benefits/#parental-leave&quot;&gt;Parental Leave&lt;/a&gt;&amp;nbsp;&lt;/li&gt;\n&lt;/ul&gt;\n&lt;p&gt;Please note that we welcome interest from candidates with varying levels of experience; many successful candidates do not meet every single requirement. Additionally, studies have shown that people from &lt;a href=&quot;https://about.gitlab.com/company/culture/inclusion/#examples-of-select-underrepresented-groups&quot;&gt;underrepresented groups&lt;/a&gt; are less likely to apply to a job unless they meet every single qualification. If you&#39;re excited about this role, please apply and allow our recruiters to assess your application.&lt;/p&gt;\n&lt;hr&gt;\n&lt;p&gt;&lt;strong&gt;Country Hiring Guidelines: &lt;/strong&gt;GitLab hires new team members in countries around the world. All of our roles are remote, however some roles may carry specific location-based eligibility requirements. Our Talent Acquisition team can help answer any questions about location after starting the recruiting process.&amp;nbsp;&amp;nbsp;&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;Privacy Policy: &lt;/strong&gt;Please review our &lt;a href=&quot;https://handbook.gitlab.com/handbook/hiring/candidate-faq/recruitment-privacy-policy/&quot; target=&quot;_blank&quot;&gt;Recruitment Privacy Policy.&lt;/a&gt; Your privacy is important to us.&lt;/p&gt;\n&lt;p&gt;GitLab is proud to be an equal opportunity workplace and is an affirmative action employer. GitLab’s policies and practices relating to recruitment, employment, career development and advancement, promotion, and retirement are based solely on merit, regardless of race, color, religion, ancestry, sex (including pregnancy, lactation, sexual orientation, gender identity, or gender expression), national origin, age, citizenship, marital status, mental or physical disability, genetic information (including family medical history), discharge status from the military, protected veteran status (which includes disabled veterans, recently separated veterans, active duty wartime or campaign badge veterans, and Armed Forces service medal veterans), or any other basis protected by law. GitLab will not tolerate discrimination or harassment based on any of these characteristics. See also&amp;nbsp;&lt;a href=&quot;https://about.gitlab.com/handbook/people-policies/inc-usa/#equal-employment-opportunity-policy&quot; target=&quot;_blank&quot;&gt;GitLab’s EEO Policy&lt;/a&gt;&amp;nbsp;and&amp;nbsp;&lt;a href=&quot;https://about.gitlab.com/handbook/labor-and-employment-notices/#eeoc-us-equal-employment-opportunity-commission-notices&quot; target=&quot;_blank&quot;&gt;EEO is the Law&lt;/a&gt;. If you have a disability or special need that requires&amp;nbsp;&lt;a href=&quot;https://about.gitlab.com/handbook/people-policies/inc-usa/#reasonable-accommodation&quot; target=&quot;_blank&quot;&gt;accommodation&lt;/a&gt;, please let us know during the&amp;nbsp;&lt;a href=&quot;https://about.gitlab.com/handbook/hiring/interviewing/#adjustments-to-our-interview-process&quot; target=&quot;_blank&quot;&gt;recruiting process&lt;/a&gt;.&lt;/p&gt;&lt;/div&gt;",
+  "departments": [
+    {
+      "id": 4115238002,
+      "name": "AI Engineering",
+      "child_ids": [],
+      "parent_id": 4011044002
+    }
+  ],
+  "offices": [
+    {
+      "id": 4040901002,
+      "name": "Canada",
+      "location": null,
+      "child_ids": [],
+      "parent_id": 4019551002
+    },
+    {
+      "id": 4040904002,
+      "name": "United States of America",
+      "location": null,
+      "child_ids": [
+        4040902002
+      ],
+      "parent_id": 4019551002
+    }
+  ],
+  "ai_disclaimer": null,
+  "include_ai_disclaimer": null,
+  "ai_opt_out_request_url": null,
+  "compliance": [
+    {
+      "type": "eeoc",
+      "questions": [
+        {
+          "required": false,
+          "label": "VeteranStatus",
+          "fields": [
+            {
+              "name": "veteran_status",
+              "type": "multi_value_single_select",
+              "values": [
+                {
+                  "label": "I don't wish to answer",
+                  "value": "3"
+                },
+                {
+                  "label": "I identify as one or more of the classifications of a protected veteran",
+                  "value": "2"
+                },
+                {
+                  "label": "I am not a protected veteran",
+                  "value": "1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "&lt;p&gt;\n  If you believe you belong to any of the categories of protected veterans listed below, please indicate by making the appropriate selection.\n  As a government contractor subject to the Vietnam Era Veterans&#39; Readjustment Assistance Act (VEVRAA), we request this information in order to measure\n  the effectiveness of the outreach and positive recruitment efforts we undertake pursuant to VEVRAA. Classification of protected categories\n  is as follows:\n&lt;/p&gt;\n&lt;p&gt;A &quot;disabled veteran&quot; is one of the following: a veteran of the U.S. military, ground, naval or air service who is entitled to compensation (or who but for the receipt of military retired pay would be entitled to compensation) under laws administered by the Secretary of Veterans Affairs; or a person who was discharged or released from active duty because of a service-connected disability.&lt;/p&gt;\n&lt;p&gt;A &quot;recently separated veteran&quot; means any veteran during the three-year period beginning on the date of such veteran&#39;s discharge or release from active duty in the U.S. military, ground, naval, or air service.&lt;/p&gt;\n&lt;p&gt;An &quot;active duty wartime or campaign badge veteran&quot; means a veteran who served on active duty in the U.S. military, ground, naval or air service during a war, or in a campaign or expedition for which a campaign badge has been authorized under the laws administered by the Department of Defense.&lt;/p&gt;\n&lt;p&gt;An &quot;Armed forces service medal veteran&quot; means a veteran who, while serving on active duty in the U.S. military, ground, naval or air service, participated in a United States military operation for which an Armed Forces service medal was awarded pursuant to Executive Order 12985.&lt;/p&gt;\n"
+    },
+    {
+      "type": "eeoc",
+      "questions": [
+        {
+          "required": false,
+          "label": "Race",
+          "fields": [
+            {
+              "name": "race",
+              "type": "multi_value_single_select",
+              "values": [
+                {
+                  "label": "Decline To Self Identify",
+                  "value": "8"
+                },
+                {
+                  "label": "Two or More Races",
+                  "value": "7"
+                },
+                {
+                  "label": "Native Hawaiian or Other Pacific Islander",
+                  "value": "6"
+                },
+                {
+                  "label": "White",
+                  "value": "5"
+                },
+                {
+                  "label": "Hispanic or Latino",
+                  "value": "4"
+                },
+                {
+                  "label": "Black or African American",
+                  "value": "3"
+                },
+                {
+                  "label": "Asian",
+                  "value": "2"
+                },
+                {
+                  "label": "American Indian or Alaskan Native",
+                  "value": "1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "required": false,
+          "label": "Gender",
+          "fields": [
+            {
+              "name": "gender",
+              "type": "multi_value_single_select",
+              "values": [
+                {
+                  "label": "Decline To Self Identify",
+                  "value": "3"
+                },
+                {
+                  "label": "Female",
+                  "value": "2"
+                },
+                {
+                  "label": "Male",
+                  "value": "1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "&lt;h3&gt;&lt;strong&gt;Voluntary Self-Identification&lt;/strong&gt;&lt;/h3&gt;&lt;br/&gt;&lt;p&gt;For government reporting purposes, we ask candidates to respond to the below self-identification survey.\nCompletion of the form is entirely voluntary. Whatever your decision, it will not be considered in the hiring\nprocess or thereafter. Any information that you do provide will be recorded and maintained in a\nconfidential file.&lt;/p&gt;\n\n&lt;p&gt;As set forth in GitLab’s Equal Employment Opportunity policy,\nwe do not discriminate on the basis of any protected group status under any applicable law.&lt;/p&gt;\n"
+    }
+  ],
+  "demographic_questions": null,
+  "questions": [
+    {
+      "description": null,
+      "label": "First Name",
+      "required": true,
+      "fields": [
+        {
+          "name": "first_name",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Last Name",
+      "required": true,
+      "fields": [
+        {
+          "name": "last_name",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Preferred First Name",
+      "required": true,
+      "fields": [
+        {
+          "name": "preferred_name",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Email",
+      "required": true,
+      "fields": [
+        {
+          "name": "email",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Phone",
+      "required": false,
+      "fields": [
+        {
+          "name": "phone",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Resume/CV",
+      "required": true,
+      "fields": [
+        {
+          "name": "resume",
+          "type": "input_file",
+          "values": []
+        },
+        {
+          "name": "resume_text",
+          "type": "textarea",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Cover Letter",
+      "required": false,
+      "fields": [
+        {
+          "name": "cover_letter",
+          "type": "input_file",
+          "values": []
+        },
+        {
+          "name": "cover_letter_text",
+          "type": "textarea",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Do you have over 3 years over professional software engineering experience?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37910527002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "Yes",
+              "value": 1
+            },
+            {
+              "label": "No",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "On a scale of 0–5, how would you rate your professional experience writing backend services in TypeScript/Node.js (not just frontend/React)?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37910528002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "0 (no experience) ",
+              "value": 252116460002
+            },
+            {
+              "label": "1",
+              "value": 252116461002
+            },
+            {
+              "label": "2",
+              "value": 252116462002
+            },
+            {
+              "label": "3",
+              "value": 252116463002
+            },
+            {
+              "label": "4 (advanced)",
+              "value": 252116464002
+            },
+            {
+              "label": "5 (expert)",
+              "value": 252116465002
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "What is your time split between using TypeScript on the backend vs. frontend (ex. 80/20)? ",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37910529002",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "LinkedIn Profile",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37732575002",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Are you subject to any employment agreements and/or post-employment restrictions with your current employer or a past employer?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37732577002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "Yes",
+              "value": 1
+            },
+            {
+              "label": "No",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "It is important to us to create an accessible and inclusive interview experience. Please let us know if there are any adjustments we can make to assist you during the hiring and interview process.",
+      "required": false,
+      "fields": [
+        {
+          "name": "question_37732578002",
+          "type": "input_text",
+          "values": []
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Will you now or in the future require sponsorship for a visa to remain in your current location?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37732579002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "No",
+              "value": 251345316002
+            },
+            {
+              "label": "Yes, Netherlands Highly Skilled Migrant Visa",
+              "value": 251345317002
+            },
+            {
+              "label": "Yes, Ireland Highly Skilled Worker Visa",
+              "value": 251345318002
+            },
+            {
+              "label": "Yes, EU Blue Card",
+              "value": 251345319002
+            },
+            {
+              "label": "Yes, USMCA Professional (TN) Visa (USA)",
+              "value": 251345320002
+            },
+            {
+              "label": "Yes, F-1 Visa OPT (USA)",
+              "value": 251345321002
+            },
+            {
+              "label": "Yes, but not one of the visas listed here",
+              "value": 251345322002
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "Have you previously worked at or consulted for GitLab?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37732580002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "Yes",
+              "value": 1
+            },
+            {
+              "label": "No",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "This role is open to candidates in the US or Canada. Do you currently live in this location?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37910530002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "Yes",
+              "value": 1
+            },
+            {
+              "label": "No",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "description": null,
+      "label": "What is your current country of residence?",
+      "required": true,
+      "fields": [
+        {
+          "name": "question_37732581002",
+          "type": "multi_value_single_select",
+          "values": [
+            {
+              "label": "Afghanistan",
+              "value": 251345323002
+            },
+            {
+              "label": "Albania",
+              "value": 251345324002
+            },
+            {
+              "label": "Algeria",
+              "value": 251345325002
+            },
+            {
+              "label": "Andorra",
+              "value": 251345326002
+            },
+            {
+              "label": "Angola",
+              "value": 251345327002
+            },
+            {
+              "label": "Antigua and Barbuda",
+              "value": 251345328002
+            },
+            {
+              "label": "Argentina",
+              "value": 251345329002
+            },
+            {
+              "label": "Armenia",
+              "value": 251345330002
+            },
+            {
+              "label": "Australia",
+              "value": 251345331002
+            },
+            {
+              "label": "Austria",
+              "value": 251345332002
+            },
+            {
+              "label": "Azerbaijan",
+              "value": 251345333002
+            },
+            {
+              "label": "Bahamas",
+              "value": 251345334002
+            },
+            {
+              "label": "Bahrain",
+              "value": 251345335002
+            },
+            {
+              "label": "Bangladesh",
+              "value": 251345336002
+            },
+            {
+              "label": "Barbados",
+              "value": 251345337002
+            },
+            {
+              "label": "Belarus",
+              "value": 251345338002
+            },
+            {
+              "label": "Belgium",
+              "value": 251345339002
+            },
+            {
+              "label": "Belize",
+              "value": 251345340002
+            },
+            {
+              "label": "Benin",
+              "value": 251345341002
+            },
+            {
+              "label": "Bhutan",
+              "value": 251345342002
+            },
+            {
+              "label": "Bolivia",
+              "value": 251345343002
+            },
+            {
+              "label": "Bosnia and Herzegovina",
+              "value": 251345344002
+            },
+            {
+              "label": "Botswana",
+              "value": 251345345002
+            },
+            {
+              "label": "Brazil",
+              "value": 251345346002
+            },
+            {
+              "label": "Brunei",
+              "value": 251345347002
+            },
+            {
+              "label": "Bulgaria",
+              "value": 251345348002
+            },
+            {
+              "label": "Burkina Faso",
+              "value": 251345349002
+            },
+            {
+              "label": "Burundi",
+              "value": 251345350002
+            },
+            {
+              "label": "Cabo Verde",
+              "value": 251345351002
+            },
+            {
+              "label": "Cambodia",
+              "value": 251345352002
+            },
+            {
+              "label": "Cameroon",
+              "value": 251345353002
+            },
+            {
+              "label": "Canada",
+              "value": 251345354002
+            },
+            {
+              "label": "Central African Republic",
+              "value": 251345355002
+            },
+            {
+              "label": "Chad",
+              "value": 251345356002
+            },
+            {
+              "label": "Chile",
+              "value": 251345357002
+            },
+            {
+              "label": "China",
+              "value": 251345358002
+            },
+            {
+              "label": "Colombia",
+              "value": 251345359002
+            },
+            {
+              "label": "Comoros",
+              "value": 251345360002
+            },
+            {
+              "label": "Crimea",
+              "value": 251345361002
+            },
+            {
+              "label": "Democratic Republic of the Congo",
+              "value": 251345362002
+            },
+            {
+              "label": "Republic of the Congo",
+              "value": 251345363002
+            },
+            {
+              "label": "Costa Rica",
+              "value": 251345364002
+            },
+            {
+              "label": "Cote d'Ivoire",
+              "value": 251345365002
+            },
+            {
+              "label": "Croatia",
+              "value": 251345366002
+            },
+            {
+              "label": "Cuba",
+              "value": 251345367002
+            },
+            {
+              "label": "Cyprus",
+              "value": 251345368002
+            },
+            {
+              "label": "Czech Republic",
+              "value": 251345369002
+            },
+            {
+              "label": "Denmark",
+              "value": 251345370002
+            },
+            {
+              "label": "Djibouti",
+              "value": 251345371002
+            },
+            {
+              "label": "Dominica",
+              "value": 251345372002
+            },
+            {
+              "label": "Dominican Republic",
+              "value": 251345373002
+            },
+            {
+              "label": "Ecuador",
+              "value": 251345374002
+            },
+            {
+              "label": "Egypt",
+              "value": 251345375002
+            },
+            {
+              "label": "El Salvador",
+              "value": 251345376002
+            },
+            {
+              "label": "Equatorial Guinea",
+              "value": 251345377002
+            },
+            {
+              "label": "Eritrea",
+              "value": 251345378002
+            },
+            {
+              "label": "Estonia",
+              "value": 251345379002
+            },
+            {
+              "label": "Eswatini",
+              "value": 251345380002
+            },
+            {
+              "label": "Ethiopia",
+              "value": 251345381002
+            },
+            {
+              "label": "Fiji",
+              "value": 251345382002
+            },
+            {
+              "label": "Finland",
+              "value": 251345383002
+            },
+            {
+              "label": "France",
+              "value": 251345384002
+            },
+            {
+              "label": "Gabon",
+              "value": 251345385002
+            },
+            {
+              "label": "Gambia",
+              "value": 251345386002
+            },
+            {
+              "label": "Georgia",
+              "value": 251345387002
+            },
+            {
+              "label": "Germany",
+              "value": 251345388002
+            },
+            {
+              "label": "Ghana",
+              "value": 251345389002
+            },
+            {
+              "label": "Greece",
+              "value": 251345390002
+            },
+            {
+              "label": "Grenada",
+              "value": 251345391002
+            },
+            {
+              "label": "Guatemala",
+              "value": 251345392002
+            },
+            {
+              "label": "Guinea",
+              "value": 251345393002
+            },
+            {
+              "label": "Guinea-Bissau",
+              "value": 251345394002
+            },
+            {
+              "label": "Guyana",
+              "value": 251345395002
+            },
+            {
+              "label": "Haiti",
+              "value": 251345396002
+            },
+            {
+              "label": "Honduras",
+              "value": 251345397002
+            },
+            {
+              "label": "Hungary",
+              "value": 251345398002
+            },
+            {
+              "label": "Iceland",
+              "value": 251345399002
+            },
+            {
+              "label": "India",
+              "value": 251345400002
+            },
+            {
+              "label": "Indonesia",
+              "value": 251345401002
+            },
+            {
+              "label": "Iran",
+              "value": 251345402002
+            },
+            {
+              "label": "Iraq",
+              "value": 251345403002
+            },
+            {
+              "label": "Ireland",
+              "value": 251345404002
+            },
+            {
+              "label": "Israel",
+              "value": 251345405002
+            },
+            {
+              "label": "Italy",
+              "value": 251345406002
+            },
+            {
+              "label": "Jamaica",
+              "value": 251345407002
+            },
+            {
+              "label": "Japan",
+              "value": 251345408002
+            },
+            {
+              "label": "Jordan",
+              "value": 251345409002
+            },
+            {
+              "label": "Kazakhstan",
+              "value": 251345410002
+            },
+            {
+              "label": "Kenya",
+              "value": 251345411002
+            },
+            {
+              "label": "Kiribati",
+              "value": 251345412002
+            },
+            {
+              "label": "Kosovo",
+              "value": 251345413002
+            },
+            {
+              "label": "Kuwait",
+              "value": 251345414002
+            },
+            {
+              "label": "Kyrgyzstan",
+              "value": 251345415002
+            },
+            {
+              "label": "Laos",
+              "value": 251345416002
+            },
+            {
+              "label": "Latvia",
+              "value": 251345417002
+            },
+            {
+              "label": "Lebanon",
+              "value": 251345418002
+            },
+            {
+              "label": "Lesotho",
+              "value": 251345419002
+            },
+            {
+              "label": "Liberia",
+              "value": 251345420002
+            },
+            {
+              "label": "Libya",
+              "value": 251345421002
+            },
+            {
+              "label": "Liechtenstein",
+              "value": 251345422002
+            },
+            {
+              "label": "Lithuania",
+              "value": 251345423002
+            },
+            {
+              "label": "Luxembourg",
+              "value": 251345424002
+            },
+            {
+              "label": "Macedonia",
+              "value": 251345425002
+            },
+            {
+              "label": "Madagascar",
+              "value": 251345426002
+            },
+            {
+              "label": "Malawi",
+              "value": 251345427002
+            },
+            {
+              "label": "Malaysia",
+              "value": 251345428002
+            },
+            {
+              "label": "Maldives",
+              "value": 251345429002
+            },
+            {
+              "label": "Mali",
+              "value": 251345430002
+            },
+            {
+              "label": "Malta",
+              "value": 251345431002
+            },
+            {
+              "label": "Marshall Islands",
+              "value": 251345432002
+            },
+            {
+              "label": "Mauritania",
+              "value": 251345433002
+            },
+            {
+              "label": "Mauritius",
+              "value": 251345434002
+            },
+            {
+              "label": "Mexico",
+              "value": 251345435002
+            },
+            {
+              "label": "Micronesia",
+              "value": 251345436002
+            },
+            {
+              "label": "Moldova",
+              "value": 251345437002
+            },
+            {
+              "label": "Monaco",
+              "value": 251345438002
+            },
+            {
+              "label": "Mongolia",
+              "value": 251345439002
+            },
+            {
+              "label": "Montenegro",
+              "value": 251345440002
+            },
+            {
+              "label": "Morocco",
+              "value": 251345441002
+            },
+            {
+              "label": "Mozambique",
+              "value": 251345442002
+            },
+            {
+              "label": "Myanmar",
+              "value": 251345443002
+            },
+            {
+              "label": "Namibia",
+              "value": 251345444002
+            },
+            {
+              "label": "Nauru",
+              "value": 251345445002
+            },
+            {
+              "label": "Nepal",
+              "value": 251345446002
+            },
+            {
+              "label": "Netherlands",
+              "value": 251345447002
+            },
+            {
+              "label": "New Zealand",
+              "value": 251345448002
+            },
+            {
+              "label": "Nicaragua",
+              "value": 251345449002
+            },
+            {
+              "label": "Niger",
+              "value": 251345450002
+            },
+            {
+              "label": "Nigeria",
+              "value": 251345451002
+            },
+            {
+              "label": "Norway",
+              "value": 251345452002
+            },
+            {
+              "label": "Oman",
+              "value": 251345453002
+            },
+            {
+              "label": "Pakistan",
+              "value": 251345454002
+            },
+            {
+              "label": "Palau",
+              "value": 251345455002
+            },
+            {
+              "label": "Palestine",
+              "value": 251345456002
+            },
+            {
+              "label": "Panama",
+              "value": 251345457002
+            },
+            {
+              "label": "Papua New Guinea",
+              "value": 251345458002
+            },
+            {
+              "label": "Paraguay",
+              "value": 251345459002
+            },
+            {
+              "label": "Peru",
+              "value": 251345460002
+            },
+            {
+              "label": "Philippines",
+              "value": 251345461002
+            },
+            {
+              "label": "Poland",
+              "value": 251345462002
+            },
+            {
+              "label": "Portugal",
+              "value": 251345463002
+            },
+            {
+              "label": "Qatar",
+              "value": 251345464002
+            },
+            {
+              "label": "Romania",
+              "value": 251345465002
+            },
+            {
+              "label": "Russia",
+              "value": 251345466002
+            },
+            {
+              "label": "Rwanda",
+              "value": 251345467002
+            },
+            {
+              "label": "Saint Kitts and Nevis",
+              "value": 251345468002
+            },
+            {
+              "label": "Saint Lucia",
+              "value": 251345469002
+            },
+            {
+              "label": "Saint Vincent and the Grenadines",
+              "value": 251345470002
+            },
+            {
+              "label": "Samoa",
+              "value": 251345471002
+            },
+            {
+              "label": "San Marino",
+              "value": 251345472002
+            },
+            {
+              "label": "Sao Tome and Principe",
+              "value": 251345473002
+            },
+            {
+              "label": "Saudi Arabia",
+              "value": 251345474002
+            },
+            {
+              "label": "Senegal",
+              "value": 251345475002
+            },
+            {
+              "label": "Serbia",
+              "value": 251345476002
+            },
+            {
+              "label": "Seychelles",
+              "value": 251345477002
+            },
+            {
+              "label": "Sierra Leone",
+              "value": 251345478002
+            },
+            {
+              "label": "Singapore",
+              "value": 251345479002
+            },
+            {
+              "label": "Slovakia",
+              "value": 251345480002
+            },
+            {
+              "label": "Slovenia",
+              "value": 251345481002
+            },
+            {
+              "label": "Solomon Islands",
+              "value": 251345482002
+            },
+            {
+              "label": "Somalia",
+              "value": 251345483002
+            },
+            {
+              "label": "South Africa",
+              "value": 251345484002
+            },
+            {
+              "label": "South Korea",
+              "value": 251345485002
+            },
+            {
+              "label": "South Sudan",
+              "value": 251345486002
+            },
+            {
+              "label": "Spain",
+              "value": 251345487002
+            },
+            {
+              "label": "Sri Lanka",
+              "value": 251345488002
+            },
+            {
+              "label": "Sudan",
+              "value": 251345489002
+            },
+            {
+              "label": "Suriname",
+              "value": 251345490002
+            },
+            {
+              "label": "Sweden",
+              "value": 251345491002
+            },
+            {
+              "label": "Switzerland",
+              "value": 251345492002
+            },
+            {
+              "label": "Syria",
+              "value": 251345493002
+            },
+            {
+              "label": "Taiwan",
+              "value": 251345494002
+            },
+            {
+              "label": "Tajikistan",
+              "value": 251345495002
+            },
+            {
+              "label": "Tanzania",
+              "value": 251345496002
+            },
+            {
+              "label": "Thailand",
+              "value": 251345497002
+            },
+            {
+              "label": "Timor-Leste",
+              "value": 251345498002
+            },
+            {
+              "label": "Togo",
+              "value": 251345499002
+            },
+            {
+              "label": "Tonga",
+              "value": 251345500002
+            },
+            {
+              "label": "Trinidad and Tobago",
+              "value": 251345501002
+            },
+            {
+              "label": "Tunisia",
+              "value": 251345502002
+            },
+            {
+              "label": "Turkey",
+              "value": 251345503002
+            },
+            {
+              "label": "Turkmenistan",
+              "value": 251345504002
+            },
+            {
+              "label": "Tuvalu",
+              "value": 251345505002
+            },
+            {
+              "label": "Uganda",
+              "value": 251345506002
+            },
+            {
+              "label": "Ukraine",
+              "value": 251345507002
+            },
+            {
+              "label": "United Arab Emirates",
+              "value": 251345508002
+            },
+            {
+              "label": "United Kingdom",
+              "value": 251345509002
+            },
+            {
+              "label": "United States of America",
+              "value": 251345510002
+            },
+            {
+              "label": "Uruguay",
+              "value": 251345511002
+            },
+            {
+              "label": "Uzbekistan",
+              "value": 251345512002
+            },
+            {
+              "label": "Vanuatu",
+              "value": 251345513002
+            },
+            {
+              "label": "Vatican City",
+              "value": 251345514002
+            },
+            {
+              "label": "Venezuela",
+              "value": 251345515002
+            },
+            {
+              "label": "Vietnam",
+              "value": 251345516002
+            },
+            {
+              "label": "Yemen",
+              "value": 251345517002
+            },
+            {
+              "label": "Zambia",
+              "value": 251345518002
+            },
+            {
+              "label": "Zimbabwe",
+              "value": 251345519002
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "location_questions": []
+}
