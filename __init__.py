@@ -580,10 +580,22 @@ def _register_answers_tools(registry) -> None:
         "Decline to self-identify") for the operator to review — it never records anything as
         confirmed on their behalf."""
         try:
-            stored = answers.load()
+            stored, err = answers.load_checked()
+            if err:
+                # An unreadable file is reported, never seeded or written over — a seed now would
+                # replace everything in it (see answers._load_strict).
+                path = answers._path()
+                out = [
+                    f"Your saved standard answers file is unreadable ({err}): {path}",
+                    "Nothing was changed, and nothing it holds can fill a form until it's fixed.",
+                ]
+                backup = profile.backup_path(path)
+                if backup.is_file():
+                    out.append(f"The version before the coach's last change is {backup}, if fixing the file is harder.")
+                return "\n".join(out)
             if not stored:
                 answers.seed_from_profile(profile.load_profile())
-                stored = answers.load()
+                stored, _ = answers.load_checked()
             lines = [
                 "Standard application answers — ONLY confirmed values may fill a form; a draft must "
                 "be shown to the operator and confirmed first.",

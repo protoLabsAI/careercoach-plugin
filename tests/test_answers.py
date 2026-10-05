@@ -108,6 +108,54 @@ def test_unknown_key_raises_in_the_module_and_errors_in_the_tools(answers, tools
     assert "Unknown answer key" in out
 
 
+# ── an unreadable store is never written over (the shared store's refuse-writes rule) ──
+def test_an_unreadable_answers_file_is_never_written_over(answers, tools):
+    """load() turns a corrupt file into {}; before the fix propose/confirm/seed saved from that and
+    one bad byte silently overwrote every saved and confirmed answer. A writer must refuse instead."""
+    answers.propose("phone_number", "555-123-4567")
+    answers.confirm(["phone_number"])
+    answers.propose("email", "ada@example.com")
+    path = answers._path()
+    # A one-character hand edit breaks the JSON, like a torn write or a fat-fingered edit.
+    path.write_text(path.read_text() + ",", encoding="utf-8")
+    broken = path.read_bytes()
+
+    # Every writer refuses rather than reading the file as empty and saving {} over it.
+    with pytest.raises(answers.StoreUnreadable):
+        answers.propose("linkedin_url", "https://linkedin.com/in/ada")
+    with pytest.raises(answers.StoreUnreadable):
+        answers.confirm(["email"])
+    with pytest.raises(answers.StoreUnreadable):
+        answers.seed_from_profile({"identity": {"location": "London"}})
+    assert path.read_bytes() == broken, "a refused write must leave the file exactly as it was"
+
+    # The degrading reader still never raises, and reports why via load_checked().
+    assert answers.load() == {} and answers.confirmed() == {}
+    assert "not valid JSON" in answers.load_checked()[1]
+
+    # The agent-facing tools report it instead of raising or silently overwriting.
+    assert "unreadable" in tools["careercoach_get_answers"].invoke({})
+    assert "Not saved" in tools["careercoach_propose_answer"].invoke({"key": "phone_number", "value": "x"})
+    assert "Not confirmed" in tools["careercoach_confirm_answers"].invoke({"keys": "email"})
+    assert path.read_bytes() == broken
+
+
+def test_a_wrongly_shaped_answers_file_counts_as_unreadable(answers, tools):
+    """Parses as JSON but holds a shape this module can't read — reading it as empty would report
+    "nothing saved yet" and the next write would erase it, so it counts as unreadable."""
+    answers.propose("phone_number", "555-9000")
+    path = answers._path()
+    for broken in ('["not", "an", "object"]', '{"answers": "corrupted"}'):
+        path.write_text(broken, encoding="utf-8")
+
+        assert answers.load() == {}  # reads as empty, never raises
+        assert answers.load_checked()[1]  # a non-empty reason
+        with pytest.raises(answers.StoreUnreadable):
+            answers.propose("email", "ada@example.com")
+        assert path.read_text(encoding="utf-8") == broken  # the damaged file is left alone
+        assert "unreadable" in tools["careercoach_get_answers"].invoke({})
+
+
 # ── the always-on profile block reports the confirmed/total count (r6) ──────────────────
 def test_the_profile_block_reports_the_confirmed_count(plugin, answers):
     answers.propose("phone_number", "555-9000")

@@ -36,6 +36,7 @@ from pathlib import Path
 from . import profile as _store
 
 StoreUnreadable = _store.StoreUnreadable
+log = _store.log
 
 DRAFT = "draft"
 CONFIRMED = "confirmed"
@@ -91,22 +92,73 @@ def _norm_entry(raw: object) -> dict | None:
     return _entry(str(raw.get("value", "") or ""), status, confirmed_at)
 
 
-def load() -> dict:
-    """Every stored answer by key, normalized. A missing, empty or unreadable file reads as an
-    empty store (a turn never breaks); only keys this module knows are returned."""
-    raw, err = _store._read_json(_path())
-    if err or not isinstance(raw, dict):
-        return {}
+def _shape_error(raw: object) -> str:
+    """Why this parsed JSON can't be read as the answers store, or ``""``.
+
+    A present top level that isn't an object, or an ``answers`` value that isn't an object, holds
+    answers this module can't interpret. Reading it as empty would report "nothing saved yet" and
+    the next write would erase it, so the store counts as unreadable — reported to the agent, and
+    writes refused. Mirrors ``profile._shape_error`` (ADR: the shared store refuses writes over an
+    unreadable file)."""
+    if raw is None:
+        return ""
+    if not isinstance(raw, dict):
+        return "not a JSON object"
     stored = raw.get("answers")
-    if not isinstance(stored, dict):
-        return {}
+    if stored is not None and not isinstance(stored, dict):
+        return "'answers' is not a JSON object"
+    return ""
+
+
+def _read_store() -> tuple[dict, str]:
+    """``(answers_by_key, error)`` — the one place the file is parsed and shape-checked.
+
+    ``error`` is "" when the store is fine, absent or empty, else why it's unreadable (and
+    ``answers_by_key`` is empty then). Only keys this module knows are returned; a single entry that
+    isn't a JSON object is skipped, mirroring the profile's per-field normalization."""
+    raw, err = _store._read_json(_path())
+    err = err or _shape_error(raw)
+    if err:
+        return {}, err
+    stored = raw.get("answers") if isinstance(raw, dict) else None
     out: dict[str, dict] = {}
-    for key, value in stored.items():
-        if key in STANDARD_KEYS:
-            entry = _norm_entry(value)
-            if entry is not None:
-                out[key] = entry
-    return out
+    if isinstance(stored, dict):
+        for key, value in stored.items():
+            if key in STANDARD_KEYS:
+                entry = _norm_entry(value)
+                if entry is not None:
+                    out[key] = entry
+    return out, ""
+
+
+def load_checked() -> tuple[dict, str]:
+    """``(answers_by_key, error)``: the stored answers plus why the file is unreadable, or "" when it
+    is fine, absent or empty. Readers that can tell the operator the file is damaged use this; plain
+    ``load`` below drops the error. Logs LOUDLY when unreadable — a silent "nothing saved yet" reads
+    as the feature not working rather than the data being damaged."""
+    stored, err = _read_store()
+    if err:
+        log.warning("[careercoach] answers at %s is unreadable (%s) — reading as empty, refusing writes", _path(), err)
+    return stored, err
+
+
+def load() -> dict:
+    """Every stored answer by key, normalized. A missing, empty or unreadable file reads as an empty
+    store (a turn never breaks); only keys this module knows are returned. A writer uses
+    ``_load_strict`` instead, which refuses to overwrite an unreadable file rather than read it as
+    empty."""
+    return load_checked()[0]
+
+
+def _load_strict() -> dict:
+    """The stored answers for a writer: an unreadable store raises ``StoreUnreadable`` rather than
+    reading as empty. Without this, ``propose`` / ``confirm`` / ``seed_from_profile`` would load
+    ``{}`` from one corrupt byte and then save it — overwriting every saved and confirmed answer, and
+    replacing the ``.bak`` so the last good copy is lost too."""
+    stored, err = _read_store()
+    if err:
+        raise StoreUnreadable(_path(), err)
+    return stored
 
 
 def _save(stored: dict) -> None:
@@ -125,7 +177,7 @@ def propose(key: str, value: str) -> dict:
         raise KeyError(key)
     value = (value or "").strip()
     with _store._locked("answers"):
-        stored = load()
+        stored = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         current = stored.get(key)
         if current and current.get("status") == CONFIRMED and current.get("value") == value:
             return current  # an identical re-propose leaves a confirmed value confirmed
@@ -149,7 +201,7 @@ def confirm(keys) -> list[str]:
         wanted.append(key)
     promoted: list[str] = []
     with _store._locked("answers"):
-        stored = load()
+        stored = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         for key in wanted:
             entry = stored.get(key)
             if entry is None or not entry.get("value"):
@@ -217,7 +269,7 @@ def seed_from_profile(prof: dict) -> list[str]:
 
     created: list[str] = []
     with _store._locked("answers"):
-        stored = load()
+        stored = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         for key, value in seeds.items():
             value = (value or "").strip()
             if key in stored or not value:
