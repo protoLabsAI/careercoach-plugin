@@ -45,10 +45,40 @@ log = _store.log
 # browser_upload a file; ``skip`` → an optional field with no answer, left blank on purpose.
 FILL, SELECT, UPLOAD, SKIP = "fill", "select", "upload", "skip"
 
-# ``kind`` values (from browser_form_read) that pick an option rather than type free text.
-_SELECT_KINDS = frozenset({"select", "combobox", "radio-group", "radio", "dropdown", "listbox", "multiselect"})
+# ``kind`` values (from browser_form_read) that pick an option rather than type free text. Ashby
+# renders Yes/No questions as a button GROUP, read back as ``radio-group`` / ``button-group`` (or a
+# generic ``other`` carrying options) — all of which pick an option, so they classify as ``select``.
+_SELECT_KINDS = frozenset(
+    {
+        "select",
+        "combobox",
+        "radio-group",
+        "radio",
+        "dropdown",
+        "listbox",
+        "multiselect",
+        "button-group",
+        "buttongroup",
+        "buttons",
+    }
+)
 # ``kind`` values that take a file.
 _FILE_KINDS = frozenset({"file", "upload"})
+
+# ── Ashby (#4032 phase 4b) ──────────────────────────────────────────────────────────────────
+# Ashby forms ALWAYS require a résumé FILE and the plan can't know its final path, so the upload row
+# carries this INSTRUCTION as its value instead of a path. The agent renders the PDF, uploads it, and
+# the read-back diff only checks that a file landed (see ``_values_equal``), not that it equals this
+# string.
+RESUME_UPLOAD_VALUE = "PDF from careercoach_render_resume → browser_pdf"
+# Why the upload goes first and every field is re-read after it: Ashby's "autofill from résumé" widget
+# can overwrite values the moment the résumé is attached, so filling then uploading would silently
+# lose typed answers — upload first, then read EVERY field back to catch any rewrite.
+ASHBY_PLAN_NOTE = (
+    "Ashby: UPLOAD THE RÉSUMÉ FIRST (the first row), then fill the rest — and re-read EVERY field with "
+    "browser_form_read AFTER the upload. Ashby's 'autofill from résumé' can overwrite values you typed, "
+    "so a field that changed after the upload is a mismatch the read-back diff must catch."
+)
 
 
 def _norm(text: object) -> str:
@@ -204,28 +234,46 @@ def _order_phone(rows: list[dict]) -> list[dict]:
     return rows
 
 
-def build_plan(form_fields, confirmed, extra=None) -> dict:
+def _order_resume_first(rows: list[dict]) -> list[dict]:
+    """Move the Ashby résumé upload row to the FRONT: Ashby's autofill fires on upload, so the résumé
+    must be attached before anything is typed, and the row the operator uploads first must read first."""
+    ri = next((i for i, r in enumerate(rows) if r.get("resume")), None)
+    if ri is not None and ri > 0:
+        rows.insert(0, rows.pop(ri))
+    return rows
+
+
+def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True) -> dict:
     """Plan how to fill a form read by ``browser_form_read``: ``{session_id, rows, unmapped,
-    unconfirmed}``, persisted so ``verify_fill`` can diff against it later.
+    unconfirmed}`` (plus a ``note`` for Ashby), persisted so ``verify_fill`` can diff against it later.
 
     ``confirmed`` is ``answers.confirmed()`` (the only values ever typed, besides ``extra``).
     ``extra`` maps a field LABEL to an operator-supplied answer for a one-off question in this
-    session. For each field:
+    session. ``ats`` names the applicant-tracking system (e.g. ``"ashby"``) so the plan can apply
+    system-specific rules. For each field:
 
     * a row ``{label, kind, key, value, action}`` is emitted when a value is known — from
       ``confirmed`` (via ``classify``) or from ``extra`` by label. ``action`` is ``fill`` /
       ``select`` / ``upload`` by field kind; a ``select`` value must match one of the field's
       options (exact, then case-insensitive), else the field goes to ``unmapped`` with its options
-      — never a fuzzy pick.
+      — never a fuzzy pick. A Yes/No button group reads as ``select`` and keeps its exact options.
     * the phone COUNTRY row is ordered before the phone NUMBER row.
     * a REQUIRED field with no known value goes to ``unmapped`` (ask the operator). An OPTIONAL one
       with no value becomes a ``skip`` row.
     * a field whose answer exists only as a DRAFT is listed in ``unconfirmed`` — the operator
       confirms it with ``careercoach_confirm_answers`` before it can fill.
+
+    **Ashby** (``ats == "ashby"``): a required file/résumé field with no supplied path ALWAYS becomes
+    an ``upload`` row — ordered FIRST — whose value is the résumé instruction, because Ashby forms
+    always require a résumé file; the plan carries a ``note`` that the upload goes first and every
+    field must be read back after it (its autofill widget can overwrite typed values). If the résumé
+    prerequisites are missing (``resume_ready`` is false — no renderable profile), that field is
+    listed under ``unmapped`` instead of guessing a file.
     """
     confirmed = dict(confirmed or {})
     extra_by_label = {_norm(k): str(v if v is not None else "") for k, v in (extra or {}).items()}
     drafts = _draft_values()
+    is_ashby = _norm(ats) == "ashby"
 
     fields = form_fields if isinstance(form_fields, list) else []
     rows: list[dict] = []
@@ -251,6 +299,33 @@ def build_plan(form_fields, confirmed, extra=None) -> dict:
             value = extra_by_label[_norm(label)].strip()
 
         if value is None:
+            # Ashby: a required file/résumé field always uploads the generated résumé — the operator
+            # never has to supply a path. Needs a renderable profile; without one, ask (unmapped).
+            if is_ashby and action == UPLOAD and required:
+                if resume_ready:
+                    rows.append(
+                        {
+                            "label": label,
+                            "kind": kind,
+                            "key": key,
+                            "value": RESUME_UPLOAD_VALUE,
+                            "action": UPLOAD,
+                            "required": True,
+                            "resume": True,
+                        }
+                    )
+                else:
+                    unmapped.append(
+                        {
+                            "label": label,
+                            "kind": kind,
+                            "key": key,
+                            "required": True,
+                            "reason": "a résumé is required but none can be rendered yet — complete the "
+                            "profile (run careercoach_render_resume; it names the missing fields)",
+                        }
+                    )
+                continue
             # No value to fill. A draft is a confirm-me; otherwise required→ask, optional→skip.
             if key is not None and key in drafts:
                 if key not in seen_unconfirmed:
@@ -285,8 +360,12 @@ def build_plan(form_fields, confirmed, extra=None) -> dict:
         rows.append({"label": label, "kind": kind, "key": key, "value": value, "action": action})
 
     _order_phone(rows)
+    if is_ashby:
+        _order_resume_first(rows)
     session_id = _rows_hash(rows)
     plan = {"session_id": session_id, "rows": rows, "unmapped": unmapped, "unconfirmed": unconfirmed}
+    if is_ashby:
+        plan["note"] = ASHBY_PLAN_NOTE
     _save_session(session_id, {**plan, "rows_hash": session_id})
     return plan
 
@@ -309,6 +388,10 @@ def _values_equal(expected: str, actual: str, row: dict) -> bool:
     """Whether a read-back value matches what was planned, tolerant of presentation only. Phone
     compares digits (a country code prefix on one side is allowed); a file compares basenames;
     everything else compares whitespace/case-normalized text."""
+    if row.get("resume"):
+        # The Ashby résumé row's planned value is an INSTRUCTION, not a real path; it's satisfied once
+        # a file is present after the upload (an empty file field means the required résumé didn't land).
+        return bool(str(actual if actual is not None else "").strip())
     if row.get("key") == "phone_number":
         a, b = _digits(expected), _digits(actual)
         if not a or not b:

@@ -730,6 +730,18 @@ def _parse_extra_answers(extra_answers: str):
     return {str(k): ("" if v is None else str(v)) for k, v in data.items()}, ""
 
 
+def _resume_renderable() -> bool:
+    """Whether a résumé can be rendered right now — the profile is readable and has everything
+    ``careercoach_render_resume`` needs (name, contact, roles). Used to decide whether an Ashby
+    required-résumé field becomes an upload row or is handed back to ask about."""
+    from . import profile, resume
+
+    prof, err = profile.load_profile_checked()
+    if err:
+        return False
+    return not resume.missing_for_resume(prof)
+
+
 def _render_plan(plan: dict, company: str, role: str) -> str:
     from . import formfill
 
@@ -737,11 +749,16 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
     unmapped = plan.get("unmapped", [])
     unconfirmed = plan.get("unconfirmed", [])
     sid = plan.get("session_id", "")
+    note = plan.get("note", "")
 
     who = " — ".join(x for x in (role.strip(), company.strip()) if x)
     out = [
         f"Fill plan ({who})" if who else "Fill plan",
         f"session_id: {sid}",
+    ]
+    if note:
+        out += ["", f"⚠ {note}"]
+    out += [
         "",
         "Fill IN THIS ORDER (values are from confirmed answers or the extra answers you supplied):",
     ]
@@ -789,19 +806,27 @@ def _register_formfill_tools(registry) -> None:
     from . import answers, formfill
 
     @tool
-    def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "") -> str:
+    def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "", ats: str = "") -> str:
         """Plan how to fill a job-application form, drawing ONLY from the operator's confirmed
         standard answers (careercoach_get_answers) plus any one-off answers they've given for this
         form. `form_json` is the exact JSON array that `browser_form_read` returned (one object per
         field: label, kind, name, id, required, value, options). `extra_answers` is an optional JSON
         object mapping a field LABEL to an operator-supplied value for a one-off question, e.g.
-        {"Desired start date": "Immediately"}.
+        {"Desired start date": "Immediately"}. `ats` optionally names the applicant-tracking system
+        so the plan can apply its rules — pass "ashby" for a jobs.ashbyhq.com form (careercoach_prepare_application
+        tells you when a URL is Ashby).
 
         Returns an ordered fill plan (each line: action, field, the value to use) followed by an
         explicit "Ask the operator about ONLY these:" list — the required fields with no confirmed
         answer, the selects whose answer matched no option (with the options), and any answers that
         are still only drafts. A draft NEVER fills a form; a select answer is NEVER fuzzy-matched to
         a nearest option.
+
+        For an Ashby form (ats="ashby"): the plan puts a required résumé UPLOAD row FIRST (its value
+        is "PDF from careercoach_render_resume → browser_pdf"), because Ashby always needs a résumé
+        file, and carries a note to upload it first and re-read every field after — Ashby's autofill
+        can overwrite typed values. If the profile can't render a résumé yet, the résumé is listed to
+        ask about instead.
 
         The loop: browser_form_read → careercoach_plan_fill → ask the operator ONLY about the
         listed items (confirm drafts with careercoach_confirm_answers) → fill with browser_select /
@@ -814,7 +839,9 @@ def _register_formfill_tools(registry) -> None:
             extra, err = _parse_extra_answers(extra_answers)
             if err:
                 return err
-            plan = formfill.build_plan(fields, answers.confirmed(), extra)
+            ats_norm = (ats or "").strip().lower()
+            resume_ready = _resume_renderable() if ats_norm == "ashby" else True
+            plan = formfill.build_plan(fields, answers.confirmed(), extra, ats=ats_norm, resume_ready=resume_ready)
             formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
             return _render_plan(plan, company or "", role or "")
         except Exception as e:  # noqa: BLE001 — a tool never raises
@@ -888,6 +915,12 @@ def _register_prepare_tool(registry) -> None:
         careercoach_verify_fill, and that read-back diff must be empty before any submit. The returned
         session_id is for this schema plan.
 
+        For an Ashby job URL (`jobs.ashbyhq.com/<org>/<job-uuid>`): Ashby publishes NO public per-job
+        application-form schema (its posting API returns only job-listing metadata), so there's nothing
+        to prepare from and the page is NOT scraped — this returns the live-form path to use, with
+        `ats="ashby"` on careercoach_plan_fill, a required résumé upload FIRST, and read-back of every
+        field after it (Ashby's autofill can rewrite values). It makes no network call.
+
         For a non-Greenhouse or unrecognised URL — and a company careers page using `?gh_jid=<id>`,
         where the board token isn't in the URL so the schema can't be fetched — it returns a readable
         message telling you to use the live-form path (browser_form_read → careercoach_plan_fill)."""
@@ -901,6 +934,18 @@ def _register_prepare_tool(registry) -> None:
             detected = ats.detect(url)
             if not detected:
                 return f"{url!r} isn't a recognised Greenhouse job URL, so there's no public schema to prepare from. {live_path}"
+            if detected.get("ats") == "ashby":
+                org, ashby_id = detected.get("board") or "?", detected.get("job_id") or "?"
+                return (
+                    f"This is an Ashby job ({org}/{ashby_id}). Ashby publishes no public per-job "
+                    "application-form schema — its posting API returns only job-listing metadata — so "
+                    "there is nothing to prepare up front and the coach does NOT scrape the page. Use the "
+                    "live-form path: open the application, then browser_form_read → "
+                    'careercoach_plan_fill(form_json, company, role, ats="ashby") → fill with the résumé '
+                    "UPLOAD FIRST → browser_form_read again → careercoach_verify_fill, until the read-back "
+                    "diff is empty. Ashby always requires a résumé FILE, and its 'autofill from résumé' "
+                    "can overwrite fields, so every field must be re-read AFTER the upload."
+                )
             board, job_id = detected.get("board"), detected.get("job_id")
             if not board:
                 return (
