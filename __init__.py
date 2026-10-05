@@ -50,6 +50,7 @@ def register(registry) -> None:
     _register_jobsearch_tool(registry, cfg)
     _register_packet_tools(registry, cfg)
     _register_answers_tools(registry)
+    _register_formfill_tools(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_profile_middleware(registry)
@@ -58,8 +59,8 @@ def register(registry) -> None:
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
-        "[careercoach] registered: tracker + job-search + packet/profile + standard-answers tools, "
-        "rubric knobs, crew, profile injection, dashboard, watch"
+        "[careercoach] registered: tracker + job-search + packet/profile + standard-answers + "
+        "form-fill tools, rubric knobs, crew, profile injection, dashboard, watch"
     )
 
 
@@ -673,6 +674,190 @@ def _register_answers_tools(registry) -> None:
         return "\n".join(out) or "Nothing confirmed."
 
     registry.register_tools([careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers])
+
+
+# ── form filling: a PLAN before, a DIFF after (#4032 phase 3b) ────────────────
+# The browser plugin reads a form (browser_form_read) and fills it (browser_fill/select/upload) —
+# those tools are the AGENT's. Career Coach owns the deterministic halves: build a plan from the
+# confirmed standard answers before filling, and diff the read-back against it after. Pure logic
+# lives in formfill.py (host-free, tested); these are the thin agent surface. A plan draws ONLY
+# from confirmed answers plus the session's operator-supplied extras — an improvised answer is the
+# failure this replaces, so an unmapped field is handed back for the operator, never guessed.
+def _parse_form_json(form_json: str):
+    """``(fields, error)``: the browser_form_read array, or a readable error. Accepts the array
+    itself, or an object wrapping it under ``fields`` / ``form``."""
+    import json as _json
+
+    text = (form_json or "").strip()
+    if not text:
+        return None, "No form JSON given. Pass the exact array that browser_form_read returned."
+    try:
+        data = _json.loads(text)
+    except ValueError as e:
+        return None, f"That form JSON could not be parsed ({e}). Pass the exact array browser_form_read returned."
+    if isinstance(data, dict):
+        for key in ("fields", "form"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+    if not isinstance(data, list):
+        return None, "That form JSON isn't a list of fields. browser_form_read returns one object per field."
+    return data, ""
+
+
+def _parse_extra_answers(extra_answers: str):
+    """``(extra, error)``: the operator's one-off answers as a ``{label: value}`` dict, or a
+    readable error. An empty string is an empty dict (no extras)."""
+    import json as _json
+
+    text = (extra_answers or "").strip()
+    if not text:
+        return {}, ""
+    try:
+        data = _json.loads(text)
+    except ValueError as e:
+        return (
+            None,
+            f'extra_answers could not be parsed ({e}). Pass a JSON object, e.g. {{"Start date": "Immediately"}}.',
+        )
+    if not isinstance(data, dict):
+        return (
+            None,
+            'extra_answers must be a JSON object mapping a field label to a value, e.g. {"Start date": "Immediately"}.',
+        )
+    return {str(k): ("" if v is None else str(v)) for k, v in data.items()}, ""
+
+
+def _render_plan(plan: dict, company: str, role: str) -> str:
+    from . import formfill
+
+    rows = plan.get("rows", [])
+    unmapped = plan.get("unmapped", [])
+    unconfirmed = plan.get("unconfirmed", [])
+    sid = plan.get("session_id", "")
+
+    who = " — ".join(x for x in (role.strip(), company.strip()) if x)
+    out = [
+        f"Fill plan ({who})" if who else "Fill plan",
+        f"session_id: {sid}",
+        "",
+        "Fill IN THIS ORDER (values are from confirmed answers or the extra answers you supplied):",
+    ]
+    if rows:
+        for i, r in enumerate(rows, 1):
+            action = r.get("action", "")
+            label = r.get("label", "")
+            if action == formfill.SKIP:
+                out.append(f"  {i}. [skip]   {label} — optional, no saved answer; leave blank")
+                continue
+            value = r.get("value", "")
+            shown = value if action != formfill.UPLOAD else f"{value}  (browser_upload this file)"
+            out.append(f"  {i}. [{action}] {label} -> {shown}")
+    else:
+        out.append("  (nothing to fill from saved answers)")
+
+    out += [
+        "",
+        "Then re-read the form with browser_form_read and call "
+        f'careercoach_verify_fill("{sid}", <that JSON>). Repeat until VERIFIED.',
+        "",
+        "Ask the operator about ONLY these:",
+    ]
+    if not unmapped and not unconfirmed:
+        out.append("  (nothing — every required field has a confirmed answer; fill without asking)")
+    for u in unmapped:
+        req = "required" if u.get("required") else "optional"
+        line = f"  - {u.get('label', '')} ({req}): {u.get('reason', 'no confirmed answer')}."
+        if u.get("answer"):
+            line += f" Your answer {u['answer']!r} matched no option."
+        if u.get("options"):
+            opts = ", ".join(str(o) for o in u["options"][:12])
+            more = "" if len(u["options"]) <= 12 else f", … (+{len(u['options']) - 12} more)"
+            line += f" Options: {opts}{more}"
+        out.append(line)
+    for u in unconfirmed:
+        out.append(
+            f"  - {u.get('label', '')}: you have a DRAFT answer ({u.get('key', '')}={u.get('draft', '')!r}); "
+            "confirm it with careercoach_confirm_answers before it can fill."
+        )
+    return "\n".join(out)
+
+
+def _register_formfill_tools(registry) -> None:
+    from . import answers, formfill
+
+    @tool
+    def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "") -> str:
+        """Plan how to fill a job-application form, drawing ONLY from the operator's confirmed
+        standard answers (careercoach_get_answers) plus any one-off answers they've given for this
+        form. `form_json` is the exact JSON array that `browser_form_read` returned (one object per
+        field: label, kind, name, id, required, value, options). `extra_answers` is an optional JSON
+        object mapping a field LABEL to an operator-supplied value for a one-off question, e.g.
+        {"Desired start date": "Immediately"}.
+
+        Returns an ordered fill plan (each line: action, field, the value to use) followed by an
+        explicit "Ask the operator about ONLY these:" list — the required fields with no confirmed
+        answer, the selects whose answer matched no option (with the options), and any answers that
+        are still only drafts. A draft NEVER fills a form; a select answer is NEVER fuzzy-matched to
+        a nearest option.
+
+        The loop: browser_form_read → careercoach_plan_fill → ask the operator ONLY about the
+        listed items (confirm drafts with careercoach_confirm_answers) → fill with browser_select /
+        browser_fill / browser_upload in the order shown → browser_form_read again →
+        careercoach_verify_fill → repeat until VERIFIED."""
+        try:
+            fields, err = _parse_form_json(form_json)
+            if err:
+                return err
+            extra, err = _parse_extra_answers(extra_answers)
+            if err:
+                return err
+            plan = formfill.build_plan(fields, answers.confirmed(), extra)
+            formfill.update_session(plan["session_id"], company=(company or "").strip(), role=(role or "").strip())
+            return _render_plan(plan, company or "", role or "")
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Could not build a fill plan: {e}"
+
+    @tool
+    def careercoach_verify_fill(session_id: str, form_json: str) -> str:
+        """Verify a filled form against the plan from careercoach_plan_fill. `session_id` is the id
+        that plan returned; `form_json` is the form read back with `browser_form_read` AFTER filling.
+
+        Returns "VERIFIED — every field matches" when every planned field holds its planned value
+        and no required field is empty, otherwise a numbered list of mismatches (field, expected,
+        actual) plus any required fields still blank. Comparison ignores presentation: whitespace
+        and case, digits-only for phone, file basename for uploads — so formatting differences don't
+        read as mismatches, but a react-select that reverted to the wrong option does. The result is
+        recorded; a session counts as verified only when its latest check found nothing. If it isn't
+        VERIFIED, fix the listed fields and run this again."""
+        try:
+            sid = (session_id or "").strip()
+            session = formfill.load_session(sid)
+            if session is None:
+                return (
+                    f"No fill plan found for session {sid!r}. Run careercoach_plan_fill first and use the "
+                    "session_id it returns."
+                )
+            fields, err = _parse_form_json(form_json)
+            if err:
+                return err
+            mismatches = formfill.diff(session, fields)
+            formfill.record_verification(sid, mismatches)
+            if not mismatches:
+                return "VERIFIED — every field matches the plan and no required field is empty."
+            lines = [f"NOT verified — {len(mismatches)} field(s) need fixing:"]
+            for i, m in enumerate(mismatches, 1):
+                lines.append(
+                    f"  {i}. {m.get('label', '')}: expected {m.get('expected', '')!r}, found {m.get('actual', '')!r}"
+                )
+            lines.append(
+                "Fix these (browser_select / browser_fill / browser_upload), then re-read the form and verify again."
+            )
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Could not verify the fill: {e}"
+
+    registry.register_tools([careercoach_plan_fill, careercoach_verify_fill])
 
 
 # ── a tunable control surface: the fit rubric as live Knobs (graph.sdk) ───────
