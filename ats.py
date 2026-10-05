@@ -21,7 +21,17 @@ three host-free things and one network thing:
   non-200, or malformed JSON comes back as a readable ``(None, error)`` — it NEVER raises, because its
   caller is a tool. ``boards-api.greenhouse.io`` is declared in the manifest's ``capabilities.network``.
 
-Lever / Workday are deliberately deferred until Greenhouse (and Ashby) work end to end. No ``graph.*``
+**Ashby** (``jobs.ashbyhq.com/<org>/<job-uuid>``, with an optional ``/application`` suffix) is
+``detect``-ed too, but handled DIFFERENTLY (#4032 phase 4b). Ashby's public posting API
+(``api.ashbyhq.com/posting-api/job-board/<org>``) publishes only job-LISTING metadata — title,
+location, department, descriptions, apply URL — and NOT the per-job application-FORM schema (the
+custom questions, their field types or required flags; confirmed against Ashby's public API docs).
+There is therefore no public per-job form schema to fetch, so Ashby is NEVER scraped and adds NO
+network host: it uses the live-form path only (``browser_form_read`` → ``careercoach_plan_fill`` with
+``ats="ashby"``). Only URL detection lives here for Ashby; its plan rules (a required résumé upload
+first, Yes/No button groups → select, read-back after the autofill widget) live in ``formfill``.
+
+Lever / Workday are deliberately deferred until Greenhouse and Ashby work end to end. No ``graph.*``
 imports, so the pure functions are unit-tested with nothing but a saved fixture, and the fetch is
 exercised by monkeypatching it (no live network in the suite).
 """
@@ -37,17 +47,31 @@ API_HOST = "boards-api.greenhouse.io"
 _BOARD_HOSTS = ("job-boards.greenhouse.io", "boards.greenhouse.io")
 _FETCH_TIMEOUT = 15.0
 
+# Ashby's hosted job-board host. Ashby is detected but NOT fetched (no public per-job form schema),
+# so it adds no network host — the org + job uuid come from the path, live-form path only.
+ASHBY_HOST = "jobs.ashbyhq.com"
+# jobs.ashbyhq.com/<org>/<job-uuid>, with an optional /application suffix. The second path segment is
+# a standard UUID (an Ashby job id), which keeps a bare board URL (jobs.ashbyhq.com/<org>) from matching.
+_ASHBY_JOB = re.compile(
+    r"^/([^/]+)/"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+    r"(?:/application)?/?$"
+)
+
 
 # ── detect: a job URL → {ats, board, job_id} | None ───────────────────────────────────────
 def detect(url: str) -> dict | None:
-    """Recognise a Greenhouse job URL, returning ``{"ats": "greenhouse", "board", "job_id"}`` or
-    ``None``.
+    """Recognise a Greenhouse or Ashby job URL, returning ``{"ats", "board", "job_id"}`` or ``None``.
 
+    * ``jobs.ashbyhq.com/<org>/<job-uuid>`` and the ``.../application`` form →
+      ``{"ats": "ashby", "board": <org>, "job_id": <uuid>}``.
     * ``job-boards.greenhouse.io/<board>/jobs/<id>`` and the older ``boards.greenhouse.io/<board>/
-      jobs/<id>`` → board token + job id from the path.
+      jobs/<id>`` → ``{"ats": "greenhouse", "board", "job_id"}`` from the path.
     * any URL carrying a ``gh_jid=<id>`` query param (a company careers page embedding a Greenhouse
       job) → the job id, with ``board`` = ``None`` because the board token isn't in the URL.
     * anything else → ``None``.
+
+    Hosts are distinct, so a Greenhouse URL never reads as Ashby (or the reverse).
     """
     if not isinstance(url, str):
         return None
@@ -58,6 +82,11 @@ def detect(url: str) -> dict | None:
     host = (parsed.hostname or "").lower()
     path = parsed.path or ""
     query = parse_qs(parsed.query or "")
+
+    if host == ASHBY_HOST:
+        m = _ASHBY_JOB.match(path)
+        if m:
+            return {"ats": "ashby", "board": m.group(1), "job_id": m.group(2)}
 
     if host in _BOARD_HOSTS:
         m = re.search(r"/([^/]+)/jobs/(\d+)", path)
