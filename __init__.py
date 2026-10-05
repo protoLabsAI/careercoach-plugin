@@ -168,7 +168,7 @@ def _import_detail(row: dict) -> str:
 def _register_packet_tools(registry, cfg) -> None:
     from pathlib import Path
 
-    from . import packet, profile
+    from . import packet, profile, resume
 
     templates_dir = Path(__file__).resolve().parent / "templates"
 
@@ -489,6 +489,54 @@ def _register_packet_tools(registry, cfg) -> None:
             f"- {r['role']} @ {r['company']} — {r['artifacts']}/{r['total']} artifacts — {r['path']}" for r in rows
         )
 
+    @tool
+    def careercoach_render_resume(company: str = "") -> str:
+        """Render the operator's résumé as a standalone HTML file in their workspace, ready to be
+        turned into a PDF an ATS form will accept. It REFORMATS the verified operator profile (name,
+        location, contact, headlines, and the roles/education/skills sections) into a self-contained,
+        print-correct document and ADDS NO CLAIMS — nothing that isn't already in the confirmed
+        profile reaches the page, and `do_not_claim`, `stories` and `notes` are never included.
+
+        If the profile is missing a name, contact details or any roles, this writes nothing and
+        tells you which fields to fill (run /setup-coach). Otherwise it writes `Resume/resume.html`
+        and returns its `file://` URL plus the exact next steps:
+          1. `browser_open <url>`
+          2. `browser_pdf("resume-<company>.pdf")`
+          3. pass the path `browser_pdf` returns to `browser_upload`.
+
+        The PDF MUST come from `browser_pdf`: `browser_upload` only accepts files that are already in
+        the browser plugin's own capture folder, and printing the opened `file://` page with
+        `browser_pdf` is the only way a file lands there. Pass `company` so the PDF name and the
+        upload are identifiable per role."""
+        prof, err = profile.load_profile_checked()
+        if err:
+            return f"Not rendered: {profile.unreadable_block(err)}"
+        missing = resume.missing_for_resume(prof)
+        if missing:
+            labels = {**profile.IDENTITY_FIELDS, **profile.SECTIONS}
+            named = ", ".join(f"{m} ({labels.get(m, m)})" for m in missing)
+            return (
+                f"Not rendered — the profile is missing what a résumé needs: {named}. Nothing was "
+                "written. Record it with the operator (run /setup-coach), then try again. A résumé is "
+                "never built from an incomplete profile."
+            )
+        root = packet.resolve_root(_root())
+        path = resume.write_resume_html(root, prof)
+        url = path.resolve().as_uri()
+        pdf = resume.pdf_name(company)
+        return (
+            f"Wrote the résumé HTML (built only from the verified profile — no added claims) to:\n"
+            f"  {path}\n\n"
+            "To turn it into a PDF an ATS form will accept, in this exact order:\n"
+            f"  1. browser_open {url}\n"
+            f'  2. browser_pdf("{pdf}")  — prints the open page into the browser plugin\'s capture '
+            "folder; take the path from its 'Saved to' line\n"
+            "  3. pass that path to browser_upload\n\n"
+            "The PDF must come from browser_pdf: browser_upload only accepts files already in the "
+            "browser's capture folder, and printing the opened file:// page is the only way one "
+            "gets there."
+        )
+
     registry.register_tools(
         [
             careercoach_init_workspace,
@@ -502,6 +550,7 @@ def _register_packet_tools(registry, cfg) -> None:
             careercoach_write_artifact,
             careercoach_assemble_packet,
             careercoach_list_roles,
+            careercoach_render_resume,
         ]
     )
 
