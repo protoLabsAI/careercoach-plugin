@@ -533,13 +533,32 @@ def _save(sessions: dict) -> None:
     _store._write_store(_path(), json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
+def _clear_other_verifications(sessions: dict, keep: str) -> None:
+    """Mark every stored session EXCEPT ``keep`` unverified (caller holds the ``fill_sessions``
+    lock). Verification is EXCLUSIVE to the newest plan/read-back — at most one session is verified
+    at a time — so writing or verifying one session strips the ``verified`` flag off all the others
+    in the SAME atomic write. Only ``verified`` / ``verified_at`` drop; each session's ``last_diff``
+    is left as is (its last read-back result stands, it just no longer authorizes a submit)."""
+    for sid, rec in sessions.items():
+        if sid == keep or not isinstance(rec, dict):
+            continue
+        rec["verified"] = False
+        rec["verified_at"] = ""
+
+
 def _save_session(session_id: str, record: dict) -> None:
     """Persist one planning session. A (re)built plan ALWAYS starts UNVERIFIED: ``verified``
     describes one fill-then-read-back cycle, so writing a plan — even an identical one whose rows
     hash to the same id — cannot carry a prior ``verified`` flag forward. The browser must be filled
     and read back (``verify_fill``) again before the plan counts as verified; this is what stops a
     re-plan from arriving already-verified and being submitted without a read-back. Only ``created``
-    survives a rewrite."""
+    survives a rewrite.
+
+    Verification is EXCLUSIVE to the newest plan: writing session S also clears ``verified`` on every
+    OTHER stored session in the same atomic write, so at most one session is ever verified — always
+    the latest one planned or read back. A live submit grant for form A therefore stops passing
+    ``is_verified(A)`` the moment any other form is planned, which is what keeps a grant for A from
+    authorizing a submit on a form the operator never saw."""
     with _store._locked("fill_sessions"):
         sessions = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         prior = sessions.get(session_id, {})
@@ -551,6 +570,7 @@ def _save_session(session_id: str, record: dict) -> None:
             "last_diff": None,
             "verified_at": "",
         }
+        _clear_other_verifications(sessions, session_id)  # at most one verified session, ever
         sessions[session_id] = merged
         _save(sessions)
 
@@ -573,7 +593,11 @@ def load_session(session_id: str) -> dict | None:
 
 def record_verification(session_id: str, mismatches: list[dict]) -> dict:
     """Store the latest diff for a session plus a hash of its plan rows, and mark it ``verified``
-    only when the diff is empty. Returns the updated record (an empty one if the session is gone)."""
+    only when the diff is empty. Returns the updated record (an empty one if the session is gone).
+
+    Verification is EXCLUSIVE to the newest read-back: an empty diff marks THIS session verified and
+    clears ``verified`` on every OTHER stored session in the same atomic write, so at most one session
+    is verified at a time. A non-empty diff leaves the others alone — it only unverifies this one."""
     verified = not mismatches
     with _store._locked("fill_sessions"):
         sessions = _load_strict()
@@ -584,11 +608,17 @@ def record_verification(session_id: str, mismatches: list[dict]) -> dict:
         rec["rows_hash"] = _rows_hash(rec.get("rows", []))
         rec["verified"] = verified
         rec["verified_at"] = _now_ts() if verified else ""
+        if verified:
+            _clear_other_verifications(sessions, session_id)  # at most one verified session, ever
         _save(sessions)
         return rec
 
 
 def is_verified(session_id: str) -> bool:
-    """Whether the session's latest diff was empty (``False`` if there's no session or no diff)."""
+    """Whether the session's latest diff was empty (``False`` if there's no session or no diff).
+
+    Verification is EXCLUSIVE: at most one session is verified at a time — always the latest one
+    planned or read back (see ``_save_session`` / ``record_verification``). So planning or verifying
+    ANY other form flips this session back to ``False``, and a stale submit grant for it goes inert."""
     rec = load_session(session_id)
     return bool(rec and rec.get("verified"))

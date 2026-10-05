@@ -212,6 +212,30 @@ def test_middleware_checks_the_grant_against_its_session_not_just_that_one_is_li
     assert gate.submitgate.active_grant() == sid  # the inert grant was NOT spent on the blocked call
 
 
+def test_middleware_blocks_a_submit_after_a_different_form_is_planned(gate):
+    # The bd-4t17 hole: the operator approves form A (grant live for 120s), then the agent plans and
+    # fills a DIFFERENT form B and clicks submit on B. Verification is exclusive to the newest plan,
+    # so planning B unverifies A — A's grant goes inert and the submit on B is BLOCKED, even though
+    # A's grant never expired and was never re-planned itself.
+    sid_a = _verified_session(gate.formfill, company="Acme", role="ML Engineer")
+    gate.submitgate.grant(sid_a)
+    assert gate.submitgate.active_grant() == sid_a  # a grant for A is live…
+
+    # Plan a genuinely different form B (different rows → different session id).
+    plan_b = gate.formfill.build_plan(
+        [{"label": "Phone", "kind": "text", "required": True}], {"phone_number": "555-0100"}, {}
+    )
+    assert plan_b["session_id"] != sid_a
+    assert gate.formfill.is_verified(sid_a) is False  # …but planning B revoked A's verification
+
+    out = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}, call_id="cB"), lambda req: "RAN"
+    )
+    assert type(out).__name__ == "ToolMessage" and "Blocked" in out.content
+    assert out.tool_call_id == "cB"
+    assert gate.submitgate.active_grant() == sid_a  # the inert grant was NOT spent on the blocked click
+
+
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────
 def test_request_submit_refuses_unverified_session(gate, monkeypatch):
     # A planned-but-not-verified session (no read-back diff recorded yet).

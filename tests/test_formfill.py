@@ -259,6 +259,67 @@ def test_rebuilding_a_plan_resets_verification(formfill):
     assert rec["last_diff"] is None and rec["verified_at"] == "" and rec["created"] == created
 
 
+# ── verification is EXCLUSIVE to the newest plan / read-back ────────────────────────────────
+def test_planning_a_different_form_clears_a_prior_sessions_verification(formfill):
+    # The bd-4t17 hole: a grant for form A must not survive planning form B. Verification is
+    # exclusive to the newest plan, so planning B (different rows → different session id) strips
+    # A's verified flag in the same write, even though A was never re-planned or read back.
+    form_a = [field("Email", "email", name="email", required=True)]
+    plan_a = formfill.build_plan(form_a, {"email": "ada@example.com"})
+    sid_a = plan_a["session_id"]
+    formfill.record_verification(sid_a, [])  # A is now verified
+    assert formfill.is_verified(sid_a) is True
+
+    form_b = [field("Phone", "tel", name="phone", required=True)]
+    plan_b = formfill.build_plan(form_b, {"phone_number": "555-123-4567"})
+    sid_b = plan_b["session_id"]
+    assert sid_b != sid_a, "a different form must hash to a different session id"
+
+    assert formfill.is_verified(sid_a) is False, "planning B revoked A's verification"
+    assert formfill.is_verified(sid_b) is False, "a freshly planned B is unverified"
+    # A's last read-back result is untouched — it just no longer authorizes a submit.
+    assert formfill.load_session(sid_a)["last_diff"] == []
+
+
+def test_verifying_b_leaves_a_unverified(formfill):
+    # Verifying form B marks B verified and keeps A false — the two can never both be verified.
+    plan_a = formfill.build_plan([field("Email", "email", name="email", required=True)], {"email": "ada@example.com"})
+    sid_a = plan_a["session_id"]
+    plan_b = formfill.build_plan([field("Phone", "tel", name="phone", required=True)], {"phone_number": "555-0100"})
+    sid_b = plan_b["session_id"]
+
+    formfill.record_verification(sid_b, [])
+    assert formfill.is_verified(sid_b) is True
+    assert formfill.is_verified(sid_a) is False
+
+
+def test_at_most_one_session_is_verified_after_any_sequence(formfill):
+    def verified_count():
+        return sum(1 for rec in formfill.load_sessions_checked()[0].values() if rec.get("verified"))
+
+    forms = {
+        "a": [field("Email", "email", name="email", required=True)],
+        "b": [field("Phone", "tel", name="phone", required=True)],
+        "c": [field("LinkedIn Profile", "text", name="linkedin")],
+    }
+    sids = {k: formfill.build_plan(f, {}, {f[0]["label"]: "x"})["session_id"] for k, f in forms.items()}
+    assert len(set(sids.values())) == 3  # three distinct sessions
+
+    # A sequence of plans and verifications: after every step, never more than one is verified.
+    formfill.record_verification(sids["a"], [])
+    assert verified_count() == 1 and formfill.is_verified(sids["a"])
+
+    formfill.record_verification(sids["b"], [])
+    assert verified_count() == 1 and formfill.is_verified(sids["b"]) and not formfill.is_verified(sids["a"])
+
+    formfill.build_plan(forms["c"], {}, {forms["c"][0]["label"]: "x"})  # re-planning C unverifies everything
+    assert verified_count() == 0
+
+    formfill.record_verification(sids["c"], [])
+    formfill.record_verification(sids["c"], [{"label": "x", "expected": "y", "actual": "z"}])  # a mismatch
+    assert verified_count() == 0  # a non-empty diff unverifies C and touches nothing else
+
+
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_formfill_has_no_host_imports():
     from pathlib import Path
