@@ -1306,6 +1306,8 @@ def _register_handoff(registry) -> None:
     ``interrupt`` + headless-refusal pattern but creates no grant and clicks nothing: it hands a
     human the page for the one step only they can do, then requires a fresh read-back before submit."""
 
+    from . import formfill, submitgate
+
     @tool
     def careercoach_handoff(session_id: str, reason: str) -> str:
         """Hand the OPERATOR a visible browser to complete the one step only a human can do — a
@@ -1342,6 +1344,16 @@ def _register_handoff(registry) -> None:
                     "here and report that a human needs to finish this step in an interactive session."
                 )
             answer = _handoff_interrupt(_handoff_card(sid, key))
+            # A human just had the live page in a visible browser; whatever they did — and the
+            # captcha / login / attestation itself — can re-render the form and clear filled fields,
+            # so the verification made BEFORE the handoff no longer describes it. Drop that
+            # verification and revoke any live submit grant, so the mandatory browser_form_read +
+            # careercoach_verify_fill (and a fresh careercoach_request_submit approval) are required
+            # before any submit can go through — the stale pre-handoff state can no longer authorize
+            # one. Done or Cancel alike: control left the agent either way.
+            if sid:
+                formfill.invalidate_verification(sid)
+            submitgate.clear()
             if _is_handoff_done(answer):
                 verify = f'careercoach_verify_fill("{sid}", <that JSON>)' if sid else "careercoach_verify_fill"
                 return (

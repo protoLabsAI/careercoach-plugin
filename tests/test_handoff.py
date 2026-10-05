@@ -103,6 +103,34 @@ def test_handoff_accepts_every_valid_reason(handoff, monkeypatch, reason):
     assert "browser_form_read" in out and "careercoach_verify_fill" in out
 
 
+@pytest.mark.parametrize("answer", ["done", "cancel"])
+def test_handoff_invalidates_the_pre_handoff_verification_and_grant(handoff, monkeypatch, answer):
+    """The gap the review caught: a captcha / login / attestation can re-render the form and clear
+    filled fields, so the verification made BEFORE the handoff no longer describes the live form. The
+    handoff must drop that verification — and revoke any live submit grant — so a fresh
+    browser_form_read + careercoach_verify_fill (and a fresh approval card) are required before any
+    submit can go through. Both the submit gate's tool (``_submit_ready`` reads ``verified``) and its
+    middleware (``formfill.is_verified`` + a live grant) must then refuse the stale state."""
+    import importlib
+
+    formfill = importlib.import_module(handoff.plugin.__name__ + ".formfill")
+    submitgate = importlib.import_module(handoff.plugin.__name__ + ".submitgate")
+
+    plan = formfill.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
+    sid = plan["session_id"]
+    formfill.record_verification(sid, [])  # empty mismatches → verified, as the pre-handoff fill was
+    submitgate.grant(sid)  # a pre-handoff submit grant, as if request_submit had already been approved
+    assert formfill.is_verified(sid) and submitgate.active_grant() == sid
+
+    monkeypatch.setattr(handoff.plugin, "_turn_is_headless", lambda: False)
+    monkeypatch.setattr(handoff.plugin, "_handoff_interrupt", lambda payload: answer)
+    handoff.tool.invoke({"session_id": sid, "reason": "captcha"})
+
+    # Whichever way the operator answered, the stale pre-handoff state can no longer authorize submit.
+    assert not formfill.is_verified(sid), "the pre-handoff verification must be cleared"
+    assert submitgate.active_grant() is None, "any pre-handoff submit grant must be revoked"
+
+
 def test_handoff_never_touches_the_captcha_and_its_docstring_says_so(handoff):
     doc = handoff.tool.description
     assert "never" in doc.lower()
