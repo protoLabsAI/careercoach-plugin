@@ -79,6 +79,11 @@ ASHBY_PLAN_NOTE = (
     "browser_form_read AFTER the upload. Ashby's 'autofill from résumé' can overwrite values you typed, "
     "so a field that changed after the upload is a mismatch the read-back diff must catch."
 )
+# The ONLY file field the Ashby rule auto-fills with the generated résumé — identified by its
+# label/name/id, NOT merely "a required file field". A required cover letter, transcript or writing
+# sample is a DIFFERENT document: it must never receive the résumé PDF, so it falls through to the
+# normal "no confirmed answer → ask the operator" path instead of being mislabelled a résumé upload.
+_RESUME_FIELD = re.compile(r"r[eé]sum[eé]|\bcv\b|curriculum\s+vitae")
 
 
 def _norm(text: object) -> str:
@@ -209,6 +214,13 @@ def _is_required(field: dict) -> bool:
     return bool(field.get("required"))
 
 
+def _is_resume_field(field: dict) -> bool:
+    """Whether a file field is the résumé/CV itself (matched on its label/name/id), as opposed to some
+    other required document (a cover letter, transcript, writing sample). Only this field is auto-filled
+    with the generated résumé by the Ashby rule — everything else is handed back for the operator."""
+    return _RESUME_FIELD.search(_hay(field)) is not None
+
+
 # ── build_plan ──────────────────────────────────────────────────────────────────────────────
 def _draft_values() -> dict[str, str]:
     """Keys that have a non-empty DRAFT value (proposed but not confirmed). Used ONLY to tell the
@@ -263,12 +275,15 @@ def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True) 
     * a field whose answer exists only as a DRAFT is listed in ``unconfirmed`` — the operator
       confirms it with ``careercoach_confirm_answers`` before it can fill.
 
-    **Ashby** (``ats == "ashby"``): a required file/résumé field with no supplied path ALWAYS becomes
-    an ``upload`` row — ordered FIRST — whose value is the résumé instruction, because Ashby forms
-    always require a résumé file; the plan carries a ``note`` that the upload goes first and every
-    field must be read back after it (its autofill widget can overwrite typed values). If the résumé
-    prerequisites are missing (``resume_ready`` is false — no renderable profile), that field is
-    listed under ``unmapped`` instead of guessing a file.
+    **Ashby** (``ats == "ashby"``): the required RÉSUMÉ file field (matched by label/name/id via
+    ``_is_resume_field``) with no supplied path ALWAYS becomes an ``upload`` row — ordered FIRST —
+    whose value is the résumé instruction, because Ashby forms always require a résumé file; the plan
+    carries a ``note`` that the upload goes first and every field must be read back after it (its
+    autofill widget can overwrite typed values). If the résumé prerequisites are missing
+    (``resume_ready`` is false — no renderable profile), that field is listed under ``unmapped``
+    instead of guessing a file. Any OTHER required file field (a cover letter, transcript, writing
+    sample) is NOT the résumé: it takes the ordinary path — a supplied path uploads, otherwise it is
+    asked about — so the résumé PDF is never uploaded into the wrong field.
     """
     confirmed = dict(confirmed or {})
     extra_by_label = {_norm(k): str(v if v is not None else "") for k, v in (extra or {}).items()}
@@ -299,9 +314,12 @@ def build_plan(form_fields, confirmed, extra=None, ats=None, resume_ready=True) 
             value = extra_by_label[_norm(label)].strip()
 
         if value is None:
-            # Ashby: a required file/résumé field always uploads the generated résumé — the operator
-            # never has to supply a path. Needs a renderable profile; without one, ask (unmapped).
-            if is_ashby and action == UPLOAD and required:
+            # Ashby: the required RÉSUMÉ file always uploads the generated résumé — the operator never
+            # has to supply a path. Scoped to the résumé field itself (``_is_resume_field``): a required
+            # cover letter / transcript is a different document and must NOT get the résumé PDF, so it
+            # falls through to the normal required→ask path below. Needs a renderable profile; without
+            # one, the résumé is asked about (unmapped) rather than guessed.
+            if is_ashby and action == UPLOAD and required and _is_resume_field(field):
                 if resume_ready:
                     rows.append(
                         {

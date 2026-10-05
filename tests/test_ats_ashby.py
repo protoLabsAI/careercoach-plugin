@@ -152,6 +152,32 @@ def test_without_the_ashby_flag_a_required_file_is_not_auto_uploaded(formfill):
     assert any(u["label"] == "Resume" for u in plan["unmapped"])
 
 
+def test_only_the_resume_file_is_auto_uploaded_not_other_required_files(formfill):
+    # A required cover letter / transcript is a DIFFERENT document: it must NOT be tagged as the résumé
+    # or receive the résumé PDF. Only the résumé field becomes the upload row (and leads the plan);
+    # every other required file with no supplied path is asked about, exactly like any other field.
+    form = [
+        field("Cover letter", "file", name="_systemfield_cover", id="cover", required=True),
+        field("Resume", "file", name="_systemfield_resume", id="_systemfield_resume", required=True),
+        field("Transcript", "file", name="transcript", id="transcript", required=True),
+    ]
+    plan = formfill.build_plan(form, {}, ats="ashby", resume_ready=True)
+
+    resume_rows = [r for r in plan["rows"] if r.get("resume")]
+    assert len(resume_rows) == 1, "exactly one résumé upload row"
+    assert resume_rows[0]["label"] == "Resume"
+    assert resume_rows[0]["value"] == formfill.RESUME_UPLOAD_VALUE
+    # it leads the plan — the real résumé goes first, not whichever required file happened to be first.
+    assert plan["rows"][0]["label"] == "Resume"
+
+    # the other required files are NOT given the résumé instruction — they are handed back to ask about.
+    assert not any(r["label"] in ("Cover letter", "Transcript") for r in plan["rows"])
+    um = {u["label"] for u in plan["unmapped"]}
+    assert "Cover letter" in um and "Transcript" in um
+    # and none of them carries the résumé value or the resume flag anywhere in the plan.
+    assert all(formfill.RESUME_UPLOAD_VALUE not in str(r.get("value")) or r.get("resume") for r in plan["rows"])
+
+
 # ── diff: an autofill overwrite is a mismatch; the uploaded résumé is not ───────────────────
 def test_autofill_overwrite_shows_up_in_the_diff(formfill):
     confirmed = {"email": "ada@example.com", "authorized_us": "Yes"}
