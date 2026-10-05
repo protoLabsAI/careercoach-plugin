@@ -287,17 +287,22 @@ the gate is built in two unforgeable halves (`submitgate.py`, host-free and test
 
 - **Consent comes through an interrupt, not a model decision.** `careercoach_request_submit` first
   refuses — *without asking anyone* — unless the fill session is `VERIFIED` (its latest
-  `careercoach_verify_fill` read-back diff was empty) and its plan is unchanged since. Only then does
-  it pause the turn with `langgraph.types.interrupt` and show the operator an approval card (company,
-  role, the planned field→value table). It grants a **one-shot, time-limited** authorization (120s)
-  **only** on an explicit approve; a decline, a vague answer, or a **headless/autonomous turn with no
-  operator to answer** all refuse, and the headless case never interrupts. Nothing else in the plugin
-  creates a grant.
+  `careercoach_verify_fill` read-back diff was empty) and was not re-planned or changed since. A
+  (re)built plan starts unverified — `formfill` resets verification on every plan write — so a plan
+  that was re-planned, or a different plan, is never already-verified and is refused here. Only when
+  it is genuinely verified does the tool pause the turn with `langgraph.types.interrupt` and show the
+  operator an approval card (company, role, the planned field→value table). It grants a
+  **one-shot, time-limited** authorization (120s) **only** on an explicit approve; a decline, a vague
+  answer, or a **headless/autonomous turn with no operator to answer** all refuse, and the headless
+  case never interrupts. Nothing else in the plugin creates a grant.
 - **Submit clicks are blocked, not trusted.** An `AgentMiddleware` (`wrap_tool_call`) inspects every
-  tool call and short-circuits any **submit-like** browser call — a submit/apply/finish click, an
+  tool call and short-circuits any **submit-like** browser call — a submit/finish click, an
   Enter/Return press, a `.submit()` / `requestSubmit` eval — unless a live grant exists, which it then
   consumes. A blocked call returns a `ToolMessage` on the same `tool_call_id` and the browser tool
-  never runs. Non-submit calls pass through untouched.
+  never runs. A job board's "Apply" / "Apply now" button (which only **opens** the form, before any
+  fill session exists) and an "Apply filters" listing control are **not** submit-like, so they pass
+  through untouched — gating them would dead-end the flow and could spend the grant on a harmless
+  click. Every other non-submit call passes through too.
 
 **The limits, stated plainly.** This is **defense in depth over the browser tools — it does not
 sandbox the browser.** It stops the *agent* from clicking submit without an operator's unforgeable

@@ -65,8 +65,11 @@ def test_is_submit_like_positives(submitgate):
     assert submitgate.is_submit_like("browser_click", {"selector": "button[type=submit]"})
     assert submitgate.is_submit_like("browser_press", {"key": "Enter"})
     assert submitgate.is_submit_like("browser_eval", {"script": "document.forms[0].requestSubmit()"})
-    # case-insensitive, and the other verbs / the quoted type attribute
-    assert submitgate.is_submit_like("browser_click", {"selector": "APPLY NOW"})
+    # case-insensitive, the other send verbs, and the quoted type attribute
+    assert submitgate.is_submit_like("browser_click", {"selector": "SUBMIT YOUR APPLICATION"})
+    assert submitgate.is_submit_like("browser_click", {"selector": "Send your application"})
+    assert submitgate.is_submit_like("browser_click", {"selector": "Complete application"})
+    assert submitgate.is_submit_like("browser_click", {"selector": "Finish"})
     assert submitgate.is_submit_like("browser_click", {"selector": 'input[type="submit"]'})
     assert submitgate.is_submit_like("browser_press", {"key": "Return"})
     assert submitgate.is_submit_like("browser_eval", {"script": "form.submit()"})
@@ -77,8 +80,16 @@ def test_is_submit_like_negatives(submitgate):
     assert not submitgate.is_submit_like("browser_click", {"selector": "Country"})
     assert not submitgate.is_submit_like("browser_press", {"key": "Tab"})
     assert not submitgate.is_submit_like("browser_eval", {"script": "document.querySelector('#name').value"})
-    # a bare programmatic click with no submit/apply word is not a submit
+    # a bare programmatic click with no send word is not a submit
     assert not submitgate.is_submit_like("browser_eval", {"script": "document.querySelector('.menu').click()"})
+    # "Apply" OPENS the application form (before any fill session exists) and "Apply filters" is a
+    # listing control — neither is the final submit, so neither is gated. Regression: a bare
+    # \bapply\b matched "Apply filters" and the open-form "Apply", which dead-ended the normal flow
+    # and could spend the one-shot grant on a harmless click, refusing the real submit.
+    assert not submitgate.is_submit_like("browser_click", {"selector": "Apply"})
+    assert not submitgate.is_submit_like("browser_click", {"selector": "Apply now"})
+    assert not submitgate.is_submit_like("browser_click", {"selector": "Apply filters"})
+    assert not submitgate.is_submit_like("browser_eval", {"script": "document.querySelector('.apply-btn').click()"})
     # other browser tools never read as submit, whatever their args
     assert not submitgate.is_submit_like("browser_fill", {"selector": "Submit", "value": "x"})
     assert not submitgate.is_submit_like("browser_upload", {"selector": "Submit"})
@@ -158,6 +169,26 @@ def test_middleware_passes_non_submit_calls_untouched(gate):
     assert gate.submitgate.active_grant() == "sid-1"
 
 
+def test_middleware_lets_an_apply_click_through_without_spending_the_grant(gate):
+    # Regression: an "Apply" button opens the form and "Apply filters" is a listing control —
+    # neither is a submit, so with a live grant the middleware passes them through untouched and
+    # does NOT consume the one-shot grant, leaving it for the real submit click.
+    gate.submitgate.grant("sid-1")
+    ran = []
+    for label in ("Apply", "Apply now", "Apply filters"):
+        out = gate.middleware.wrap_tool_call(
+            FakeReq("browser_click", {"selector": label}), lambda req: ran.append(label) or "RAN"
+        )
+        assert out == "RAN"
+    assert ran == ["Apply", "Apply now", "Apply filters"]  # every harmless click ran
+    assert gate.submitgate.active_grant() == "sid-1"  # the grant is still live for the real submit
+
+    submit = gate.middleware.wrap_tool_call(
+        FakeReq("browser_click", {"selector": "Submit application"}), lambda req: "SUBMITTED"
+    )
+    assert submit == "SUBMITTED" and gate.submitgate.active_grant() is None  # now it's spent
+
+
 # ── careercoach_request_submit ──────────────────────────────────────────────────────────────
 def test_request_submit_refuses_unverified_session(gate, monkeypatch):
     # A planned-but-not-verified session (no read-back diff recorded yet).
@@ -173,12 +204,39 @@ def test_request_submit_refuses_unverified_session(gate, monkeypatch):
     assert gate.submitgate.active_grant() is None
 
 
-def test_request_submit_refuses_when_plan_changed(gate):
-    # The plan-hash guard, as a unit: verified but the recorded hash no longer matches the id.
-    ok, _ = gate.plugin._submit_ready({"verified": True, "rows_hash": "sid-xyz"}, "sid-xyz")
-    assert ok is True
-    changed, reason = gate.plugin._submit_ready({"verified": True, "rows_hash": "STALE"}, "sid-xyz")
-    assert changed is False and "changed" in reason
+def test_submit_ready_requires_verified(gate):
+    # _submit_ready as a unit: a verified session is ready; anything unverified is refused with a
+    # readable reason. (There is no dead rows-hash compare — "changed since verified" is enforced by
+    # formfill resetting verification on every plan write, exercised below.)
+    ok, reason = gate.plugin._submit_ready({"verified": True}, "sid-xyz")
+    assert ok is True and reason == ""
+    blocked, reason = gate.plugin._submit_ready({"verified": False}, "sid-xyz")
+    assert blocked is False and "VERIFIED" in reason
+    missing, reason = gate.plugin._submit_ready(None, "sid-xyz")
+    assert missing is False and reason
+
+
+def test_request_submit_refuses_after_a_replan(gate, monkeypatch):
+    """A verified session that is re-planned comes back UNVERIFIED and is refused WITHOUT asking the
+    operator. Re-planning (even the identical form) is a new fill cycle that was never read back, so
+    this is the real 'plan changed since it was verified' guard — a formfill reset, not a hash
+    compare that can never fail (the old guard: session_id IS the rows hash, which
+    record_verification recomputes identically)."""
+    ff = gate.formfill
+    sid = _verified_session(ff)
+    assert ff.is_verified(sid) is True
+
+    # Re-plan the SAME one-field form: identical rows → same session id, but verification is cleared.
+    again = ff.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
+    assert again["session_id"] == sid and ff.is_verified(sid) is False
+
+    monkeypatch.setattr(gate.plugin, "_turn_is_headless", lambda: False)
+    monkeypatch.setattr(
+        gate.plugin, "_submitgate_interrupt", lambda payload: pytest.fail("must not interrupt a re-planned session")
+    )
+    out = gate.tool.invoke({"session_id": sid})
+    assert "not authorized" in out.lower()
+    assert gate.submitgate.active_grant() is None
 
 
 def test_request_submit_refuses_headless_and_does_not_interrupt(gate, monkeypatch):

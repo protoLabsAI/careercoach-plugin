@@ -934,15 +934,21 @@ def _is_submit_approval(answer) -> bool:
 
 
 def _submit_ready(session, session_id: str) -> tuple[bool, str]:
-    """Whether a fill session is safe to authorize for submit: it must be VERIFIED (its latest
-    read-back diff was empty) AND its verified plan hash must still match the session id (the plan
-    hasn't changed since). Returns ``(ok, reason)`` — ``reason`` is empty when ``ok``."""
+    """Whether a fill session is safe to authorize for submit: it must be VERIFIED — its latest
+    ``careercoach_verify_fill`` read-back diff was empty, AND that verification describes the plan as
+    it stands now. "Changed since it was verified" is enforced upstream: ``formfill`` resets
+    verification on every ``build_plan`` write (a session is keyed by its rows hash, so a changed
+    plan is a different session, and a re-plan of the SAME rows comes back unverified until read back
+    again). So a plan that was re-planned or changed since its last verification reads as not-verified
+    here and is refused WITHOUT asking the operator. Returns ``(ok, reason)`` — ``reason`` is empty
+    when ``ok``."""
     if not isinstance(session, dict):
         return False, "no fill plan was found for this session."
     if not session.get("verified"):
-        return False, "this form isn't VERIFIED yet — its latest read-back diff wasn't empty."
-    if session.get("rows_hash") != session_id:
-        return False, "the fill plan changed since it was verified."
+        return False, (
+            "this form isn't VERIFIED — its latest read-back diff wasn't empty, or the plan was "
+            "re-planned or changed since it was last verified."
+        )
     return True, ""
 
 
@@ -996,10 +1002,11 @@ def _register_submit_gate(registry) -> None:
         explicit approval) unlock exactly one submit click for 120 seconds.
 
         This is a HARD gate, not a suggestion: the submit-gate middleware BLOCKS every submit-like
-        browser call (a submit/apply click, an Enter press, a ``.submit()`` eval) unless this tool
-        has recorded an operator grant, and the grant is one-shot and time-limited. It is defense in
-        depth over the browser tools — it does not sandbox the browser, and the operator can always
-        submit by hand in the visible browser.
+        browser call (a submit/finish click, an Enter press, a ``.submit()`` eval) unless this tool
+        has recorded an operator grant, and the grant is one-shot and time-limited. A job board's
+        "Apply" / "Apply now" button only OPENS the form and is not gated. It is defense in depth
+        over the browser tools — it does not sandbox the browser, and the operator can always submit
+        by hand in the visible browser.
 
         `session_id` is the id from careercoach_plan_fill. This REFUSES, without asking the operator,
         unless that session is VERIFIED (careercoach_verify_fill found no mismatches on the latest

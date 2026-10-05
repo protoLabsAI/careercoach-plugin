@@ -240,6 +240,25 @@ def test_an_empty_diff_verifies_and_a_later_mismatch_unverifies(formfill):
     assert rec["last_diff"] and rec["last_diff"][0]["actual"] == "Afghanistan"
 
 
+def test_rebuilding_a_plan_resets_verification(formfill):
+    # A verified session that is re-planned — even the identical form, which hashes to the same id —
+    # comes back UNVERIFIED: verification describes one fill-then-read-back cycle, so the browser must
+    # be filled and read back again before the plan counts as verified. This is what stops a re-plan
+    # from being submitted without a fresh read-back. Creation time survives the rewrite.
+    form = [field("Email", "email", name="email", required=True)]
+    plan = formfill.build_plan(form, {"email": "ada@example.com"})
+    sid = plan["session_id"]
+    formfill.record_verification(sid, [])
+    assert formfill.is_verified(sid) is True
+    created = formfill.load_session(sid)["created"]
+
+    again = formfill.build_plan(form, {"email": "ada@example.com"})
+    assert again["session_id"] == sid  # identical rows → same session id
+    assert formfill.is_verified(sid) is False  # but the prior verification was cleared
+    rec = formfill.load_session(sid)
+    assert rec["last_diff"] is None and rec["verified_at"] == "" and rec["created"] == created
+
+
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_formfill_has_no_host_imports():
     from pathlib import Path

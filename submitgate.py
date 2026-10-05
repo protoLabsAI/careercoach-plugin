@@ -13,8 +13,9 @@ Two pure, host-free pieces:
   browser call, and nothing else creates one. It lives in memory on purpose: an authorization to
   click submit should not survive a restart, a checkpoint, or a copy to another turn.
 * **submit detection** — ``is_submit_like(tool_name, args)`` recognises the browser calls that
-  would send an application (a submit/apply click, an Enter press, a ``.submit()`` eval), so the
-  middleware knows which calls to gate.
+  would send an application (a submit/finish click, an Enter press, a ``.submit()`` eval), so the
+  middleware knows which calls to gate. It does NOT gate a job board's "Apply" / "Apply now" button
+  (that OPENS the form) or an "Apply filters" listing control — those are not submits.
 
 **Limits, stated plainly.** This is defense in depth *over the browser tools* — it does NOT
 sandbox the browser. It stops the *agent* from clicking submit without an unforgeable operator
@@ -100,11 +101,18 @@ def clear() -> None:
 
 
 # ── submit detection ──────────────────────────────────────────────────────────────────────
-# A click target (selector or visible text) that sends the application. Word boundaries keep
-# "Attach" / "Country" / "Apply filters"-style labels from reading as submit — only the real
-# verbs trip it. The phrases allow flexible whitespace ("Send  Application").
+# A click target (selector or visible text) that SENDS the application. We deliberately do NOT match
+# a bare "apply": on a job board "Apply" / "Apply now" OPENS the form (it happens before any fill
+# session exists, so it could never be authorized) and "Apply filters" is a listing control — a
+# \bapply\b would match both, so gating them would dead-end the normal flow AND could spend the
+# one-shot grant on a harmless click, refusing the real submit. The send verbs are "submit", "send
+# application", "complete application" and "finish". The phrases allow flexible whitespace and an
+# intervening "your"/"my"/"the" ("Send your application").
 _SUBMIT_WORDS = re.compile(
-    r"\bsubmit\b|\bapply\b|send\s+application|\bfinish\b|complete\s+application",
+    r"\bsubmit\b"
+    r"|send\s+(?:your\s+|my\s+|the\s+)?application"
+    r"|complete\s+(?:your\s+|my\s+|the\s+)?application"
+    r"|\bfinish\b",
     re.IGNORECASE,
 )
 # A submit-typed control, however the selector spells it: type=submit, type="submit",
@@ -149,8 +157,8 @@ def _is_submit_eval(args) -> bool:
     low = script.lower()
     if ".submit(" in low or "requestsubmit" in low:
         return True
-    # A programmatic click counts only when it targets a submit/apply control — a plain
-    # ``.click()`` on some other element (or a read-only eval) is not a submit.
+    # A programmatic click counts only when it targets a submit control — a plain ``.click()`` on
+    # some other element (or a read-only eval) is not a submit.
     if ".click(" in low and (_SUBMIT_WORDS.search(script) or _SUBMIT_TYPE.search(script)):
         return True
     return False
@@ -159,11 +167,12 @@ def _is_submit_eval(args) -> bool:
 def is_submit_like(tool_name: object, args: object) -> bool:
     """Whether a tool call would submit a job application.
 
-    ``True`` for: a ``browser_click`` whose target text matches submit / apply / send
-    application / finish / complete application (case-insensitive) or carries ``type=submit``;
-    a ``browser_press`` of Enter / Return; a ``browser_eval`` whose script contains ``.submit(``,
-    ``requestSubmit``, or ``.click()`` alongside a submit/apply word. Every other call — including
-    ``browser_fill`` / ``browser_select`` / ``browser_upload`` / ``browser_form_read`` — is
+    ``True`` for: a ``browser_click`` whose target text matches submit / send application /
+    complete application / finish (case-insensitive) or carries ``type=submit``; a ``browser_press``
+    of Enter / Return; a ``browser_eval`` whose script contains ``.submit(``, ``requestSubmit``, or
+    ``.click()`` alongside one of those send verbs. A bare "Apply" / "Apply now" (opens the form) or
+    "Apply filters" (a listing control) is NOT a submit and is ``False``. Every other call —
+    including ``browser_fill`` / ``browser_select`` / ``browser_upload`` / ``browser_form_read`` — is
     ``False`` and passes the gate untouched."""
     name = _text(tool_name).strip().lower()
     if name == "browser_click":
