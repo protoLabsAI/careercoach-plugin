@@ -222,8 +222,13 @@ def test_missing_for_resume_reports_name_resume_and_the_contact_line(resume):
     assert resume.missing_for_resume(_profile(resume="## Experience\n- Did a thing")) == ["contact"]
     # a body with a Contact: line and sections is buildable
     assert resume.missing_for_resume(_profile(resume="Contact: a@b.com\n\n## Experience\n- X")) == []
-    # a header-only body (no `## ` section) is not forced to carry a contact line — it's just "resume"-less…
-    assert resume.missing_for_resume(_profile(resume="Headline: Engineer")) == []
+    # a non-empty body with no `Contact:` line is refused even without `## ` sections — an
+    # employer-bound résumé always carries a way to reach the operator (the old name/contact/roles
+    # guarantee: a résumé is never built without contact details).
+    assert resume.missing_for_resume(_profile(resume="Headline: Engineer")) == ["contact"]
+    assert resume.missing_for_resume(_profile(resume="Seasoned engineer.")) == ["contact"]
+    # a header-only body WITH a Contact: line (no `## ` sections) is buildable
+    assert resume.missing_for_resume(_profile(resume="Headline: Engineer\nContact: a@b.com")) == []
 
 
 def test_pdf_name_slugs_the_company(resume):
@@ -254,9 +259,29 @@ def test_annotation_lines_scans_the_name_too(resume):
 
 
 def test_annotation_lines_truncates_a_long_line(resume):
-    long = "do not " + "x" * 300
+    long = "TENURE NOTE: " + "x" * 300
     hits = resume.annotation_lines(_profile(resume=f"Contact: a@b.com\n\n## X\n- {long}"))
     assert hits and len(hits[0]) <= 120 and hits[0].endswith("…")
+
+
+def test_annotation_lines_does_not_flag_ordinary_resume_prose(resume):
+    """A marker is matched only as a whole token, so common résumé lines that merely contain a
+    marker's letters are NOT refused — the regression that failed review (a legitimate operator
+    body flagged as coaching notes). Each line below would have false-matched the old substring
+    scan ('on request', 'note:', 'tenure', 'confirmed by', 'do not')."""
+    body = (
+        "Contact: pat@example.com\n"
+        "\n"
+        "## Experience\n"
+        "### Tenure-track Assistant Professor — State University · 2018–\n"
+        "- Keynote: scaling systems to a million users\n"
+        "- Results confirmed by an independent audit\n"
+        "- Do not hesitate to ask about the architecture\n"
+        "\n"
+        "## References\n"
+        "- References available on request"
+    )
+    assert resume.annotation_lines(_profile(name="Pat Developer", resume=body)) == []
 
 
 # ── the module honours the host-free contract ──────────────────────────────────────────

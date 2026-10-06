@@ -58,29 +58,40 @@ SECTIONS_USED: tuple[tuple[str, str], ...] = (("resume", "Résumé body"),)
 REQUIRED_FIELDS: tuple[str, ...] = ("name", "resume")
 
 # Coach-note markers (case-insensitive). The résumé body must hold only employer-facing text; if any
-# line of ``name`` or the ``resume`` body contains one of these, the tool REFUSES and writes nothing
+# line of ``name`` or the ``resume`` body carries one of these, the tool REFUSES and writes nothing
 # rather than print — or silently strip — an internal annotation. Modelled on the 2026-10-05 leak.
+#
+# Each marker is matched as a WHOLE TOKEN (``_MARKER_RE`` guards both word-character edges), never as
+# a bare substring, because a bare-substring scan flagged ordinary résumé prose: "Keynote:" is not
+# "note:", "Tenure-track Assistant Professor" is not a tenure ruling, "References available on
+# request" / "Results confirmed by audit" / "Do not hesitate to reach out" are all clean. For the
+# same reason the broadest phrases are NOT markers — ``do not`` (kept only as ``do not claim`` /
+# ``do not let``), bare ``tenure`` (its leak forms are caught by ``ruling`` / ``note:``), ``confirmed
+# by`` (caught by ``by josh``) and ``on request`` (standard résumé boilerplate) — each matched too
+# much legitimate text to earn its place. The leak's actual annotations are still caught.
 ANNOTATION_MARKERS: tuple[str, ...] = (
-    "do not",
     "don't let",
-    "date resolved",
-    "tenure",
-    "★",
+    "do not let",
     "do not claim",
+    "date resolved",
+    "★",
     "not evidenced",
     "positioning:",
-    "confirmed by",
     "unconfirmed",
     "ruling",
     "inherited stack",
     "hard constraint",
     "re-litigate",
-    "on request",
     "evidence, not",
     "verified in-browser",
     "note:",
     "by josh",
 )
+
+# Every marker, bounded so it only matches as a whole token: no word character may sit immediately
+# before or after it (the line edge counts as a boundary). So ``note:`` matches "TENURE NOTE:" but
+# not "Keynote:", and ``ruling`` matches "TENURE RULING" but not "ruling-class". Built once at import.
+_MARKER_RE = re.compile("|".join(rf"(?<!\w){re.escape(m)}(?!\w)" for m in ANNOTATION_MARKERS), re.I)
 
 # Inline, self-contained, ATS-safe CSS — the same contract the shipped resume templates hold:
 # single column, standard headings, no ligatures, a real generic font fallback, and entries that
@@ -305,9 +316,11 @@ def _render_sections(rest: str) -> list[str]:
 
 def annotation_lines(prof: dict) -> list[str]:
     """Lines of ``name`` or the ``resume`` body that carry a coach-note marker (``ANNOTATION_MARKERS``,
-    case-insensitive) — defense in depth against the 2026-10-05 leak. Each offending line is returned
-    trimmed to ~120 characters; an empty list means the body is clean. The résumé tool quotes these
-    and refuses rather than print (or silently strip) an internal annotation."""
+    case-insensitive, matched as whole tokens — see ``_MARKER_RE``) — defense in depth against the
+    2026-10-05 leak. Each offending line is returned trimmed to ~120 characters; an empty list means
+    the body is clean. Whole-token matching keeps ordinary résumé prose ("Keynote:", "Tenure-track",
+    "References available on request") out of the hit list. The résumé tool quotes these and refuses
+    rather than print (or silently strip) an internal annotation."""
     ident = prof.get("identity") or {}
     sect = prof.get("sections") or {}
     hits: list[str] = []
@@ -316,8 +329,7 @@ def annotation_lines(prof: dict) -> list[str]:
             line = raw.strip()
             if not line:
                 continue
-            low = line.lower()
-            if any(marker in low for marker in ANNOTATION_MARKERS):
+            if _MARKER_RE.search(line):
                 hits.append(line if len(line) <= 120 else line[:119] + "…")
     return hits
 
@@ -326,9 +338,11 @@ def missing_for_resume(prof: dict) -> list[str]:
     """What a résumé cannot be built without, empty when it's buildable:
 
     * ``name`` and/or ``resume`` — the REQUIRED_FIELDS that are empty (no name, or no approved body);
-    * ``contact`` — when the body HAS ``## `` sections but no ``Contact:`` header line, so the
-      résumé would carry no way to reach the operator (refused, as the old renderer refused a missing
-      contact). Reported as the code ``contact``; the tool names it "résumé Contact line"."""
+    * ``contact`` — when the body has text to render but NO ``Contact:`` header line, so the résumé
+      would carry no way to reach the operator. This preserves the old renderer's guarantee that a
+      résumé is never built without contact details — it holds for any non-empty body (a header or
+      summary only, or ``## `` sections), not just one with sections. Reported as the code
+      ``contact``; the tool names it "résumé Contact line"."""
     ident = prof.get("identity") or {}
     sect = prof.get("sections") or {}
     missing: list[str] = []
@@ -337,10 +351,12 @@ def missing_for_resume(prof: dict) -> list[str]:
         if not str(source.get(field) or "").strip():
             missing.append(field)
     if "resume" not in missing:
+        # "resume" not missing ⇒ the body is non-empty; an employer-bound résumé always needs a way
+        # to reach the operator, so a body with no ``Contact:`` header line is refused.
         body = str(sect.get("resume") or "").strip()
-        pre, rest = _split_resume_body(body)
+        pre, _rest = _split_resume_body(body)
         _, _, contact, _ = _parse_header(pre)
-        if rest.strip() and not contact:
+        if not contact:
             missing.append("contact")
     return missing
 

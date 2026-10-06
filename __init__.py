@@ -509,9 +509,9 @@ def _register_packet_tools(registry, cfg) -> None:
         If the `resume` section is empty, this writes nothing and tells you to draft a clean résumé
         body, show it to the operator, and save it with `careercoach_update_profile(field="resume",
         …, mode="replace")` only after they approve it. It also refuses if the body carries any coach
-        annotation (quoting the offending lines) or has `## ` sections but no `Contact:` line.
-        Otherwise it writes `Resume/resume.html` and returns its `file://` URL plus the exact next
-        steps:
+        annotation (quoting the offending lines) or has no `Contact:` line (an employer-bound résumé
+        always carries a way to reach the operator). Otherwise it writes `Resume/resume.html` and
+        returns its `file://` URL plus the exact next steps:
           1. `browser_open <url>`
           2. `browser_pdf("resume-<company>.pdf")`
           3. pass the path `browser_pdf` returns to `browser_upload`.
