@@ -1808,6 +1808,9 @@ def _register_job_watch(registry, cfg) -> None:
                     limit=25,
                     api_key=cfg.get("jobs_api_key", ""),
                     provider=cfg.get("jobs_provider", "auto"),
+                    # find_new_matches scores against EVERY target role; filtering on the
+                    # first role here would drop postings that only match a later one.
+                    rank=False,
                 )
             ).jobs
         except Exception as e:  # noqa: BLE001

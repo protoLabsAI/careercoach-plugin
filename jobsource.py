@@ -157,11 +157,13 @@ async def search_jobs(
     limit: int = 10,
     api_key: str = "",
     provider: str = "auto",
+    rank: bool = True,
 ) -> JobSearch:
     """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
     naming the provider that answered. Remotive's results are filtered to the query and ranked
-    by ``prescore`` before ``limit`` is applied. Raises ``ValueError`` if jsearch is selected
-    without a key."""
+    by ``prescore`` before ``limit`` is applied, unless ``rank=False`` (a caller that scores
+    the raw feed itself against more than this one query, like the watch scan). Raises
+    ``ValueError`` if jsearch is selected without a key."""
     limit = max(1, min(int(limit), 25))
     prov = choose_provider(provider, api_key)
     keyless = (provider or "auto").strip().lower() == "auto" and prov == "remotive"
@@ -175,7 +177,7 @@ async def search_jobs(
     else:
         raw = await _get_remotive(query)
         fetched = len(raw)
-        jobs = rank_by_query(raw, query)
+        jobs = rank_by_query(raw, query) if rank else raw
     return JobSearch(jobs=jobs[:limit], provider=prov, keyless_fallback=keyless, fetched=fetched, matched=len(jobs))
 
 
