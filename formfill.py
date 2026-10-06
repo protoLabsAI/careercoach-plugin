@@ -217,16 +217,24 @@ def _norm_option(text: object) -> str:
 # normalized form is in this set is a DECLINE answer, and is matched to an option whose normalized
 # form is ALSO in it — so a stored "Decline to self-identify" resolves to a form's "Decline To Self
 # Identify" or "I don't wish to answer". This equivalence applies to decline answers ONLY, and only
-# when exactly one option qualifies; it is not a general synonym table.
+# when exactly one option qualifies; it is not a general synonym table. It is kept deliberately
+# narrow — every entry is unambiguously a refusal to disclose, so a non-decline answer can never
+# fold into it.
 _DECLINE_FORMS = frozenset(
     {
         "decline to self identify",
         "decline to answer",
+        "decline to state",
         "prefer not to say",
         "i dont wish to answer",
         "i do not wish to answer",
         "i dont want to answer",
+        "i do not want to answer",
         "prefer not to answer",
+        "i prefer not to answer",
+        "i prefer not to say",
+        "prefer not to disclose",
+        "i choose not to disclose",
         "decline",
     }
 )
@@ -662,6 +670,21 @@ def _values_equal(expected: str, actual: str, row: dict) -> bool:
         return a == b or (len(min(a, b, key=len)) >= 7 and (a.endswith(b) or b.endswith(a)))
     if row.get("action") == UPLOAD:
         return _basename(expected).lower() == _basename(actual).lower()
+    # A self-ID SELECT the reader gave no options for (``options_unknown`` — a react-select combobox)
+    # was planned with the stored decline wording VERBATIM, so the filler picks the form's OWN decline
+    # option, whose text differs ("Decline To Self Identify", "I don't wish to answer"). When the plan
+    # value is itself a recognized decline, any decline-equivalent read-back counts as equal — but ONLY
+    # decline↔decline: an empty actual ("") and a non-decline one ("Male", "I am not a protected
+    # veteran") are not in ``_DECLINE_FORMS`` and fall through to the exact comparison below, staying
+    # mismatches. Rows WITH known options never reach here (``build_plan`` already resolved them to the
+    # real option), so they keep exact matching.
+    if (
+        row.get("action") == SELECT
+        and row.get("options_unknown")
+        and _norm_option(expected) in _DECLINE_FORMS
+        and _norm_option(actual) in _DECLINE_FORMS
+    ):
+        return True
     return _norm(expected) == _norm(actual)
 
 

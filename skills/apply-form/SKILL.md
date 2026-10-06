@@ -89,6 +89,11 @@ Follow the plan line by line:
   country BEFORE the number, because changing the country rewrites the number field.
 - `browser_fill` for text inputs.
 - `browser_upload` for file fields (the résumé PDF, and anything else the plan marks as an upload).
+- For a self-ID select whose options the reader couldn't list (Gender, Hispanic/Latino, Veteran
+  status often read back with no options), the plan carries your stored "Decline to self-identify"
+  verbatim. Pick the form's OWN decline-to-answer option — its exact wording varies ("Decline To
+  Self Identify", "I don't wish to answer") — and `careercoach_verify_fill` accepts any decline
+  wording for that field, so you don't need its exact text.
 
 ### 7. Read back and verify until VERIFIED
 `browser_form_read` the filled form and pass it to `careercoach_verify_fill(session_id, form_json)`.

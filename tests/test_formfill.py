@@ -353,6 +353,79 @@ def test_match_option_folds_case_and_punctuation_but_not_synonyms(formfill):
     assert formfill._match_option("Prefer not to say", ["Male", "Female"]) is None
 
 
+# ── verify_fill: a decline on an options_unknown self-ID select accepts any decline wording (bug 3) ──
+def combobox_gender(*, required=False):
+    """The GitLab-Greenhouse shape that broke: a react-select Gender combobox browser_form_read gives
+    NO options for, so build_plan carries the stored decline VERBATIM and flags it options_unknown."""
+    return field("Gender", "combobox", name="gender", id="gender", required=required)
+
+
+def test_verify_accepts_any_decline_wording_for_an_options_unknown_select(formfill):
+    # r1: the Gender combobox read back with no options, so the plan holds "Decline to self-identify"
+    # verbatim and flags options_unknown. A read-back of EITHER real form wording — the
+    # case/punctuation-different "Decline To Self Identify" or the wholly different "I don't wish to
+    # answer" — verifies clean, with no exact-text or extra_answers workaround.
+    plan = formfill.build_plan([combobox_gender()], {"gender": "Decline to self-identify"})
+    row = next(r for r in plan["rows"] if r["key"] == "gender")
+    assert row["value"] == "Decline to self-identify" and row["options_unknown"] is True
+
+    for wording in ("Decline To Self Identify", "I don't wish to answer"):
+        after = [field("Gender", "combobox", name="gender", id="gender", value=wording)]
+        assert formfill.diff(plan, after) == [], wording
+
+
+def test_a_non_decline_or_empty_readback_of_a_decline_select_is_still_a_mismatch(formfill):
+    # r2: the equivalence is decline↔decline ONLY. A non-decline wording ("Male") and an empty field
+    # each stay mismatches — the self-ID question did NOT end up answered "decline".
+    plan = formfill.build_plan([combobox_gender()], {"gender": "Decline to self-identify"})
+    for actual in ("Male", ""):
+        after = [field("Gender", "combobox", name="gender", id="gender", value=actual)]
+        mism = formfill.diff(plan, after)
+        assert len(mism) == 1 and mism[0]["actual"] == actual, actual
+
+
+def test_a_known_option_select_still_requires_the_exact_planned_option(formfill):
+    # r3: when the reader DID list options, build_plan resolved the decline to the form's real option
+    # and the row is NOT options_unknown — so verification is exact. A DIFFERENT decline wording in the
+    # read-back ("I don't wish to answer" where the form's option was "Decline To Self Identify") is a
+    # mismatch: the options_unknown tolerance does not apply to a row whose options were known.
+    form = [field("Gender", "select", name="gender", id="gender", options=GENDER_OPTIONS)]
+    plan = formfill.build_plan(form, {"gender": "Decline to self-identify"})
+    row = next(r for r in plan["rows"] if r["key"] == "gender")
+    assert row["value"] == "Decline To Self Identify" and "options_unknown" not in row
+
+    after = [
+        field("Gender", "select", name="gender", id="gender", value="I don't wish to answer", options=GENDER_OPTIONS)
+    ]
+    mism = formfill.diff(plan, after)
+    assert len(mism) == 1 and mism[0]["actual"] == "I don't wish to answer"
+
+
+def test_a_non_decline_options_unknown_select_still_mismatches_on_change(formfill):
+    # r2: options_unknown does NOT loosen matching for a non-decline value. An operator's one-off
+    # "Senior" planned on a no-option combobox must read back exactly — "Junior" is a mismatch.
+    form = [field("Role level", "combobox", name="level", id="level", required=True)]
+    plan = formfill.build_plan(form, {}, {"level": "Senior"})
+    row = next(r for r in plan["rows"] if r.get("id") == "level")
+    assert row["options_unknown"] is True
+    after = [field("Role level", "combobox", name="level", id="level", required=True, value="Junior")]
+    mism = formfill.diff(plan, after)
+    assert len(mism) == 1 and mism[0]["expected"] == "Senior" and mism[0]["actual"] == "Junior"
+
+
+def test_plan_tells_the_filler_to_pick_the_forms_decline_option(tools, answers):
+    # r4: the rendered plan line for an options_unknown decline row instructs the filler to pick the
+    # form's OWN decline option and says verify_fill accepts any decline wording for the field.
+    import json
+
+    answers.propose("gender", "Decline to self-identify")
+    answers.confirm(["gender"])
+    form = [field("Gender", "combobox", name="gender", id="gender", required=True)]
+    out = tools["careercoach_plan_fill"].invoke({"form_json": json.dumps(form), "company": "Acme", "role": "SWE"})
+    assert "decline-to-answer option" in out
+    assert "accepts any decline wording" in out
+
+
 # ── same-label file fields: route the résumé, never onto the cover letter ───────────────────
 def two_attach_fields(*, resume_required=True, cover_required=False):
     """The GitLab-Greenhouse shape that broke: BOTH file inputs are labelled "Attach"; only the

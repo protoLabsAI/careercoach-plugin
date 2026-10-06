@@ -821,7 +821,23 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 continue
             value = r.get("value", "")
             shown = value if action != formfill.UPLOAD else f"{value}  (browser_upload this file)"
-            out.append(f"  {i}. [{action}] {target} -> {shown}")
+            # A self-ID select whose options the reader couldn't list (options_unknown) is planned with
+            # the stored decline wording verbatim — which is usually NOT the form's exact option text. Tell
+            # the filler to pick the form's OWN decline-to-answer option, and that verify_fill accepts any
+            # decline wording for this field, so a wording mismatch here isn't treated as a real mismatch.
+            if (
+                action == formfill.SELECT
+                and r.get("options_unknown")
+                and formfill._norm_option(value) in formfill._DECLINE_FORMS
+            ):
+                out.append(
+                    f"  {i}. [{action}] {target} -> {shown}  "
+                    "(options weren't readable; pick the form's OWN decline-to-answer option — "
+                    'e.g. "Decline To Self Identify" or "I don\'t wish to answer" — '
+                    "careercoach_verify_fill accepts any decline wording for this field)"
+                )
+            else:
+                out.append(f"  {i}. [{action}] {target} -> {shown}")
     else:
         out.append("  (nothing to fill from saved answers)")
 
