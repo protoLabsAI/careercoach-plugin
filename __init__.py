@@ -497,14 +497,21 @@ def _register_packet_tools(registry, cfg) -> None:
     @tool
     def careercoach_render_resume(company: str = "") -> str:
         """Render the operator's résumé as a standalone HTML file in their workspace, ready to be
-        turned into a PDF an ATS form will accept. It REFORMATS the verified operator profile (name,
-        location, contact, headlines, and the roles/education/skills sections) into a self-contained,
-        print-correct document and ADDS NO CLAIMS — nothing that isn't already in the confirmed
-        profile reaches the page, and `do_not_claim`, `stories` and `notes` are never included.
+        turned into a PDF an ATS form will accept. It prints ONLY the operator-approved résumé body
+        — the `resume` profile section plus the operator's `name` — into a self-contained,
+        print-correct document and ADDS NO CLAIMS. It does NOT read the coach's working record
+        (`location`, `contact`, `headlines`, `roles`, `skills`, `education`, `do_not_claim`,
+        `stories`, `notes`): those fields carry internal coaching annotations and must never reach an
+        employer (a 2026-10-05 PDF leaked exactly that). The `resume` body is: optional `Headline:` /
+        `Location:` / `Contact:` header lines and a summary before the first `## ` heading, then
+        `## ` sections (`### ` role headings and `-` bullets inside).
 
-        If the profile is missing a name, contact details or any roles, this writes nothing and
-        tells you which fields to fill (run /setup-coach). Otherwise it writes `Resume/resume.html`
-        and returns its `file://` URL plus the exact next steps:
+        If the `resume` section is empty, this writes nothing and tells you to draft a clean résumé
+        body, show it to the operator, and save it with `careercoach_update_profile(field="resume",
+        …, mode="replace")` only after they approve it. It also refuses if the body carries any coach
+        annotation (quoting the offending lines) or has no `Contact:` line (an employer-bound résumé
+        always carries a way to reach the operator). Otherwise it writes `Resume/resume.html` and
+        returns its `file://` URL plus the exact next steps:
           1. `browser_open <url>`
           2. `browser_pdf("resume-<company>.pdf")`
           3. pass the path `browser_pdf` returns to `browser_upload`.
@@ -518,20 +525,44 @@ def _register_packet_tools(registry, cfg) -> None:
             return f"Not rendered: {profile.unreadable_block(err)}"
         missing = resume.missing_for_resume(prof)
         if missing:
-            labels = {**profile.IDENTITY_FIELDS, **profile.SECTIONS}
-            named = ", ".join(f"{m} ({labels.get(m, m)})" for m in missing)
+            needs = []
+            if "name" in missing:
+                needs.append("a name")
+            if "resume" in missing:
+                needs.append("the operator-approved résumé body (the `resume` section)")
+            if "contact" in missing:
+                needs.append("a `Contact:` line in the résumé body (résumé Contact line)")
             return (
-                f"Not rendered — the profile is missing what a résumé needs: {named}. Nothing was "
-                "written. Record it with the operator (run /setup-coach), then try again. A résumé is "
-                "never built from an incomplete profile."
+                f"Not rendered — a résumé needs {', and '.join(needs)}. Nothing was written. Draft a "
+                "clean, employer-facing résumé body (a `Contact:` header line, optional `Headline:` / "
+                "`Location:` lines, then `## ` sections), SHOW it to the operator, and save it with "
+                'careercoach_update_profile(field="resume", content=…, mode="replace") only AFTER they '
+                "approve it. A résumé is never built from an unapproved body, and never from the "
+                "coaching record — its notes are not for an employer."
+            )
+        annotations = resume.annotation_lines(prof)
+        if annotations:
+            quoted = "\n".join(f"  > {ln}" for ln in annotations)
+            return (
+                "Not rendered — the `resume` body carries coaching annotations that must never reach an "
+                "employer. Nothing was written. The résumé body must hold only employer-facing text; "
+                "these line(s) look like internal coaching notes:\n"
+                f"{quoted}\n"
+                "Rewrite the résumé body with the operator so it contains only what belongs on their "
+                'résumé, then save it with careercoach_update_profile(field="resume", …, mode="replace"). '
+                "It is never silently stripped — a stripped résumé could still misstate facts, so the "
+                "operator-approved body is fixed instead."
             )
         root = packet.resolve_root(_root())
         path = resume.write_resume_html(root, prof)
         url = path.resolve().as_uri()
         pdf = resume.pdf_name(company)
         return (
-            f"Wrote the résumé HTML (built only from the verified profile — no added claims) to:\n"
+            f"Wrote the résumé HTML (built only from the operator-approved résumé body — no coaching "
+            f"notes, no added claims) to:\n"
             f"  {path}\n\n"
+            "Show the operator the rendered résumé and get their explicit approval before "
+            "browser_upload — it has never been sent to an employer unreviewed.\n\n"
             "To turn it into a PDF an ATS form will accept, in this exact order:\n"
             f"  1. browser_open {url}\n"
             f'  2. browser_pdf("{pdf}")  — prints the open page into the browser plugin\'s capture '

@@ -16,11 +16,19 @@ out for Letter; the ``@page`` rule is kept anyway for a download-and-print by ha
 it renders the same as a ``file://`` page as it would anywhere; a print agent that fetched
 nothing can't be surprised by a resource that didn't load.
 
-**Anti-fabrication.** This reformats verified profile content and adds **no** claims. It uses
-only the identity scalars ``name`` / ``location`` / ``contact`` / ``headlines`` and the sections
-``roles`` / ``education`` / ``skills``. It never emits ``do_not_claim``, ``stories`` or ``notes``
-— guardrails and private tailoring notes are not résumé content. Every value is HTML-escaped, so
-text harvested into a profile can't inject markup.
+**Anti-fabrication, and the privacy leak that reshaped this.** The résumé is built from ONLY the
+identity scalar ``name`` and the single section ``sections.resume`` — the exact, operator-approved
+résumé body. It does **not** read ``identity.location`` / ``identity.contact`` /
+``identity.headlines`` or the sections ``roles`` / ``skills`` / ``education`` / ``do_not_claim`` /
+``stories`` / ``notes`` at all. Those are the coach's *working record*: they carry internal
+annotations ("do not re-litigate", "TENURE NOTE … UNCONFIRMED by Josh", "★ … verified in-browser",
+"INHERITED stack … Do not let him claim otherwise") *inside* the very fields a résumé would want,
+so excluding only ``do_not_claim`` / ``stories`` / ``notes`` was not enough — the 2026-10-05 GitLab
+PDF printed those annotations verbatim from ``location`` / ``roles`` / ``skills`` / ``education``.
+The fix is to stop reading the working record entirely and render a clean, separate source the
+operator has approved. As defense in depth, ``annotation_lines`` scans that source for coach-note
+markers and the renderer's caller REFUSES rather than print (or silently strip) a body that still
+carries them. Every value is still HTML-escaped, so text in a profile can't inject markup.
 
 Same contract as ``profile.py`` / ``packet.py``: no host (``graph.*``) imports, so every function
 is unit-testable with nothing but a temp dir, and this file loads on its own, outside its package.
@@ -37,19 +45,53 @@ from pathlib import Path
 # Where the résumé file lands, under the packet workspace root.
 RESUME_RELPATH = "Resume/resume.html"
 
-# The profile pieces a résumé is built from, in the order they appear in the document — and ONLY
-# these. do_not_claim / stories / notes are deliberately absent: they are never résumé content.
-IDENTITY_USED: tuple[str, ...] = ("name", "location", "contact", "headlines")
-SECTIONS_USED: tuple[tuple[str, str], ...] = (
-    ("roles", "Experience"),
-    ("skills", "Skills"),
-    ("education", "Education"),
-)
+# The profile pieces a résumé is built from — and ONLY these. The identity scalar ``name`` and the
+# single section ``resume`` (the operator-approved body). Nothing else in the profile is read: the
+# working-record fields (location / contact / headlines / roles / skills / education / do_not_claim
+# / stories / notes) carry internal coach annotations and must never reach a résumé — see the
+# module docstring and the 2026-10-05 leak.
+IDENTITY_USED: tuple[str, ...] = ("name",)
+SECTIONS_USED: tuple[tuple[str, str], ...] = (("resume", "Résumé body"),)
 
 # The required fields a résumé cannot be built without — an empty one of these is reported, not
-# guessed at. (Location and headlines are nice-to-have; a name, a way to reach them, and at least
-# one role are not.)
-REQUIRED_FIELDS: tuple[str, ...] = ("name", "contact", "roles")
+# guessed at: a name, and the operator-approved résumé body itself.
+REQUIRED_FIELDS: tuple[str, ...] = ("name", "resume")
+
+# Coach-note markers (case-insensitive). The résumé body must hold only employer-facing text; if any
+# line of ``name`` or the ``resume`` body carries one of these, the tool REFUSES and writes nothing
+# rather than print — or silently strip — an internal annotation. Modelled on the 2026-10-05 leak.
+#
+# Each marker is matched as a WHOLE TOKEN (``_MARKER_RE`` guards both word-character edges), never as
+# a bare substring, because a bare-substring scan flagged ordinary résumé prose: "Keynote:" is not
+# "note:", "Tenure-track Assistant Professor" is not a tenure ruling, "References available on
+# request" / "Results confirmed by audit" / "Do not hesitate to reach out" are all clean. For the
+# same reason the broadest phrases are NOT markers — ``do not`` (kept only as ``do not claim`` /
+# ``do not let``), bare ``tenure`` (its leak forms are caught by ``ruling`` / ``note:``), ``confirmed
+# by`` (caught by ``by josh``) and ``on request`` (standard résumé boilerplate) — each matched too
+# much legitimate text to earn its place. The leak's actual annotations are still caught.
+ANNOTATION_MARKERS: tuple[str, ...] = (
+    "don't let",
+    "do not let",
+    "do not claim",
+    "date resolved",
+    "★",
+    "not evidenced",
+    "positioning:",
+    "unconfirmed",
+    "ruling",
+    "inherited stack",
+    "hard constraint",
+    "re-litigate",
+    "evidence, not",
+    "verified in-browser",
+    "note:",
+    "by josh",
+)
+
+# Every marker, bounded so it only matches as a whole token: no word character may sit immediately
+# before or after it (the line edge counts as a boundary). So ``note:`` matches "TENURE NOTE:" but
+# not "Keynote:", and ``ruling`` matches "TENURE RULING" but not "ruling-class". Built once at import.
+_MARKER_RE = re.compile("|".join(rf"(?<!\w){re.escape(m)}(?!\w)" for m in ANNOTATION_MARKERS), re.I)
 
 # Inline, self-contained, ATS-safe CSS — the same contract the shipped resume templates hold:
 # single column, standard headings, no ligatures, a real generic font fallback, and entries that
@@ -141,6 +183,15 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET = re.compile(r"^[-*+]\s+(.*)$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 
+# A level-2 heading opens a new résumé section (``## Experience``); ``## `` requires whitespace
+# after the two hashes, so a ``### `` role heading is NOT a section boundary — it renders inside the
+# section as an ``<h3>``. The trailing ``#``/space are trimmed off the label.
+_SECTION = re.compile(r"^##\s+(.*)$")
+# An optional header line at the very top of the body: ``Headline: …`` / ``Location: …`` /
+# ``Contact: …`` (case-insensitive key). Location and Contact form the contact line; Headline is the
+# ``.headline`` paragraph; everything else before the first ``## `` is a summary paragraph.
+_HEADER_LINE = re.compile(r"^(headline|location|contact)\s*:\s*(.*)$", re.I)
+
 
 def _inline(text: str) -> str:
     """One line of profile text as safe inline HTML: escaped first (so ``<script>`` can't survive
@@ -150,10 +201,12 @@ def _inline(text: str) -> str:
 
 
 def _render_markdown(md: str) -> str:
-    """A profile section's markdown → simple, escaped HTML: ATX headings (``#``..), ``-``/``*``/``+``
-    bullet lists, and paragraphs. Headings start at ``<h3>`` (the section itself is the ``<h2>``) and
-    clamp at ``<h4>``. Anything else is treated as paragraph text — a profile holds career prose,
-    not a document, so there is no table/code/image handling to get wrong."""
+    """One résumé section's inner markdown → simple, escaped HTML: ATX headings, ``-``/``*``/``+``
+    bullet lists, and paragraphs. The section's own ``## `` heading is rendered by the caller as the
+    ``<h2>``; what reaches here is the body under it, so a ``### `` role heading becomes an ``<h3>``
+    and ``####`` an ``<h4>`` (floored at ``<h3>`` — nothing in a section body becomes ``<h1>``/``<h2>``
+    and competes with the name or the section heading). Anything else is paragraph text — a résumé
+    body holds career prose, not a document, so there is no table/code/image handling to get wrong."""
     out: list[str] = []
     bullets: list[str] = []
     para: list[str] = []
@@ -180,7 +233,7 @@ def _render_markdown(md: str) -> str:
         if h:
             flush_para()
             flush_bullets()
-            level = min(2 + len(h.group(1)), 4)  # # -> h3, ## -> h4, ### and deeper -> h4
+            level = min(max(len(h.group(1)), 3), 4)  # ### -> h3, #### and deeper -> h4, floored at h3
             out.append(f"<h{level}>{_inline(h.group(2).strip())}</h{level}>")
             continue
         b = _BULLET.match(line)
@@ -195,9 +248,101 @@ def _render_markdown(md: str) -> str:
     return "\n".join(out)
 
 
+def _split_resume_body(body: str) -> tuple[list[str], str]:
+    """``(pre_heading_lines, section_markdown)``: everything before the first ``## `` heading, and
+    the section portion from that heading on. A body with no ``## `` heading is all pre-heading."""
+    lines = (body or "").splitlines()
+    for i, raw in enumerate(lines):
+        if _SECTION.match(raw.strip()):
+            return lines[:i], "\n".join(lines[i:])
+    return lines, ""
+
+
+def _paragraphs(lines: list[str]) -> list[str]:
+    """Blank-line-separated runs of text joined into one paragraph each (leading markers trimmed)."""
+    paras: list[str] = []
+    cur: list[str] = []
+    for raw in lines:
+        s = raw.strip()
+        if s:
+            cur.append(s)
+        elif cur:
+            paras.append(" ".join(cur))
+            cur = []
+    if cur:
+        paras.append(" ".join(cur))
+    return paras
+
+
+def _parse_header(pre_lines: list[str]) -> tuple[str, str, str, list[str]]:
+    """The optional header of a résumé body → ``(headline, location, contact, summary_paragraphs)``.
+    ``Headline:`` / ``Location:`` / ``Contact:`` lines (case-insensitive, first wins) are pulled out;
+    anything else before the first ``## `` section is summary prose."""
+    headline = location = contact = ""
+    rest: list[str] = []
+    for raw in pre_lines:
+        m = _HEADER_LINE.match(raw.strip()) if raw.strip() else None
+        if m:
+            key, val = m.group(1).lower(), m.group(2).strip()
+            if val:
+                if key == "headline" and not headline:
+                    headline = val
+                elif key == "location" and not location:
+                    location = val
+                elif key == "contact" and not contact:
+                    contact = val
+            continue
+        rest.append(raw)
+    return headline, location, contact, _paragraphs(rest)
+
+
+def _render_sections(rest: str) -> list[str]:
+    """The ``## ``-delimited section portion of a résumé body → ``<section><h2>…</h2>…</section>``
+    blocks, each heading's body rendered with ``_render_markdown`` (so ``### `` becomes an ``<h3>``)."""
+    sections: list[tuple[str, list[str]]] = []
+    for raw in (rest or "").splitlines():
+        m = _SECTION.match(raw.strip())
+        if m:
+            sections.append((m.group(1).strip().rstrip("#").strip(), []))
+        elif sections:
+            sections[-1][1].append(raw)
+    out: list[str] = []
+    for label, body_lines in sections:
+        inner = _render_markdown("\n".join(body_lines))
+        body = f"\n{inner}" if inner else ""
+        out.append(f"<section>\n<h2>{_inline(label)}</h2>{body}\n</section>")
+    return out
+
+
+def annotation_lines(prof: dict) -> list[str]:
+    """Lines of ``name`` or the ``resume`` body that carry a coach-note marker (``ANNOTATION_MARKERS``,
+    case-insensitive, matched as whole tokens — see ``_MARKER_RE``) — defense in depth against the
+    2026-10-05 leak. Each offending line is returned trimmed to ~120 characters; an empty list means
+    the body is clean. Whole-token matching keeps ordinary résumé prose ("Keynote:", "Tenure-track",
+    "References available on request") out of the hit list. The résumé tool quotes these and refuses
+    rather than print (or silently strip) an internal annotation."""
+    ident = prof.get("identity") or {}
+    sect = prof.get("sections") or {}
+    hits: list[str] = []
+    for text in (str(ident.get("name") or ""), str(sect.get("resume") or "")):
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if _MARKER_RE.search(line):
+                hits.append(line if len(line) <= 120 else line[:119] + "…")
+    return hits
+
+
 def missing_for_resume(prof: dict) -> list[str]:
-    """The REQUIRED_FIELDS (``name``, ``contact``, ``roles``) that are empty in ``prof`` — what a
-    résumé cannot be built without. Empty list means it's buildable."""
+    """What a résumé cannot be built without, empty when it's buildable:
+
+    * ``name`` and/or ``resume`` — the REQUIRED_FIELDS that are empty (no name, or no approved body);
+    * ``contact`` — when the body has text to render but NO ``Contact:`` header line, so the résumé
+      would carry no way to reach the operator. This preserves the old renderer's guarantee that a
+      résumé is never built without contact details — it holds for any non-empty body (a header or
+      summary only, or ``## `` sections), not just one with sections. Reported as the code
+      ``contact``; the tool names it "résumé Contact line"."""
     ident = prof.get("identity") or {}
     sect = prof.get("sections") or {}
     missing: list[str] = []
@@ -205,39 +350,51 @@ def missing_for_resume(prof: dict) -> list[str]:
         source = ident if field in IDENTITY_USED else sect
         if not str(source.get(field) or "").strip():
             missing.append(field)
+    if "resume" not in missing:
+        # "resume" not missing ⇒ the body is non-empty; an employer-bound résumé always needs a way
+        # to reach the operator, so a body with no ``Contact:`` header line is refused.
+        body = str(sect.get("resume") or "").strip()
+        pre, _rest = _split_resume_body(body)
+        _, _, contact, _ = _parse_header(pre)
+        if not contact:
+            missing.append("contact")
     return missing
 
 
 def render_resume_html(prof: dict) -> str:
-    """Build a self-contained résumé HTML document from the verified profile.
+    """Build a self-contained résumé HTML document from the operator-approved résumé body.
 
-    Uses ONLY the identity scalars ``name`` / ``location`` / ``contact`` / ``headlines`` and the
-    sections ``roles`` / ``education`` / ``skills``; never ``do_not_claim`` / ``stories`` /
-    ``notes``. Section markdown becomes simple HTML and every value is HTML-escaped. Reformats
-    verified content and adds no claims. Laid out for US Letter (what ``browser_pdf`` prints), with
-    inline CSS and no external resources."""
+    Reads ONLY ``identity.name`` and ``sections.resume`` — never the coach's working record
+    (``location`` / ``contact`` / ``headlines`` / ``roles`` / ``skills`` / ``education`` /
+    ``do_not_claim`` / ``stories`` / ``notes``), whose fields carry internal annotations (the
+    2026-10-05 leak). The résumé body: optional ``Headline:`` / ``Location:`` / ``Contact:`` header
+    lines and summary prose before the first ``## `` heading, then ``## `` sections (``### `` role
+    headings and ``-`` bullets inside). ``Location`` and ``Contact`` form the contact line joined by
+    " | ". Every value is HTML-escaped. Laid out for US Letter (what ``browser_pdf`` prints), with
+    inline CSS and no external resources. Callers check ``missing_for_resume`` and ``annotation_lines``
+    first — this reformats and adds no claims, but it does not itself police the body's content."""
     ident = prof.get("identity") or {}
     sect = prof.get("sections") or {}
 
     name = str(ident.get("name") or "").strip()
-    headlines = str(ident.get("headlines") or "").strip()
-    location = str(ident.get("location") or "").strip()
-    contact = str(ident.get("contact") or "").strip()
+    body = str(sect.get("resume") or "").strip()
+
+    pre, rest = _split_resume_body(body)
+    headline, location, contact, summary = _parse_header(pre)
 
     header: list[str] = []
     if name:
         header.append(f"<h1>{_inline(name)}</h1>")
-    if headlines:
-        header.append(f'<p class="headline">{_inline(headlines)}</p>')
+    if headline:
+        header.append(f'<p class="headline">{_inline(headline)}</p>')
     contact_line = " | ".join(part for part in (location, contact) if part)
     if contact_line:
         header.append(f'<p class="contact">{_inline(contact_line)}</p>')
+    for para in summary:
+        header.append(f"<p>{_inline(para)}</p>")
 
     blocks: list[str] = ["\n".join(header)] if header else []
-    for key, label in SECTIONS_USED:
-        body = str(sect.get(key) or "").strip()
-        if body:
-            blocks.append(f"<section>\n<h2>{html.escape(label)}</h2>\n{_render_markdown(body)}\n</section>")
+    blocks.extend(_render_sections(rest))
 
     title = f"{name} — Resume" if name else "Resume"
     return (

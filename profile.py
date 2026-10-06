@@ -73,6 +73,12 @@ IDENTITY_FIELDS: dict[str, str] = {
 }
 
 # Narrative sections — markdown. Injected as presence only; fetched in full when drafting.
+#
+# ``roles`` / ``education`` / ``skills`` / ``stories`` / ``notes`` are the coach's WORKING RECORD:
+# they carry internal annotations (tenure rulings, "do not claim", "unconfirmed by Josh", …) and
+# are NEVER printed verbatim. ``resume`` is different — it is the exact, operator-approved text that
+# goes on the résumé, and it is the ONLY section ``resume.py`` renders (see the 2026-10-05 leak:
+# rendering the working record put those annotations in a PDF bound for an employer).
 SECTIONS: dict[str, str] = {
     "roles": "Roles and impact (most recent first)",
     "education": "Education, certifications, credentials",
@@ -80,6 +86,7 @@ SECTIONS: dict[str, str] = {
     "do_not_claim": "Lines never to claim on their behalf",
     "stories": "Story bank — pre-vetted STAR proof",
     "notes": "Notes for tailoring (targets, sensitivities, NDAs)",
+    "resume": "Résumé body — the exact, operator-approved text printed on the résumé (no coaching notes)",
 }
 
 # ``do_not_claim`` is a guardrail, not content: short, and worthless if the agent has to
