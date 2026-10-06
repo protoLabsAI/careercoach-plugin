@@ -156,7 +156,9 @@ careercoach-plugin/
   > On a server / Docker install there's nothing to provision.
 - **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
   under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
-  the keyless **Remotive** remote-jobs board — so it works out of the box.
+  the keyless **Remotive** remote-jobs board — so it works out of the box. Remotive's own search isn't
+  relevance-ranked, so its postings are filtered and ranked against your query locally, and every result
+  says which source answered (and when it's the keyless fallback).
 - **Background job-watch.** Turn on **Background job-watch** in Settings and it periodically surfaces new roles
   matching your profile on the dashboard (and lights the rail icon). Off by default.
 - **Tune the fit rubric.** `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`) reweights
