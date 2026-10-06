@@ -130,7 +130,7 @@ def _register_jobsearch_tool(registry, cfg) -> None:
         from . import jobsource
 
         try:
-            jobs = await jobsource.search_jobs(
+            result = await jobsource.search_jobs(
                 query,
                 location=location,
                 remote=remote,
@@ -140,13 +140,31 @@ def _register_jobsearch_tool(registry, cfg) -> None:
             )
         except Exception as e:  # noqa: BLE001 — surface the reason to the user, don't crash the turn
             return f"Job search failed: {e}"
+        # Say who answered. A keyless Remotive fallback is a small remote-only board, not a search of
+        # the job market — the user must be able to tell the two apart.
+        source = f"Source: {result.provider_label}"
+        if result.keyless_fallback:
+            source += (
+                " — keyless fallback (no Job-source API key set), remote roles only; add a JSearch key in "
+                "Settings → Career Coach for Google-for-Jobs coverage"
+            )
+        if result.provider == "remotive":
+            source += f". {result.matched} of the {result.fetched} posting(s) it returned mention the query"
+            if location:
+                source += "; Remotive ignores `location`"
+        source += "."
+        jobs = result.jobs
         if not jobs:
-            return f"No postings found for {query!r}. Try a broader query or a different location."
+            return f"No postings found for {query!r}. Try a broader query or a different location.\n{source}"
         lines = [
             f"{i}. {j['title']} — {j['company']} · {j['location'] or 'n/a'} ({j['source']})\n   {j['url']}"
             for i, j in enumerate(jobs, 1)
         ]
-        return f"Found {len(jobs)} role(s):\n" + "\n".join(lines) + "\n\nWant me to evaluate fit or track any of these?"
+        return (
+            f"Found {len(jobs)} role(s):\n"
+            + "\n".join(lines)
+            + f"\n\n{source}\nWant me to evaluate fit or track any of these?"
+        )
 
     registry.register_tool(careercoach_search_jobs)
 
@@ -1783,13 +1801,15 @@ def _register_job_watch(registry, cfg) -> None:
             return
         query = roles.split(",")[0].strip() or roles
         try:
-            jobs = await jobsource.search_jobs(
-                query,
-                remote=True,
-                limit=25,
-                api_key=cfg.get("jobs_api_key", ""),
-                provider=cfg.get("jobs_provider", "auto"),
-            )
+            jobs = (
+                await jobsource.search_jobs(
+                    query,
+                    remote=True,
+                    limit=25,
+                    api_key=cfg.get("jobs_api_key", ""),
+                    provider=cfg.get("jobs_provider", "auto"),
+                )
+            ).jobs
         except Exception as e:  # noqa: BLE001
             log.info("[careercoach] watch scan failed: %s", e)
             return

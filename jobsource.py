@@ -9,6 +9,11 @@ Providers:
 
 Selection: ``provider="auto"`` uses jsearch when a key is present, else remotive.
 
+Remotive's ``?search=`` is not a relevance filter we can rely on — it answered every query with the
+same unrelated postings — so its results are ranked and filtered client-side against the query with
+``prescore``, and the result says which provider answered, so a keyless fallback is never mistaken
+for a real search.
+
 **This module is the only outbound-calling code in the plugin** — `capabilities.network` in the
 manifest lists exactly these two hosts. Only ``search_jobs()`` touches the network (via httpx, a
 host dependency); the response parsers and ``prescore`` are pure and unit-tested.
@@ -17,6 +22,7 @@ host dependency); the response parsers and ``prescore`` are pure and unit-tested
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
@@ -86,11 +92,16 @@ def choose_provider(provider: str, api_key: str) -> str:
     return p
 
 
+def _terms(text: str) -> set[str]:
+    """The scoreable words of a query / target-roles string (3+ characters)."""
+    return {t for t in re.split(r"[\s,/]+", (text or "").lower()) if len(t) > 2}
+
+
 def prescore(job: dict, target_roles: str) -> int:
     """A lightweight 0-100 keyword-overlap proxy — **not** the LLM fit rubric. The background
     watch uses it to decide which fresh postings are worth surfacing; the coach then runs the
     real evaluation on demand. Full coverage of the target terms with a title hit → 100."""
-    terms = {t for t in re.split(r"[\s,/]+", (target_roles or "").lower()) if len(t) > 2}
+    terms = _terms(target_roles)
     if not terms:
         return 0
     title = (job.get("title") or "").lower()
@@ -103,6 +114,40 @@ def prescore(job: dict, target_roles: str) -> int:
     return min(100, round(70 * coverage + 30 * title_hit))
 
 
+PROVIDER_LABELS = {
+    "jsearch": "JSearch (Google-for-Jobs)",
+    "remotive": "Remotive (remote-jobs board)",
+}
+
+
+def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
+    """Keep only the jobs that mention the query (``prescore`` > 0), best first; ties keep the
+    provider's order. A query with no scoreable word (all terms under 3 characters, e.g. "ML")
+    cannot be judged, so the jobs are returned unchanged rather than all dropped."""
+    if not _terms(query):
+        return list(jobs)
+    scored = [(prescore(j, query), i, j) for i, j in enumerate(jobs)]
+    return [j for score, _, j in sorted(scored, key=lambda x: (-x[0], x[1])) if score > 0]
+
+
+@dataclass
+class JobSearch:
+    """What a search returned and WHO answered it — ``provider`` is the source that was actually
+    queried, ``keyless_fallback`` is True when ``auto`` fell back to Remotive for want of a key,
+    ``fetched`` is how many postings the provider sent, ``matched`` how many survived relevance
+    filtering (before ``limit``)."""
+
+    jobs: list[dict] = field(default_factory=list)
+    provider: str = ""
+    keyless_fallback: bool = False
+    fetched: int = 0
+    matched: int = 0
+
+    @property
+    def provider_label(self) -> str:
+        return PROVIDER_LABELS.get(self.provider, self.provider or "unknown")
+
+
 # ── network (httpx — a host dependency; kept lazy) ────────────────────────────
 async def search_jobs(
     query: str,
@@ -112,20 +157,26 @@ async def search_jobs(
     limit: int = 10,
     api_key: str = "",
     provider: str = "auto",
-) -> list[dict]:
-    """Search live postings and return a normalized list of job dicts. Picks the provider per
-    ``choose_provider``. Raises ``ValueError`` if jsearch is selected without a key."""
+) -> JobSearch:
+    """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
+    naming the provider that answered. Remotive's results are filtered to the query and ranked
+    by ``prescore`` before ``limit`` is applied. Raises ``ValueError`` if jsearch is selected
+    without a key."""
     limit = max(1, min(int(limit), 25))
     prov = choose_provider(provider, api_key)
+    keyless = (provider or "auto").strip().lower() == "auto" and prov == "remotive"
     if prov == "jsearch":
         if not (api_key or "").strip():
             raise ValueError(
                 "JSearch needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'remotive'."
             )
         jobs = await _get_jsearch(query, location, remote, api_key)
+        fetched = len(jobs)
     else:
-        jobs = await _get_remotive(query)
-    return jobs[:limit]
+        raw = await _get_remotive(query)
+        fetched = len(raw)
+        jobs = rank_by_query(raw, query)
+    return JobSearch(jobs=jobs[:limit], provider=prov, keyless_fallback=keyless, fetched=fetched, matched=len(jobs))
 
 
 async def _get_jsearch(query: str, location: str, remote: bool, api_key: str) -> list[dict]:
