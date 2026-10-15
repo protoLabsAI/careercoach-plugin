@@ -16,6 +16,7 @@ import functools
 import inspect
 import json
 import logging
+import zipfile
 from pathlib import Path
 
 from langchain_core.tools import tool
@@ -240,8 +241,6 @@ def register_hunt_tools(registry, cfg) -> None:
             return f"No file at {p}. Download the export from LinkedIn first, then pass its path."
         try:
             if p.suffix.lower() == ".zip":
-                import zipfile
-
                 with zipfile.ZipFile(p) as z:
                     info = next((i for i in z.infolist() if i.filename.lower().endswith("connections.csv")), None)
                     if info is None:
@@ -257,6 +256,8 @@ def register_hunt_tools(registry, cfg) -> None:
             added, updated = contacts.merge_contacts(people)
         except (ValueError, contacts.StoreUnreadable) as e:
             return f"Not imported: {e}"
+        except (OSError, zipfile.BadZipFile) as e:
+            return f"Couldn't read {p.name}: {e}. Pass LinkedIn's Connections.csv or the export .zip."
         companies = len({c["company"] for c in people if c.get("company")})
         return (
             f"Imported {len(people)} connection(s) across {companies} companies ({added} new, {updated} updated). "
@@ -323,6 +324,7 @@ def register_hunt_tools(registry, cfg) -> None:
         from datetime import UTC, datetime
 
         sections = []
+        shown_new: list[dict] = []
         rows = state.load_applications()
         watched = wl.load_watchlist()
         f = filters(cfg)
@@ -332,6 +334,7 @@ def register_hunt_tools(registry, cfg) -> None:
                 max_age_days=max(1, days), tracker_rows=rows,
             )  # fmt: skip
             fresh = [j for j in res.matches if not j["tracked"]]
+            shown_new = fresh[:25]
             title = f"## New roles (posted ≤ {days}d, {len(fresh)} of {len(res.matches)} untracked)"
             body = "\n".join(scan.format_job(j, i) for i, j in enumerate(fresh[:25], 1)) or "Nothing new today."
             if res.errors:
@@ -341,6 +344,20 @@ def register_hunt_tools(registry, cfg) -> None:
             sections.append(
                 "## New roles\nNo watchlist or target roles yet — add companies with careercoach_watchlist and set "
                 "Target roles in Settings."
+            )
+        # Peek now, drop what was SHOWN only once the digest has rendered — a digest that fails
+        # half-way, or one that shows 25 of 60, must not lose the rest.
+        index = scan.tracked_index(rows)
+        listed = {j["id"] for j in shown_new}
+        queued = wl.peek_inbox()
+        stale = [j["id"] for j in queued if j.get("id") in listed or scan.annotate(dict(j), index)["tracked"]]
+        inbox = [j for j in queued if j.get("id") not in set(stale)]
+        shown_inbox = inbox[:25]
+        if inbox:
+            sections.append(
+                f"## From the background watch ({len(inbox)} queued)\n"
+                + "\n".join(scan.format_job(j, i) for i, j in enumerate(shown_inbox, 1))
+                + (f"\n…{len(inbox) - 25} more stay queued for the next digest." if len(inbox) > 25 else "")
             )
         try:
             due = contacts.due_followups()
@@ -376,7 +393,9 @@ def register_hunt_tools(registry, cfg) -> None:
         for r in rows:
             counts[r.get("status", "?")] = counts.get(r.get("status", "?"), 0) + 1
         sections.append("## Pipeline\n" + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "empty"))
-        return f"# Job-hunt digest — {today.isoformat()}\n\n" + "\n\n".join(sections)
+        out = f"# Job-hunt digest — {today.isoformat()}\n\n" + "\n\n".join(sections)
+        wl.drop_from_inbox([j["id"] for j in shown_inbox] + stale)
+        return out
 
     registry.register_tools(
         [

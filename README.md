@@ -57,8 +57,8 @@ forking core.
   time**, anchored to your operator profile. Say *"build the role packet."*
 
 **In the background (opt-in):** turn on the **job-watch** and it periodically scans your watchlist's
-boards and sweeps the job source for your target roles, adds postings it has never seen before to your
-pipeline, and lights the rail icon — or arm a **WATCH**
+boards and sweeps the job source for your target roles, queues postings it has never seen before for
+the digest (it never writes your pipeline), and lights the rail icon — or arm a **WATCH**
 on your pipeline yourself via the `careercoach:new_matches` verifier.
 
 Track it all on the **Career Coach dashboard** (a console rail view): your pipeline, fit scores, the rubric.
@@ -182,8 +182,9 @@ careercoach-plugin/
   **Search country** to narrow it) or Hacker News. Keyless search is loose, so postings are filtered and
   ranked against your query locally, and every result says which source answered. (Remotive, the old
   default, now returns one fixed feed whatever you search; it's only used if you pick it explicitly.)
-- **Background job-watch.** Turn on **Background job-watch** in Settings and it periodically adds new roles
-  matching your filters to the pipeline (and lights the rail icon). Off by default.
+- **Background job-watch.** Turn on **Background job-watch** in Settings and every **Watch interval** it
+  queues new roles matching your filters for the daily digest (and lights the rail icon). It never adds
+  roles to your pipeline by itself. Off by default.
 - **Tune the fit rubric.** `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`) reweights
   scoring live.
 

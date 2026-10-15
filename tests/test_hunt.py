@@ -528,6 +528,9 @@ def test_watch_tracks_exact_title_matches_despite_many_target_roles(watch_env, m
     assert not any(m["company"] == "Farco" for m in got)  # the market sweep honours `locations`
     assert reg.emitted and reg.emitted[0][0] == "new_matches"
     assert asyncio.run(plugin._watch_tick(reg, cfg, 75)) == []  # handled once
+    assert mods.state.load_applications() == []  # the watch never writes the tracker
+    queued = mods.watchlist.take_inbox()
+    assert {j["company"] for j in queued} >= {"Acme", "Newco"} and mods.watchlist.take_inbox() == []
 
 
 def test_a_digest_does_not_steal_the_watchs_new_roles(watch_env, mods, plugin):
@@ -604,3 +607,163 @@ def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
     roles = "AI Engineer, Forward Deployed Engineer"
     assert bp({"title": "Solutions Engineer"}, roles) < 75  # "AI" counts — not just "engineer"
     assert bp({"title": "Senior AI Engineer"}, roles) == 100
+
+
+# ── live QA on jobCoach (2026-10-15) ──────────────────────────────────────────
+def test_a_state_after_a_city_stays_with_the_city(mods):
+    b = mods.boards
+    assert b.location_terms("remote, portland, or") == ["remote", "portland, or"]
+    assert b.location_terms("Portland, OR, Seattle, WA, remote") == ["portland, or", "seattle, wa", "remote"]
+    for loc in ("New York", "Singapore", "San Francisco, CA | New York City, NY"):  # "or" in y-OR-k / singap-OR-e
+        assert not b.location_matches({"location": loc, "remote": False}, "remote, portland, or"), loc
+    assert b.location_matches({"location": "Portland, OR", "remote": False}, "remote, portland, or")
+    assert not b.location_matches({"location": "Portland, ME", "remote": False}, "remote, portland, or")
+    assert not b.location_matches({"location": "Seattle", "remote": False}, "eat")  # whole words only
+    assert b.location_matches({"location": "Remote - California", "remote": True}, "remote")  # a US state, spelled out
+
+
+def test_slug_guesses_cover_domain_names_and_board_suffixes(mods):
+    sc = mods.boards.slug_candidates
+    assert "owner" in sc("Owner.com")
+    assert {"arizeai", "gleanwork"} <= set(sc("Arize")) | set(sc("Glean"))
+
+
+def test_connections_import_reports_a_bad_zip(hunt_tools, iso):
+    bad = iso / "ws" / "export.zip"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("not a zip")
+    out = hunt_tools["careercoach_import_connections"].invoke({"path": str(bad)})
+    assert out.startswith("Couldn't read export.zip")
+
+
+def test_the_watch_waits_its_interval_between_scans(plugin, iso, monkeypatch):
+    """`interval` is only supervise()'s watchdog period; the pause between scans is `breath`.
+    Passing the scan period as `interval` ran the scan every 3 s on the live agent."""
+    import sys
+
+    from _plugin_testkit import FakeRegistry
+
+    seen: dict = {}
+
+    class _Engine:
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    def fake_supervise(work, **kw):
+        seen.update(kw)
+        return _Engine()
+
+    monkeypatch.setattr(sys.modules["graph.sdk"], "supervise", fake_supervise, raising=False)
+    reg = FakeRegistry({"watch_enabled": True, "watch_interval_min": 180, "target_roles": "AI Engineer"})
+    plugin.register(reg)
+    start, _stop, _reload = reg.surface_specs["careercoach-watch"]
+    asyncio.run(start())
+    assert seen.get("breath") == 180 * 60 and "interval" not in seen
+
+
+def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):
+    mods.watchlist.add_to_inbox(
+        [
+            {
+                "id": "himalayas:x",
+                "company": "Newco",
+                "title": "Forward Deployed Engineer",
+                "url": "https://h/x",
+                "posted": _ago(1),
+                "source": "himalayas",
+            }
+        ]  # fmt: skip
+    )
+    out = _run(hunt_tools["careercoach_digest"], {})
+    assert "## From the background watch (1 queued)" in out and "Newco" in out
+    assert "From the background watch" not in _run(hunt_tools["careercoach_digest"], {})
+
+
+# ── #30 review ────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("setting", "terms"),
+    [
+        ("sf, la", ["sf", "la"]),
+        ("nyc, la, sf", ["nyc", "la", "sf"]),
+        ("remote, sf, la", ["remote", "sf", "la"]),
+        ("seattle, wa, ca", ["seattle, wa", "ca"]),
+        ("remote, or", ["remote", "or"]),
+        ("Portland, OR, remote", ["portland, or", "remote"]),
+    ],
+)
+def test_location_terms_only_glue_a_state_onto_a_city(mods, setting, terms):
+    assert mods.boards.location_terms(setting) == terms
+
+
+@pytest.mark.parametrize(
+    ("loc", "setting", "ok"),
+    [
+        ("Portland, Oregon", "portland, or", True),
+        ("Portland OR", "portland, or", True),
+        ("Portland, OR (Hybrid)", "portland, or", True),
+        ("Portland, ME", "portland, or", False),
+        ("Los Angeles, CA", "sf, la", True),  # "la" is the Los Angeles shorthand, not Louisiana
+        ("Hybrid - SF", "sf, la", True),
+        ("Berlin or Munich", "remote, or", False),  # a bare state code means the state, not the word
+        ("Salem, OR", "remote, or", True),
+        ("Seattle, Washington", "seattle, wa", True),
+    ],
+)
+def test_city_state_terms_match_spellings_of_the_same_place(mods, loc, setting, ok):
+    assert mods.boards.location_matches({"location": loc, "remote": False}, setting) is ok
+
+
+@pytest.mark.parametrize(
+    ("loc", "ok"),
+    [("Remote - Tbilisi, Georgia", False), ("Remote - Georgia (country)", False), ("Remote, Central Europe", False),
+     ("Remote (Eastern Europe)", False), ("Remote - Pacific / APAC", False), ("Remote - Atlanta, Georgia", True),
+     ("Remote (US Central time)", True)],
+)  # fmt: skip
+def test_us_region_words_dont_admit_foreign_regions(mods, loc, ok):
+    assert mods.boards.location_matches({"location": loc}, "remote") is ok
+
+
+def test_the_digest_keeps_what_it_did_not_show(hunt_tools, mods):
+    mods.watchlist.add_to_inbox(
+        [
+            {"id": f"h:{i}", "company": f"Co{i}", "title": "AI Engineer", "url": f"https://h/{i}", "posted": _ago(1)}
+            for i in range(30)
+        ]  # fmt: skip
+    )
+    out = _run(hunt_tools["careercoach_digest"], {})
+    assert "(30 queued)" in out and "5 more stay queued" in out
+    assert len(mods.watchlist.peek_inbox()) == 5
+
+
+def test_slug_guesses_skip_redundant_suffixes(mods):
+    assert "scaleaiai" not in mods.boards.slug_candidates("Scale AI")
+
+
+@pytest.mark.parametrize(
+    ("loc", "setting", "ok"),
+    [
+        ("Los Angeles, CA", "sf, la", True),
+        ("New Orleans, LA", "sf, la", False),
+        ("San Francisco, CA", "sf", True),
+        ("NY", "ny", True),
+        ("On-site - Anywhere", "toronto, on", False),
+        ("Toronto, ON", "toronto, on", True),
+        ("Seattle, Washington", "washington, dc", False),
+        ("Washington, DC", "washington, dc", True),
+        ("Charleston, West Virginia", "charleston, va", False),
+        ("Portland, OR", "Portland OR", True),
+    ],
+)
+def test_shorthands_provinces_and_dc(mods, loc, setting, ok):
+    assert mods.boards.location_matches({"location": loc, "remote": False}, setting) is ok
+
+
+@pytest.mark.parametrize(
+    "loc",
+    ["Remote - Asia Pacific", "Remote - Asia-Pacific", "Remote, Central & Eastern Europe", "Remote - Central America"],
+)
+def test_more_foreign_regions_stay_out(mods, loc):
+    assert not mods.boards.location_matches({"location": loc}, "remote")

@@ -1829,9 +1829,10 @@ def _register_views(registry, cfg) -> None:
 # ── a background job-watch: periodic scan → nudge via the event bus (Phase 3) ─
 def _register_job_watch(registry, cfg) -> None:
     """Off unless `watch_enabled` (ADR 0071 posture). When on, a supervised background engine
-    (graph.sdk.supervise) periodically scans the watched companies' boards and sweeps the keyless job
-    source for each target role, and records postings it has never seen before (the first-seen log)
-    that pass the filters and prescore >= `watch_min_score` to the tracker, and emits `careercoach.new_matches` so the
+    (graph.sdk.supervise) every `watch_interval_min` scans the watched companies' boards and sweeps
+    the keyless job source for each target role, and puts postings it has never seen before (its
+    own first-seen log) that pass the filters into the watch inbox — never the tracker — which the
+    daily digest shows, and emits `careercoach.new_matches` so the
     console rail icon lights up. The goal verifier is registered either way, so you can arm a WATCH on
     the pipeline yourself (create_watch, ADR 0067) even with the auto-scan off."""
     _register_watch_verifier(registry)
@@ -1844,7 +1845,12 @@ def _register_job_watch(registry, cfg) -> None:
     holder: dict = {"engine": None}
 
     async def _scan() -> None:
-        await _watch_tick(registry, cfg, min_score)
+        # Never raise out of a tick: a crash skips `breath`, and the watchdog would re-kick a full
+        # board scan every `interval` instead of every `watch_interval_min`.
+        try:
+            await _watch_tick(registry, cfg, min_score)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[careercoach] watch tick failed: %s", e)
 
     async def _start() -> None:
         try:
@@ -1852,7 +1858,10 @@ def _register_job_watch(registry, cfg) -> None:
         except Exception as e:  # noqa: BLE001
             log.info("[careercoach] job-watch unavailable (host-free?): %s", e)
             return
-        holder["engine"] = supervise(_scan, name="careercoach-watch", interval=interval_s)
+        # `breath` is the pause between work units; `interval` is only the watchdog's check period.
+        # Passing the scan period as `interval` ran the scan back-to-back every 3 s (breath's
+        # default) — 41 boards hammered continuously.
+        holder["engine"] = supervise(_scan, name="careercoach-watch", breath=interval_s)
         holder["engine"].start()
         log.info("[careercoach] job-watch started (every %d min, >= %d)", interval_s // 60, min_score)
 
@@ -1920,18 +1929,16 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             return []
         found.sort(key=lambda j: j.get("posted") or "", reverse=True)
         batch = found[:15]  # a first scan of a big watchlist must not flood the pipeline
+        # The watch never writes the TRACKER — that's the operator's record of roles they chose.
+        # New matches wait in the watch inbox; the digest shows them, and the coach tracks the
+        # ones the operator wants.
         matches = []
         for j in batch:
             score = jobsource.best_prescore(j, roles)
-            if score < min_score:
-                continue
-            state.track_application(
-                # fit stays 0 — a title match is not a fit evaluation; the coach scores it on demand
-                company=j["company"], role=j["title"], fit_score=0, status="considering",
-                source=j["url"], notes=f"auto-surfaced by watch ({j['source']}) · title match {score}",
-            )  # fmt: skip
-            matches.append({**j, "score": score})
-        wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: tracked, or below the bar
+            if score >= min_score:
+                matches.append({**j, "score": score})
+        wl.add_to_inbox(matches)
+        wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
     except state.StoreUnreadable as e:
         log.warning("[careercoach] watch scan recorded nothing: %s", e)
         return []
@@ -1954,7 +1961,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
 def _register_watch_verifier(registry) -> None:
     """Register a plugin goal verifier so a WATCH (create_watch, ADR 0067) or a monitor goal can be
     armed on the pipeline: `careercoach:new_matches` trips when there's an un-actioned tracked role
-    scoring >= `min_score`. Guarded — needs the host goal types."""
+    scoring >= `min_score`, or the background watch has queued new matches in its inbox. Guarded — needs the host goal types."""
     if not hasattr(registry, "register_goal_verifier"):
         return
     try:
@@ -1965,13 +1972,21 @@ def _register_watch_verifier(registry) -> None:
 
     def _verify(min_score: int = 75, **_ignored):
         from . import state
+        from . import watchlist as wl
 
         hi = [
             r
             for r in state.load_applications()
             if int(r.get("fit_score", 0)) >= int(min_score) and r.get("status") == "considering"
         ]
-        return VerifyResult(bool(hi), f"{len(hi)} un-actioned role(s) >= {min_score}", str(len(hi)))
+        try:
+            queued = len(wl._load(wl.INBOX, []))
+        except wl.StoreUnreadable:
+            queued = 0
+        n = len(hi) + queued
+        return VerifyResult(
+            bool(n), f"{len(hi)} un-actioned role(s) >= {min_score}, {queued} new in the watch inbox", str(n)
+        )
 
     registry.register_goal_verifier("careercoach:new_matches", _verify)
 

@@ -203,7 +203,15 @@ _US = re.compile(
     r"\b(us|usa|u\.s\.|united states|north america|americas|anywhere|worldwide|global|"
     r"san francisco|sf|bay area|new york|nyc|seattle|austin|boston|chicago|los angeles|denver|portland|"
     r"atlanta|washington|miami|san diego|san jose|palo alto|mountain view|"
-    r"west coast|east coast|pacific|eastern|central|mountain time|pst|pdt|pt|est|edt|et|cst|cdt|ct|mst|mt)\b",
+    r"west coast|east coast|(?<!asia )(?<!asia-)(?:pacific|eastern|central)"
+    r"(?!\s*(?:(?:&|and)\s*\w+\s*)?(?:europe|asia|apac|africa|america|/|-\s*apac))|"
+    r"mountain time|pst|pdt|pt|est|edt|et|cst|cdt|ct|mst|mt|"
+    r"alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|"
+    r"georgia(?!\s*\(country\))|hawaii|idaho|"
+    r"illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|"
+    r"mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|north carolina|"
+    r"north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|"
+    r"texas|utah|vermont|virginia|west virginia|wisconsin|wyoming)\b",
     re.I,
 )
 # A US state as written after a city ("Portland, OR") — upper-case, after a word and a comma only, so
@@ -262,8 +270,8 @@ def location_matches(job: dict, locations: str) -> bool:
     open to the US). Empty matches everything. A remote role counts when its structured country
     list includes the US, or its text says US (or a US state/city), or it names no place at all
     ("Remote"); "Remote - EMEA", "Remote, Sweden", "Remote - Latin America" don't. A place term
-    matches as a substring of the location ("portland, or" to rule out Portland, ME)."""
-    terms = [t.strip().lower() for t in (locations or "").split(",") if t.strip()]
+    matches as whole words in the location ("portland, or" to rule out Portland, ME)."""
+    terms = location_terms(locations)
     if not terms:
         return True
     raw = job.get("location") or ""
@@ -276,14 +284,114 @@ def location_matches(job: dict, locations: str) -> bool:
             if countries:  # structured beats text: a remote role must be open in the US
                 if any(c in _US_COUNTRIES for c in countries):
                     return True
-            elif _US.search(loc) or _US_STATE.search(raw):
+            elif (_US.search(loc) or _US_STATE.search(raw)) and not re.search(r"\btbilisi\b", loc):
                 return True
             elif not re.search(r"[a-z]", _REMOTE_NOISE.sub(" ", loc)):
                 return True  # plain "Remote" — no place named
             # anything else names a non-US place ("Remote, Sweden", "Remote - Latin America")
-        elif t in loc:
+        elif _place_matches(t, raw):
             return True
     return False
+
+
+_STATES = {
+    "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas", "ca": "california", "co": "colorado",
+    "ct": "connecticut", "de": "delaware", "fl": "florida", "ga": "georgia", "hi": "hawaii", "id": "idaho",
+    "il": "illinois", "in": "indiana", "ia": "iowa", "ks": "kansas", "ky": "kentucky", "la": "louisiana",
+    "me": "maine", "md": "maryland", "ma": "massachusetts", "mi": "michigan", "mn": "minnesota",
+    "ms": "mississippi", "mo": "missouri", "mt": "montana", "ne": "nebraska", "nv": "nevada",
+    "nh": "new hampshire", "nj": "new jersey", "nm": "new mexico", "ny": "new york", "nc": "north carolina",
+    "nd": "north dakota", "oh": "ohio", "ok": "oklahoma", "or": "oregon", "pa": "pennsylvania",
+    "ri": "rhode island", "sc": "south carolina", "sd": "south dakota", "tn": "tennessee", "tx": "texas",
+    "ut": "utah", "vt": "vermont", "va": "virginia", "wa": "washington", "wv": "west virginia",
+    "wi": "wisconsin", "wy": "wyoming", "dc": "district of columbia",
+}  # fmt: skip
+# City shorthands people put in a location list — a term of their own (never a state glued onto the
+# term before it), matched by what they stand for.
+_CITY_SHORT = {
+    "sf": ("san francisco", "bay area", "sf"),
+    "la": ("los angeles",),
+    "ny": ("new york", "nyc", "ny"),
+    "nyc": ("new york", "nyc"),
+    "dc": ("washington, dc", "washington dc", "district of columbia"),
+    "atx": ("austin",),
+    "pdx": ("portland",),
+    "sea": ("seattle",),
+    "chi": ("chicago",),
+    "bos": ("boston",),
+}
+# Canadian provinces — glued onto a city like a state, so "toronto, on" never leaves a bare "on".
+_PROVINCES = {"on", "bc", "qc", "ab", "ns", "mb", "sk", "nb", "nl", "pe"}
+
+
+def _word(text: str, needle: str) -> bool:
+    return bool(re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", text))
+
+
+def _states_named(raw: str) -> set[str]:
+    """US state codes a location names — ", OR" style codes and spelled-out names."""
+    found = {m.group(1).lower() for m in _US_STATE.finditer(raw)}
+    low = raw.lower()
+    # two-word names first, cut out, so "virginia" isn't found inside "west virginia"
+    for code, name in sorted(_STATES.items(), key=lambda kv: -len(kv[1])):
+        if _word(low, name):
+            found.add(code)
+            low = re.sub(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])", " ", low)
+    return found
+
+
+def _place_matches(term: str, raw: str) -> bool:
+    """One place term against a posting location. "portland, or" = the city by whole word, and if
+    the location names a state it must be Oregon (so "Portland, Oregon" and "Portland OR" match,
+    "Portland, ME" doesn't). A bare state code ("or") = that state named in the location. Anything
+    else = whole words."""
+    low = raw.lower()
+    if term in _CITY_SHORT:
+        return any(_word(low, alias) for alias in _CITY_SHORT[term])
+    if ", " in term:
+        city, code = term.rsplit(", ", 1)
+        if code in _PROVINCES:
+            return _word(low, city) and (_word(low, code) or "canada" in low or len(code) != 2)
+        if not _word(low, city):
+            return False
+        named = _states_named(raw)
+        if not named and re.search(rf"\b{code}\b", raw, re.I) and len(code) == 2:
+            named = {code}  # "Portland OR" with no comma
+        return not named or code in named
+    if term in _STATES:
+        return term in _states_named(raw)
+    return _word(low, term)
+
+
+def location_terms(locations: str) -> list[str]:
+    """Split the ``locations`` setting into terms. Commas separate terms, but a US state code
+    belongs to the city before it — "remote, portland, or" is ["remote", "portland, or"], not a bare
+    "or" that would match New Y-or-k. City shorthands ("sf, la, nyc") stay separate terms."""
+    out: list[str] = []
+    for piece in (re.sub(r"\s+", " ", p).strip().lower() for p in (locations or "").split(",")):
+        if not piece:
+            continue
+        m = re.fullmatch(r"(.{3,}) ([a-z]{2})", piece)  # "portland or" typed without the comma
+        if m and m.group(2) in _STATES:
+            piece = f"{m.group(1)}, {m.group(2)}"
+        prev = out[-1] if out else ""
+        glue = (
+            (piece in _STATES and piece not in _CITY_SHORT)
+            or piece in _PROVINCES
+            or (piece == "dc" and prev == "washington")
+        )
+        if (
+            glue
+            and prev
+            and ", " not in prev
+            and prev not in ("remote", "remote-us", "remote us")
+            and prev not in _CITY_SHORT
+            and prev not in _STATES
+        ):
+            out[-1] = "dc" if piece == "dc" else f"{prev}, {piece}"  # "washington, dc" → the dc shorthand
+        else:
+            out.append(piece)
+    return out
 
 
 def passes(job: dict, *, roles: str = "", exclude: str = "", locations: str = "", max_age_days: float = 0,
@@ -337,7 +445,13 @@ def slug_candidates(company: str) -> list[str]:
 
     # the loose key ("Scale AI" → scale) is a guess; probe() checks a board found that way names
     # the right company before trusting it
-    out = ["".join(raw).lower(), company_hint_key(company), "-".join(raw).lower(), "".join(raw)]
+    base = re.sub(r"\.(com|ai|io|co|dev|app|org|so)$", "", company.strip(), flags=re.I)  # "Owner.com" → owner
+    braw = re.findall(r"[A-Za-z0-9]+", base.replace(".", "")) or raw
+    joined = "".join(braw).lower()
+    out = ["".join(raw).lower(), joined, company_hint_key(base), "-".join(braw).lower(), "".join(braw)]
+    # boards often carry a suffix the company name doesn't ("Arize" posts as arizeai, Glean as
+    # gleanwork) — guesses, so probe() name-checks what they find
+    out += [f"{joined}{suffix}" for suffix in ("ai", "hq", "labs", "work", "inc") if not joined.endswith(suffix)]
     seen, uniq = set(), []
     for s in out:
         if s and s not in seen:
@@ -405,4 +519,5 @@ async def probe(company: str, slug: str = "", *, client=None, sem=None) -> tuple
             if ats != "greenhouse":
                 problems.append(f"{ats}/{s} matched by the short name {s!r} — confirm it's {company}'s board")
         hits.append((ats, s, len(jobs)))
-    return sorted(hits, key=lambda h: -h[2]), problems
+    # an exact-name board beats a guessed one, whatever their size; then the board with most roles
+    return sorted(hits, key=lambda h: (h[1].lower() in loose, -h[2])), problems
