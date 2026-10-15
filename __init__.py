@@ -48,6 +48,7 @@ def register(registry) -> None:
 
     _register_tracker_tools(registry)
     _register_jobsearch_tool(registry, cfg)
+    _register_hunt_tools(registry, cfg)
     _register_packet_tools(registry, cfg)
     _register_answers_tools(registry)
     _register_formfill_tools(registry)
@@ -63,7 +64,8 @@ def register(registry) -> None:
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
         "[careercoach] registered: tracker + job-search + packet/profile + standard-answers + "
-        "form-fill tools, submit gate, rubric knobs, crew, profile injection, dashboard, watch"
+        "form-fill tools, job boards + watchlist + contacts + digest, submit gate, rubric knobs, crew, "
+        "profile injection, dashboard, watch"
     )
 
 
@@ -91,17 +93,28 @@ def _register_tracker_tools(registry) -> None:
         the evaluation, status (considering/applied/interviewing/offer/rejected/passed),
         free-text notes, and the posting URL. Feeds the Career Coach dashboard and /upskill."""
         try:
-            state.track_application(
+            row = state.track_application(
                 company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
             )
         except state.StoreUnreadable as e:
             return f"Not tracked: {e}"
+        warn = ""
+        active = state.active_at_company(company)
+        if status in state.ACTIVE and len(active) > state.COMPANY_CAP:
+            warn = (
+                f"\nHeads-up: that's {len(active)} live applications at {company} "
+                f"({'; '.join(r['role'] for r in active[:5])}). Recruiters see them all in one ATS, and many "
+                "cap repeat applicants — keep it to the best-fit roles there and ask a contact for a referral instead."
+            )
         try:
             registry.emit("application_tracked", {"company": company, "role": role, "status": status})
         except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
             pass
         n = len(state.load_applications())
-        return f"Tracked {role} @ {company} (fit {fit_score}, {status}). {n} role(s) in your pipeline."
+        return (
+            f"Tracked {row['role']} @ {row['company']} (fit {row.get('fit_score', 0)}, {status}). "
+            f"{n} role(s) in your pipeline.{warn}"
+        )
 
     @tool
     def careercoach_list_applications(status: str = "") -> str:
@@ -113,7 +126,9 @@ def _register_tracker_tools(registry) -> None:
         if not rows:
             return "Your pipeline is empty — paste me a posting, or track a role with careercoach_track_application."
         return "\n".join(
-            f"- {r['role']} @ {r['company']} — fit {r.get('fit_score', 0)}, {r.get('status', '?')}" for r in rows
+            f"- {r['role']} @ {r['company']} — fit {r.get('fit_score', 0)}, {r.get('status', '?')}, {r.get('date', '?')}"
+            + (f" · {r['source']}" if r.get("source") else "")
+            for r in rows
         )
 
     registry.register_tools([careercoach_track_application, careercoach_list_applications])
@@ -122,11 +137,16 @@ def _register_tracker_tools(registry) -> None:
 # ── agent tool: live job search (the real job source, Phase 3) ────────────────
 def _register_jobsearch_tool(registry, cfg) -> None:
     @tool
-    async def careercoach_search_jobs(query: str, location: str = "", remote: bool = False, limit: int = 10) -> str:
-        """Search LIVE job postings for `query` (a title, skill, or role), optionally narrowed by
-        `location` or `remote`-only. Uses the configured job source — JSearch (Google-for-Jobs) when a
-        Job-source API key is set in Settings, otherwise the keyless Remotive remote-jobs board. Returns
-        a numbered list with apply links; offer to evaluate fit or track any of them."""
+    async def careercoach_search_jobs(
+        query: str, location: str = "", remote: bool = False, limit: int = 10, source: str = ""
+    ) -> str:
+        """Search LIVE job postings across the market for `query` (a title, skill, or role), optionally
+        narrowed by `location` or `remote`-only. `source` picks the job source (default: Settings →
+        Career Coach): "himalayas" (keyless remote-jobs board, newest first), "hn" (this month's Hacker
+        News 'Who is hiring?' thread — startups, posted the first weekday of each month), or "jsearch"
+        (Google-for-Jobs incl. LinkedIn/Indeed; needs a Job-source API key). For companies you already
+        target, careercoach_scan_boards reads their own job boards and is fresher. Returns a numbered list
+        with apply links; offer to evaluate fit or track any of them."""
         from . import jobsource
 
         try:
@@ -136,37 +156,51 @@ def _register_jobsearch_tool(registry, cfg) -> None:
                 remote=remote,
                 limit=limit,
                 api_key=cfg.get("jobs_api_key", ""),
-                provider=cfg.get("jobs_provider", "auto"),
+                provider=(source or cfg.get("jobs_provider", "auto")),
+                country=cfg.get("search_country", "") or "",
             )
         except Exception as e:  # noqa: BLE001 — surface the reason to the user, don't crash the turn
             return f"Job search failed: {e}"
-        # Say who answered. A keyless Remotive fallback is a small remote-only board, not a search of
-        # the job market — the user must be able to tell the two apart.
-        source = f"Source: {result.provider_label}"
+        # Say who answered. A keyless board is one slice of the market, not a search of all of it —
+        # the user must be able to tell the two apart.
+        src = f"Source: {result.provider_label}"
         if result.keyless_fallback:
-            source += (
-                " — keyless fallback (no Job-source API key set), remote roles only; add a JSearch key in "
+            src += (
+                " — keyless (no Job-source API key set), remote roles only; add a JSearch key in "
                 "Settings → Career Coach for Google-for-Jobs coverage"
             )
-        if result.provider == "remotive":
-            source += f". {result.matched} of the {result.fetched} posting(s) it returned mention the query"
+        if result.provider in jobsource.KEYLESS:
+            src += f". {result.matched} of the {result.fetched} posting(s) it returned mention the query"
             if location:
-                source += "; Remotive ignores `location`"
-        source += "."
+                src += f"; {result.provider_label.split(' (')[0]} ignores `location`"
+        src += "."
         jobs = result.jobs
         if not jobs:
-            return f"No postings found for {query!r}. Try a broader query or a different location.\n{source}"
-        lines = [
-            f"{i}. {j['title']} — {j['company']} · {j['location'] or 'n/a'} ({j['source']})\n   {j['url']}"
-            for i, j in enumerate(jobs, 1)
-        ]
+            return f"No postings found for {query!r}. Try a broader query or a different location.\n{src}"
+        from .boards import age_days
+
+        def _line(i: int, j: dict) -> str:
+            age = age_days(j.get("posted", ""))
+            extra = [f"posted {int(age)}d ago"] if age is not None else []
+            if j.get("comp"):
+                extra.append(j["comp"])
+            tail = f" · {' · '.join(extra)}" if extra else ""
+            return f"{i}. {j['title']} — {j['company']} · {j['location'] or 'n/a'}{tail} ({j['source']})\n   {j['url']}"
+
+        lines = [_line(i, j) for i, j in enumerate(jobs, 1)]
         return (
             f"Found {len(jobs)} role(s):\n"
             + "\n".join(lines)
-            + f"\n\n{source}\nWant me to evaluate fit or track any of these?"
+            + f"\n\n{src}\nWant me to evaluate fit or track any of these?"
         )
 
     registry.register_tool(careercoach_search_jobs)
+
+
+def _register_hunt_tools(registry, cfg) -> None:
+    from .hunt import register_hunt_tools
+
+    register_hunt_tools(registry, cfg)
 
 
 def _import_detail(row: dict) -> str:
@@ -1795,8 +1829,9 @@ def _register_views(registry, cfg) -> None:
 # ── a background job-watch: periodic scan → nudge via the event bus (Phase 3) ─
 def _register_job_watch(registry, cfg) -> None:
     """Off unless `watch_enabled` (ADR 0071 posture). When on, a supervised background engine
-    (graph.sdk.supervise) periodically searches the target roles, prescreens fresh postings, records
-    NEW ones scoring >= `watch_min_score` to the tracker, and emits `careercoach.new_matches` so the
+    (graph.sdk.supervise) periodically scans the watched companies' boards and sweeps the keyless job
+    source for each target role, and records postings it has never seen before (the first-seen log)
+    that pass the filters and prescore >= `watch_min_score` to the tracker, and emits `careercoach.new_matches` so the
     console rail icon lights up. The goal verifier is registered either way, so you can arm a WATCH on
     the pipeline yourself (create_watch, ADR 0067) even with the auto-scan off."""
     _register_watch_verifier(registry)
@@ -1809,43 +1844,62 @@ def _register_job_watch(registry, cfg) -> None:
     holder: dict = {"engine": None}
 
     async def _scan() -> None:
-        from . import jobsource, state
-        from . import watch as watchmod
+        from . import boards, jobsource, scan, state
+        from . import watchlist as wl
+        from .hunt import filters
 
-        roles = (cfg.get("target_roles", "") or "").strip()
+        f = filters(cfg)
+        roles = f["roles"].strip()
         if not roles:
             return
-        query = roles.split(",")[0].strip() or roles
+        rows = state.load_applications()
+        found: list[dict] = []
+        # 1) the watched companies' own boards — exact titles, real first-published dates
         try:
-            jobs = (
-                await jobsource.search_jobs(
-                    query,
-                    remote=True,
-                    limit=25,
-                    api_key=cfg.get("jobs_api_key", ""),
-                    provider=cfg.get("jobs_provider", "auto"),
-                    # find_new_matches scores against EVERY target role; filtering on the
-                    # first role here would drop postings that only match a later one.
-                    rank=False,
-                )
-            ).jobs
+            watched = wl.load_watchlist()
+            if watched:
+                res = await scan.scan_watchlist(
+                    watched, roles=roles, exclude=f["exclude"], locations=f["locations"],
+                    max_age_days=f["max_age_days"], tracker_rows=rows,
+                )  # fmt: skip
+                found += [j for j in res.new if not j["tracked"]]
         except Exception as e:  # noqa: BLE001
-            log.info("[careercoach] watch scan failed: %s", e)
+            log.info("[careercoach] watch board scan failed: %s", e)
+        # 2) a keyless market sweep per target role, for companies not on the watchlist yet
+        market: list[dict] = []
+        for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
+            try:
+                got = await jobsource.search_jobs(
+                    role, remote=True, limit=25, api_key=cfg.get("jobs_api_key", ""),
+                    provider=cfg.get("jobs_provider", "auto"), country=cfg.get("search_country", "") or "",
+                )  # fmt: skip
+            except Exception as e:  # noqa: BLE001
+                log.info("[careercoach] watch market search failed for %r: %s", role, e)
+                continue
+            for j in got.jobs:
+                if boards.passes(j, roles=roles, exclude=f["exclude"], max_age_days=f["max_age_days"]):
+                    j["id"] = f"{j['source']}:{j['url']}"
+                    j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""))
+                    market.append(j)
+        if market:
+            uniq = list({j["id"]: j for j in market}.values())
+            new, _ = wl.record_sightings(uniq)
+            index = scan.tracked_index(rows)
+            found += [j for j in (scan.annotate(j, index) for j in new) if not j["tracked"]]
+        if not found:
             return
-        seen = {
-            (r.get("company", "").strip().lower(), r.get("role", "").strip().lower()) for r in state.load_applications()
-        }
-        matches = watchmod.find_new_matches(jobs, roles, seen, min_score)
+        found.sort(key=lambda j: j.get("posted") or "", reverse=True)
+        matches = []
         try:
-            for m in matches:
+            for j in found[:15]:  # a first scan of a big watchlist must not flood the pipeline
+                score = jobsource.prescore(j, roles)
+                if score < min_score:
+                    continue
                 state.track_application(
-                    company=m["company"],
-                    role=m["title"],
-                    fit_score=m["score"],
-                    status="considering",
-                    source=m["url"],
-                    notes=f"auto-surfaced by watch · prescore {m['score']}",
-                )
+                    company=j["company"], role=j["title"], fit_score=score, status="considering",
+                    source=j["url"], notes=f"auto-surfaced by watch ({j['source']}) · prescore {score}",
+                )  # fmt: skip
+                matches.append({**j, "score": score})
         except state.StoreUnreadable as e:
             log.warning("[careercoach] watch scan recorded nothing: %s", e)
             return

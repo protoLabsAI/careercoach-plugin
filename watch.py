@@ -4,16 +4,18 @@ with no host and no network."""
 
 from __future__ import annotations
 
+from .companies import company_key, role_key
 from .jobsource import prescore
 
 
 def _key(company: str, role: str) -> tuple[str, str]:
-    return (company.strip().lower(), role.strip().lower())
+    return (company_key(company), role_key(role))
 
 
 def find_new_matches(jobs: list[dict], target_roles: str, seen_keys: set, min_score: int) -> list[dict]:
     """From freshly-searched ``jobs``, return those that (1) prescore >= ``min_score`` against the
-    target roles and (2) aren't already tracked (their ``(company, title)`` isn't in ``seen_keys``).
+    target roles and (2) aren't already tracked (their normalized ``(company, title)`` — see
+    ``companies`` — isn't in ``seen_keys``; build it with ``_key``).
     Each result carries an added ``score``; the list is sorted highest-first. Pure — the watch
     engine feeds it search results + the tracker's existing keys."""
     out: list[dict] = []

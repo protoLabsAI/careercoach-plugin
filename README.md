@@ -31,7 +31,18 @@ forking core.
 - **Upskilling** — turns the jobs you're chasing into a prioritized gap heatmap + a learning plan with real resources (skill: `upskill`).
 
 **Execution (when you ask):**
-- **Find live jobs** — `careercoach_search_jobs` queries a real job source: JSearch (Google-for-Jobs) with an API key, or the keyless **Remotive** remote-jobs board out of the box.
+- **Find fresh roles** (skill: `job-hunt`) — keep a **company watchlist** and `careercoach_scan_boards` reads
+  those companies' own Ashby / Greenhouse / Lever job boards (keyless, with the date each role first went up),
+  filtered to your target roles, locations and max age, marking what's **new**, what you've **already tracked
+  or applied to**, and **ghost-job warnings** (long-open, reposted, thin). `careercoach_search_jobs` sweeps the
+  wider market: the keyless **Himalayas** remote board, this month's **Hacker News "Who is hiring?"**, or
+  JSearch (Google-for-Jobs) with an API key.
+- **Go in through people** — import your LinkedIn Connections export, and `careercoach_find_referrals` tells
+  you who you know at each company before you apply; `careercoach_log_contact` keeps follow-ups from slipping.
+- **A morning digest** — `careercoach_digest`: new roles from the last few days, follow-ups due, applications
+  gone quiet. `careercoach_import_history` brings past applications kept elsewhere into the tracker so sweeps
+  never re-suggest them; the tracker dedups by posting URL and normalized company ("Arize AI" = "Arize") and
+  warns past 3 live applications at one company.
 - **Evaluate fit** against a weighted, tunable rubric, with sourced company research.
 - **Tailor a CV + cover letter** — reframing emphasis, never fabricating (the interview-backtrack test).
 - **Build, import, export and ATS-check the resume itself** — the `resume` skill. Your resume lives as
@@ -45,8 +56,9 @@ forking core.
   tailored resume, ATS skills list, cover letter, assembled packet — **one human-approved step at a
   time**, anchored to your operator profile. Say *"build the role packet."*
 
-**In the background (opt-in):** turn on the **job-watch** and it periodically searches your target
-roles, surfaces new matching postings on the dashboard, and lights the rail icon — or arm a **WATCH**
+**In the background (opt-in):** turn on the **job-watch** and it periodically scans your watchlist's
+boards and sweeps the job source for your target roles, adds postings it has never seen before to your
+pipeline, and lights the rail icon — or arm a **WATCH**
 on your pipeline yourself via the `careercoach:new_matches` verifier.
 
 Track it all on the **Career Coach dashboard** (a console rail view): your pipeline, fit scores, the rubric.
@@ -88,7 +100,13 @@ careercoach-plugin/
 ├─ rubric.py                  # the weighted fit rubric — pure, tested
 ├─ state.py                   # the application tracker — instance-scoped JSON, tested
 ├─ profile.py                 # the operator profile + the shared store (instance root, lock, atomic write)
-├─ jobsource.py               # live job search (JSearch / Remotive) — parsers + prescore, tested
+├─ jobsource.py               # market search (Himalayas / HN / JSearch / Remotive) — parsers + prescore, tested
+├─ boards.py                  # company job boards (Ashby / Greenhouse / Lever) — parsers, filters, probe, tested
+├─ watchlist.py               # the company watchlist + first-seen log + ghost flags — tested
+├─ scan.py                    # one watchlist scan, shared by the scan tool, the digest and the watch
+├─ companies.py               # company/role normalization ("Arize AI" = "Arize") for every dedup
+├─ contacts.py                # LinkedIn Connections import, referrals, follow-ups — tested
+├─ hunt.py                    # the job-hunt tools (watchlist, scan, history, contacts, digest)
 ├─ watch.py                   # the background-watch matcher — pure, tested
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
 ├─ skills/
@@ -96,6 +114,7 @@ careercoach-plugin/
 │  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
 │  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
 │  ├─ apply-form/                  # the end-to-end ATS-form loop: plan → fill → verify → handoff → gated submit
+│  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest
 │  ├─ interview-coach/             # STAR bank + mock interviews with feedback
 │  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
 │  └─ upskill/                     # gap heatmap + learning plan
@@ -154,13 +173,18 @@ careercoach-plugin/
   > runtime** (ADR 0094): the first `execute_code` call provisions a pinned CPython plus the document
   > libraries — **one consented download, once per machine** — after which the docx path works on desktop.
   > On a server / Docker install there's nothing to provision.
-- **Sharper job search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
-  under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth. Without a key, search uses
-  the keyless **Remotive** remote-jobs board — so it works out of the box. Remotive's own search isn't
-  relevance-ranked, so its postings are filtered and ranked against your query locally, and every result
-  says which source answered (and when it's the keyless fallback).
-- **Background job-watch.** Turn on **Background job-watch** in Settings and it periodically surfaces new roles
-  matching your profile on the dashboard (and lights the rail icon). Off by default.
+- **Point the search at you.** In **Settings → Career Coach** set **Target roles** (comma-separated; each is an
+  all-words title match), **Locations** (places plus `remote` = remote and open to the US, e.g.
+  `remote, portland`), **Exclude titles with** and **Max posting age**. Then build the watchlist:
+  *"add Anthropic, OpenAI, Vercel to my watchlist"* — each company is looked up on Ashby, Greenhouse and Lever.
+- **Sharper market search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
+  under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth (LinkedIn and Indeed
+  listings, local roles). Without a key, search uses the keyless **Himalayas** remote-jobs board (set
+  **Search country** to narrow it) or Hacker News. Keyless search is loose, so postings are filtered and
+  ranked against your query locally, and every result says which source answered. (Remotive, the old
+  default, now returns one fixed feed whatever you search; it's only used if you pick it explicitly.)
+- **Background job-watch.** Turn on **Background job-watch** in Settings and it periodically adds new roles
+  matching your filters to the pipeline (and lights the rail icon). Off by default.
 - **Tune the fit rubric.** `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`) reweights
   scoring live.
 
@@ -278,9 +302,13 @@ careercoach-plugin/
   `writing-voice` skill has saved a `my-writing-style` profile, the coach layers it over the writing
   discipline so drafts sound like *you* — detected at runtime via `list_skills`, ignored if absent
   (the honesty rules still win on any conflict). A soft pairing: no dependency, works standalone.
-- **The job source is provider-abstracted + keyless by default.** Live search works out of the box via
-  Remotive (remote jobs, no key); add a JSearch/RapidAPI key for Google-for-Jobs breadth. Only
-  `jobsource.py` makes outbound calls, and the manifest declares exactly those two hosts.
+- **The employer's own board beats an aggregator.** Ashby, Greenhouse and Lever publish keyless, documented
+  posting APIs with the date a role first went up — fresher than any re-lister and no scraping. They don't
+  search, so the whole board is filtered locally (`boards.py`), and a first-seen log (`seen.json`) is the
+  source of truth for "new" and for reposts, because boards reset a posting's date when it's re-listed.
+  Market search stays provider-abstracted and keyless by default (Himalayas, Hacker News; JSearch with a key).
+  Only `jobsource.py` and `boards.py` make outbound calls, and the manifest declares exactly those hosts.
+  LinkedIn and Indeed are never scraped.
 
 ### Applying through ATS forms
 

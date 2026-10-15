@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.10.0
+version: 0.11.0
 description: >-
   Your career coach and job-hunt copilot. Talk through strategy and positioning,
   run mock interviews with honest feedback, get a straight critique of your CV,
@@ -16,11 +16,19 @@ guide_url: "https://github.com/protoLabsAI/careercoach-plugin#quick-start"   # S
 # The DS plugin-kit (/_ds/) + the sandboxed-iframe view convention need a recent host.
 min_protoagent_version: "0.34.0"
 # Declarative posture (ADR 0071) — company research still runs through the agent's own
-# web_search/fetch_url tools, but the live job source (careercoach_search_jobs) + the
-# background job-watch call two job APIs directly, and careercoach_prepare_application fetches a
-# Greenhouse job's public application schema, so `network` lists exactly those hosts.
+# web_search/fetch_url tools, but the live job sources (careercoach_search_jobs: JSearch, Himalayas,
+# the Hacker News Algolia API, Remotive on explicit request), the company job-board scan (the public
+# Ashby / Greenhouse / Lever posting APIs) and careercoach_prepare_application (a Greenhouse job's
+# public application schema) call out directly, so `network` lists exactly those hosts.
 capabilities:
-  network: ["jsearch.p.rapidapi.com", "remotive.com", "boards-api.greenhouse.io"]
+  network:
+    - "jsearch.p.rapidapi.com"
+    - "himalayas.app"
+    - "hn.algolia.com"
+    - "remotive.com"
+    - "boards-api.greenhouse.io"
+    - "api.ashbyhq.com"
+    - "api.lever.co"
   # the operator profile + application tracker live under the instance root
   # (<instance_root>/careercoach); role-packet files go to the configured workspace
   # (packet_root, default ~/CareerCoach).
@@ -39,7 +47,11 @@ config:
   render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | docx (real Word file → save_file_artifact) | latex
   packet_root: ""           # workspace for the gated role-packet flow (Companies/<Co>/Roles/…); blank → ~/CareerCoach
   jobs_api_key: ""
-  jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else remotive) | jsearch | remotive
+  jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else himalayas) | jsearch | himalayas | hn | remotive
+  search_country: ""        # narrow keyless remote-board results to roles open in this country (e.g. "United States")
+  locations: ""             # where a role may be: comma list of places + "remote" (= remote, open to the US); blank = anywhere
+  title_exclude: "intern, internship, new grad"   # words that drop a title from scans
+  max_age_days: 30          # board scans skip postings older than this (0 = any age)
   watch_enabled: false      # background job-watch: periodically surface new matching roles
   watch_interval_min: 180   # how often the watch scans (minutes; floored at 5)
   watch_min_score: 75       # only surface roles whose quick prescore is >= this
@@ -50,9 +62,13 @@ settings:
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }
   - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain); 'docx' produces a real editable Word file via the cowork docx skill and saves it as a versioned download-artifact (needs cowork + the execute_code plugin, which runs code, + a protoAgent v0.108.0+ host — on the desktop app 0.108.0 is the floor because that is where execute_code gained its managed Python runtime, provisioned on first use; falls back to html otherwise); 'latex' for the classic moderncv .tex export." }
   - { key: packet_root, label: "Role-packet workspace", type: string, group: "Career Coach", description: "Folder where the gated role-packet flow files a folder per role (Companies/<Company>/Roles/<Role - Req>/) plus an Experience.md you can write your history into (the coach imports it into your profile) and your story bank. Blank defaults to ~/CareerCoach. Point it at wherever you keep your job hunt so you can open and edit the artifacts directly." }
-  - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A RapidAPI key for JSearch (Google-for-Jobs). With it, live job search + the watch use JSearch; without it they fall back to the keyless Remotive remote-jobs board. Stored in secrets.yaml." }
-  - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job API to use: 'auto' (JSearch when a key is set, else Remotive), 'jsearch', or 'remotive'." }
-  - { key: watch_enabled, label: "Background job-watch", type: bool, group: "Career Coach", description: "When on, periodically searches your target roles and surfaces new matching postings on the dashboard (lights the rail icon). Off by default." }
+  - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A RapidAPI key for JSearch (Google-for-Jobs, which includes LinkedIn and Indeed listings). With it, live job search + the watch use JSearch; without it they use the keyless Himalayas remote-jobs board. Stored in secrets.yaml." }
+  - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job API market searches use: 'auto' (JSearch when a key is set, else Himalayas), 'jsearch', 'himalayas', 'hn' (this month's Hacker News Who-is-hiring thread), or 'remotive' (not recommended: its API now returns a fixed feed). Watched companies' own job boards are scanned regardless." }
+  - { key: search_country, label: "Search country", type: string, group: "Career Coach", description: "Optional. Narrow keyless remote-board results to roles open to candidates in this country, e.g. 'United States'." }
+  - { key: locations, label: "Locations", type: string, group: "Career Coach", description: "Where a role may be, for board scans and the digest: a comma-separated list of places (matched against the posting's location) plus 'remote' for remote roles open to the US. E.g. 'remote, portland'. Blank matches anywhere." }
+  - { key: title_exclude, label: "Exclude titles with", type: string, group: "Career Coach", description: "Comma-separated words or phrases that drop a title from scans, e.g. 'intern, manager, director'." }
+  - { key: max_age_days, label: "Max posting age (days)", type: number, group: "Career Coach", description: "Board scans skip postings first published longer ago than this. 0 = any age." }
+  - { key: watch_enabled, label: "Background job-watch", type: bool, group: "Career Coach", description: "When on, periodically scans your watched companies' job boards and the job source for your target roles, and adds postings it hasn't seen before to your pipeline as 'considering' (lights the rail icon). Off by default." }
   - { key: watch_interval_min, label: "Watch interval (min)", type: number, group: "Career Coach", description: "How often the background watch scans, in minutes (minimum 5)." }
   - { key: watch_min_score, label: "Watch match threshold", type: number, group: "Career Coach", description: "Only surface postings whose quick keyword prescore is at least this (0-100). The coach still runs the full fit rubric on demand." }
 

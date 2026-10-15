@@ -1,8 +1,10 @@
-"""Live job search relevance — the keyless Remotive fallback must answer the QUERY, and say it answered.
+"""Live job search relevance — a keyless board must answer the QUERY, and say it answered.
 
-Remotive's ``?search=`` came back with the same unrelated postings for every query, and the code took
-``jobs[:limit]`` as-is, so "data engineer" and "pastry chef" returned identical lists. ``search_jobs``
-now ranks/filters Remotive results client-side with ``prescore`` and reports which provider answered.
+Remotive's ``?search=`` came back with the same unrelated postings for every query (by 2026-10 its API
+returned one fixed 14-posting feed), and the code took ``jobs[:limit]`` as-is, so "data engineer" and
+"pastry chef" returned identical lists. The keyless default is now Himalayas, whose search is loose, so
+``search_jobs`` still ranks/filters keyless results client-side with ``prescore`` and reports which
+provider answered. Remotive stays reachable only when configured explicitly.
 
 No live network: ``httpx.AsyncClient`` is swapped for one on an ``httpx.MockTransport``.
 """
@@ -55,13 +57,36 @@ def js(plugin):
     return importlib.import_module(plugin.__name__ + ".jobsource")
 
 
+def _as_himalayas(payload: dict) -> dict:
+    """The same four postings in Himalayas' response shape."""
+    return {
+        "jobs": [
+            {
+                "title": j["title"],
+                "companyName": j["company_name"],
+                "locationRestrictions": [j["candidate_required_location"]],
+                "applicationLink": j["url"],
+                "excerpt": j["description"],
+                "pubDate": 1791000000,
+                "minSalary": 150000,
+                "maxSalary": 200000,
+                "currency": "USD",
+            }
+            for j in payload["jobs"]
+        ]
+    }
+
+
 @pytest.fixture
 def remotive(monkeypatch):
-    """Route every httpx call to a mock Remotive that ignores the query. Returns the request log."""
+    """Route every httpx call to a mock keyless board (Himalayas, or Remotive when asked for) that
+    ignores the query. Returns the request log."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY))
         assert request.url.host == "remotive.com"
         return httpx.Response(200, json=_SAME_FOR_EVERY_QUERY)
 
@@ -79,7 +104,8 @@ def test_different_queries_get_different_relevant_results(js, remotive):
     chef = _search(js, "pastry chef")
     assert [j["company"] for j in data.jobs] == ["Globex", "Hooli"]  # title hit ranks above a snippet mention
     assert [j["company"] for j in chef.jobs] == ["Bakery Co"]
-    assert remotive[0].url.params["search"] == "data engineer"  # still asks Remotive to search
+    assert remotive[0].url.params["q"] == "data engineer"  # still asks the board to search
+    assert remotive[0].url.params["sort"] == "recent"
 
 
 def test_irrelevant_postings_are_dropped_not_padded(js, remotive):
@@ -103,9 +129,57 @@ def test_rank_false_returns_the_raw_feed_for_a_caller_that_scores_it_itself(js, 
 
 def test_the_result_names_the_provider_and_a_keyless_fallback(js, remotive):
     auto = _search(js, "data engineer")
-    assert auto.provider == "remotive" and auto.keyless_fallback is True
-    chosen = _search(js, "data engineer", provider="remotive")
-    assert chosen.provider == "remotive" and chosen.keyless_fallback is False  # explicitly configured
+    assert auto.provider == "himalayas" and auto.keyless_fallback is True
+    chosen = _search(js, "data engineer", provider="himalayas")
+    assert chosen.provider == "himalayas" and chosen.keyless_fallback is False  # explicitly configured
+
+
+def test_auto_never_picks_remotive_but_an_explicit_choice_still_works(js, remotive):
+    out = _search(js, "data engineer", provider="remotive")
+    assert out.provider == "remotive" and [j["company"] for j in out.jobs] == ["Globex", "Hooli"]
+    assert remotive[-1].url.host == "remotive.com"
+    assert all(r.url.host != "remotive.com" for r in remotive[:-1])
+
+
+def test_himalayas_carries_date_salary_and_country(js, remotive):
+    out = _search(js, "data engineer", country="United States")
+    assert remotive[0].url.params["country"] == "United States"
+    top = out.jobs[0]
+    assert top["posted"].startswith("2026-") and top["comp"] == "USD 150,000–200,000"
+    assert top["location"] == "Remote (USA)"
+
+
+def test_an_unknown_provider_is_refused(js):
+    with pytest.raises(ValueError, match="unknown job source"):
+        _search(js, "x", provider="monster")
+
+
+def test_hn_searches_this_months_thread_top_level_only(js, monkeypatch):
+    stories = {"hits": [
+        {"objectID": "1", "title": "Ask HN: Who wants to be hired? (October 2026)"},
+        {"objectID": "2", "title": "Ask HN: Who is hiring? (October 2026)"},
+    ]}  # fmt: skip
+    comments = {"hits": [
+        {"objectID": "10", "parent_id": 2, "created_at": "2026-10-01T15:05:00Z",
+         "comment_text": "Acme AI (<a href=\"https://acme.ai\">acme.ai</a>) | Forward Deployed Engineer | REMOTE (US) | $200k<p>We build agents."},
+        {"objectID": "11", "parent_id": 10, "created_at": "2026-10-01T16:00:00Z",
+         "comment_text": "Is this role open to Canada?"},
+    ]}  # fmt: skip
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.url.host == "hn.algolia.com"
+        return httpx.Response(200, json=stories if "search_by_date" in request.url.path else comments)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    out = _search(js, "forward deployed", provider="hn")
+    assert seen[1].url.params["tags"] == "comment,story_2"  # the hiring thread, not "wants to be hired"
+    assert [(j["company"], j["title"], j["location"]) for j in out.jobs] == [
+        ("Acme AI", "Forward Deployed Engineer", "REMOTE (US)")
+    ]
+    assert out.jobs[0]["url"] == "https://news.ycombinator.com/item?id=10"
 
 
 def test_an_unscoreable_query_is_not_emptied(js, remotive):
@@ -131,7 +205,11 @@ def test_the_tool_reports_which_provider_answered(tools, remotive):
     tool = tools["careercoach_search_jobs"]
     out = asyncio.run(tool.ainvoke({"query": "data engineer"}))
     assert "Senior Data Engineer" in out and "Customer Success" not in out
-    assert "Remotive" in out and "keyless fallback" in out and "2 of the 4" in out
+    assert "Himalayas" in out and "keyless" in out and "2 of the 4" in out
+    assert "USD 150,000–200,000" in out and "posted " in out
 
     empty = asyncio.run(tool.ainvoke({"query": "kubernetes administrator"}))
-    assert empty.startswith("No postings found") and "Remotive" in empty and "0 of the 4" in empty
+    assert empty.startswith("No postings found") and "Himalayas" in empty and "0 of the 4" in empty
+
+    picked = asyncio.run(tool.ainvoke({"query": "data engineer", "source": "remotive"}))
+    assert "Remotive" in picked and "fixed feed" in picked
