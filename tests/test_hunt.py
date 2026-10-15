@@ -678,5 +678,65 @@ def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):
         ]  # fmt: skip
     )
     out = _run(hunt_tools["careercoach_digest"], {})
-    assert "## From the background watch (1 since the last digest)" in out and "Newco" in out
+    assert "## From the background watch (1 queued)" in out and "Newco" in out
     assert "From the background watch" not in _run(hunt_tools["careercoach_digest"], {})
+
+
+# ── #30 review ────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("setting", "terms"),
+    [
+        ("sf, la", ["sf", "la"]),
+        ("nyc, la, sf", ["nyc", "la", "sf"]),
+        ("remote, sf, la", ["remote", "sf", "la"]),
+        ("seattle, wa, ca", ["seattle, wa", "ca"]),
+        ("remote, or", ["remote", "or"]),
+        ("Portland, OR, remote", ["portland, or", "remote"]),
+    ],
+)
+def test_location_terms_only_glue_a_state_onto_a_city(mods, setting, terms):
+    assert mods.boards.location_terms(setting) == terms
+
+
+@pytest.mark.parametrize(
+    ("loc", "setting", "ok"),
+    [
+        ("Portland, Oregon", "portland, or", True),
+        ("Portland OR", "portland, or", True),
+        ("Portland, OR (Hybrid)", "portland, or", True),
+        ("Portland, ME", "portland, or", False),
+        ("Los Angeles, CA", "sf, la", False),  # "la" is a shorthand term, not Louisiana glued to sf
+        ("Hybrid - SF", "sf, la", True),
+        ("Berlin or Munich", "remote, or", False),  # a bare state code means the state, not the word
+        ("Salem, OR", "remote, or", True),
+        ("Seattle, Washington", "seattle, wa", True),
+    ],
+)
+def test_city_state_terms_match_spellings_of_the_same_place(mods, loc, setting, ok):
+    assert mods.boards.location_matches({"location": loc, "remote": False}, setting) is ok
+
+
+@pytest.mark.parametrize(
+    ("loc", "ok"),
+    [("Remote - Tbilisi, Georgia", False), ("Remote - Georgia (country)", False), ("Remote, Central Europe", False),
+     ("Remote (Eastern Europe)", False), ("Remote - Pacific / APAC", False), ("Remote - Atlanta, Georgia", True),
+     ("Remote (US Central time)", True)],
+)  # fmt: skip
+def test_us_region_words_dont_admit_foreign_regions(mods, loc, ok):
+    assert mods.boards.location_matches({"location": loc}, "remote") is ok
+
+
+def test_the_digest_keeps_what_it_did_not_show(hunt_tools, mods):
+    mods.watchlist.add_to_inbox(
+        [
+            {"id": f"h:{i}", "company": f"Co{i}", "title": "AI Engineer", "url": f"https://h/{i}", "posted": _ago(1)}
+            for i in range(30)
+        ]  # fmt: skip
+    )
+    out = _run(hunt_tools["careercoach_digest"], {})
+    assert "(30 queued)" in out and "5 more stay queued" in out
+    assert len(mods.watchlist.peek_inbox()) == 5
+
+
+def test_slug_guesses_skip_redundant_suffixes(mods):
+    assert "scaleaiai" not in mods.boards.slug_candidates("Scale AI")

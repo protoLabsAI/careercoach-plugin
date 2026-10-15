@@ -160,13 +160,26 @@ def add_to_inbox(jobs: list[dict]) -> int:
         return len(box)
 
 
-def take_inbox() -> list[dict]:
-    """Everything the watch queued since the last digest, newest posting first — and empty it."""
+def peek_inbox() -> list[dict]:
+    """What the watch has queued, newest posting first — without removing anything."""
+    return sorted(_load(INBOX, []), key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
+
+
+def drop_from_inbox(ids) -> None:
+    """Remove the items the operator has now been shown (only those — the rest wait)."""
+    ids = set(ids)
+    if not ids:
+        return
     with _store._locked("inbox"):
         box = _load(INBOX, [])
-        if box:
-            _save(INBOX, [])
-    return sorted(box, key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
+        _save(INBOX, [j for j in box if j.get("id") not in ids])
+
+
+def take_inbox() -> list[dict]:
+    """Everything queued, newest first — and empty it."""
+    box = peek_inbox()
+    drop_from_inbox(j.get("id") for j in box)
+    return box
 
 
 def ghost_flags(job: dict, now: datetime | None = None) -> list[str]:

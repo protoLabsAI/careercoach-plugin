@@ -1845,7 +1845,12 @@ def _register_job_watch(registry, cfg) -> None:
     holder: dict = {"engine": None}
 
     async def _scan() -> None:
-        await _watch_tick(registry, cfg, min_score)
+        # Never raise out of a tick: a crash skips `breath`, and the watchdog would re-kick a full
+        # board scan every `interval` instead of every `watch_interval_min`.
+        try:
+            await _watch_tick(registry, cfg, min_score)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[careercoach] watch tick failed: %s", e)
 
     async def _start() -> None:
         try:
