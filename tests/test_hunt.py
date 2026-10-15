@@ -783,3 +783,12 @@ def test_the_hint_key_folds_plurals(mods):
     assert mods.companies.company_key("Bright Visions") != mods.companies.company_key(
         "Bright Vision"
     )  # exact stays exact
+
+
+def test_the_plural_fold_spares_one_word_brands_and_keeps_possessives(mods):
+    hk = mods.companies.company_hint_key
+    for a, b in (("Atlas", "Atla"), ("Canvas", "Canva"), ("Brooks", "Brook")):
+        assert hk(a) != hk(b), (a, b)
+    assert hk("Moody's") == hk("Moodys") and hk("McDonald’s") == hk("McDonalds")
+    assert hk("Wells Fargo") == "wellsfargo"  # only the last word of a name folds
+    assert "atla" not in mods.boards.slug_candidates("Atlas")
