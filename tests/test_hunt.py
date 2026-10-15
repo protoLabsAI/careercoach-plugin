@@ -705,7 +705,7 @@ def test_location_terms_only_glue_a_state_onto_a_city(mods, setting, terms):
         ("Portland OR", "portland, or", True),
         ("Portland, OR (Hybrid)", "portland, or", True),
         ("Portland, ME", "portland, or", False),
-        ("Los Angeles, CA", "sf, la", False),  # "la" is a shorthand term, not Louisiana glued to sf
+        ("Los Angeles, CA", "sf, la", True),  # "la" is the Los Angeles shorthand, not Louisiana
         ("Hybrid - SF", "sf, la", True),
         ("Berlin or Munich", "remote, or", False),  # a bare state code means the state, not the word
         ("Salem, OR", "remote, or", True),
@@ -740,3 +740,30 @@ def test_the_digest_keeps_what_it_did_not_show(hunt_tools, mods):
 
 def test_slug_guesses_skip_redundant_suffixes(mods):
     assert "scaleaiai" not in mods.boards.slug_candidates("Scale AI")
+
+
+@pytest.mark.parametrize(
+    ("loc", "setting", "ok"),
+    [
+        ("Los Angeles, CA", "sf, la", True),
+        ("New Orleans, LA", "sf, la", False),
+        ("San Francisco, CA", "sf", True),
+        ("NY", "ny", True),
+        ("On-site - Anywhere", "toronto, on", False),
+        ("Toronto, ON", "toronto, on", True),
+        ("Seattle, Washington", "washington, dc", False),
+        ("Washington, DC", "washington, dc", True),
+        ("Charleston, West Virginia", "charleston, va", False),
+        ("Portland, OR", "Portland OR", True),
+    ],
+)
+def test_shorthands_provinces_and_dc(mods, loc, setting, ok):
+    assert mods.boards.location_matches({"location": loc, "remote": False}, setting) is ok
+
+
+@pytest.mark.parametrize(
+    "loc",
+    ["Remote - Asia Pacific", "Remote - Asia-Pacific", "Remote, Central & Eastern Europe", "Remote - Central America"],
+)
+def test_more_foreign_regions_stay_out(mods, loc):
+    assert not mods.boards.location_matches({"location": loc}, "remote")

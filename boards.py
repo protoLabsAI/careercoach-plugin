@@ -203,7 +203,8 @@ _US = re.compile(
     r"\b(us|usa|u\.s\.|united states|north america|americas|anywhere|worldwide|global|"
     r"san francisco|sf|bay area|new york|nyc|seattle|austin|boston|chicago|los angeles|denver|portland|"
     r"atlanta|washington|miami|san diego|san jose|palo alto|mountain view|"
-    r"west coast|east coast|(?:pacific|eastern|central)(?!\s*(?:europe|asia|apac|africa|/|-\s*apac))|"
+    r"west coast|east coast|(?<!asia )(?<!asia-)(?:pacific|eastern|central)"
+    r"(?!\s*(?:(?:&|and)\s*\w+\s*)?(?:europe|asia|apac|africa|america|/|-\s*apac))|"
     r"mountain time|pst|pdt|pt|est|edt|et|cst|cdt|ct|mst|mt|"
     r"alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|"
     r"georgia(?!\s*\(country\))|hawaii|idaho|"
@@ -305,8 +306,22 @@ _STATES = {
     "ut": "utah", "vt": "vermont", "va": "virginia", "wa": "washington", "wv": "west virginia",
     "wi": "wisconsin", "wy": "wyoming", "dc": "district of columbia",
 }  # fmt: skip
-# City shorthands people put in a location list — never a state to glue onto the term before it.
-_CITY_SHORT = {"sf", "la", "ny", "nyc", "dc", "atx", "pdx", "sea", "chi", "bos"}
+# City shorthands people put in a location list — a term of their own (never a state glued onto the
+# term before it), matched by what they stand for.
+_CITY_SHORT = {
+    "sf": ("san francisco", "bay area", "sf"),
+    "la": ("los angeles",),
+    "ny": ("new york", "nyc", "ny"),
+    "nyc": ("new york", "nyc"),
+    "dc": ("washington, dc", "washington dc", "district of columbia"),
+    "atx": ("austin",),
+    "pdx": ("portland",),
+    "sea": ("seattle",),
+    "chi": ("chicago",),
+    "bos": ("boston",),
+}
+# Canadian provinces — glued onto a city like a state, so "toronto, on" never leaves a bare "on".
+_PROVINCES = {"on", "bc", "qc", "ab", "ns", "mb", "sk", "nb", "nl", "pe"}
 
 
 def _word(text: str, needle: str) -> bool:
@@ -317,7 +332,11 @@ def _states_named(raw: str) -> set[str]:
     """US state codes a location names — ", OR" style codes and spelled-out names."""
     found = {m.group(1).lower() for m in _US_STATE.finditer(raw)}
     low = raw.lower()
-    found |= {code for code, name in _STATES.items() if _word(low, name)}
+    # two-word names first, cut out, so "virginia" isn't found inside "west virginia"
+    for code, name in sorted(_STATES.items(), key=lambda kv: -len(kv[1])):
+        if _word(low, name):
+            found.add(code)
+            low = re.sub(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])", " ", low)
     return found
 
 
@@ -327,8 +346,12 @@ def _place_matches(term: str, raw: str) -> bool:
     "Portland, ME" doesn't). A bare state code ("or") = that state named in the location. Anything
     else = whole words."""
     low = raw.lower()
+    if term in _CITY_SHORT:
+        return any(_word(low, alias) for alias in _CITY_SHORT[term])
     if ", " in term:
         city, code = term.rsplit(", ", 1)
+        if code in _PROVINCES:
+            return _word(low, city) and (_word(low, code) or "canada" in low or len(code) != 2)
         if not _word(low, city):
             return False
         named = _states_named(raw)
@@ -345,20 +368,27 @@ def location_terms(locations: str) -> list[str]:
     belongs to the city before it — "remote, portland, or" is ["remote", "portland, or"], not a bare
     "or" that would match New Y-or-k. City shorthands ("sf, la, nyc") stay separate terms."""
     out: list[str] = []
-    for piece in (p.strip().lower() for p in (locations or "").split(",")):
+    for piece in (re.sub(r"\s+", " ", p).strip().lower() for p in (locations or "").split(",")):
         if not piece:
             continue
+        m = re.fullmatch(r"(.{3,}) ([a-z]{2})", piece)  # "portland or" typed without the comma
+        if m and m.group(2) in _STATES:
+            piece = f"{m.group(1)}, {m.group(2)}"
         prev = out[-1] if out else ""
+        glue = (
+            (piece in _STATES and piece not in _CITY_SHORT)
+            or piece in _PROVINCES
+            or (piece == "dc" and prev == "washington")
+        )
         if (
-            piece in _STATES
-            and piece not in _CITY_SHORT
+            glue
             and prev
             and ", " not in prev
             and prev not in ("remote", "remote-us", "remote us")
             and prev not in _CITY_SHORT
             and prev not in _STATES
         ):
-            out[-1] = f"{prev}, {piece}"
+            out[-1] = "dc" if piece == "dc" else f"{prev}, {piece}"  # "washington, dc" → the dc shorthand
         else:
             out.append(piece)
     return out
