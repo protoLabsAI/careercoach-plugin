@@ -111,7 +111,8 @@ def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = S
         log = _load(log_name, {})
         by_hash: dict[str, str] = {}
         for jid, rec in log.items():
-            by_hash.setdefault(rec.get("hash", ""), jid)
+            if rec.get("hash"):  # no hash = no fingerprint; never a repost of another hashless job
+                by_hash.setdefault(rec["hash"], jid)
         new: list[dict] = []
         for j in jobs:
             rec = log.get(j["id"])
@@ -126,12 +127,13 @@ def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = S
                     "last_seen": now,
                     "sightings": 1,
                 }
-                prior = by_hash.get(j.get("hash", ""))
+                prior = by_hash.get(j["hash"]) if j.get("hash") else None
                 if prior and prior != j["id"]:
                     rec["repost_of"] = prior
                     rec["first_seen"] = log[prior].get("first_seen", now)
                 log[j["id"]] = rec
-                by_hash.setdefault(rec["hash"], j["id"])
+                if rec["hash"]:
+                    by_hash.setdefault(rec["hash"], j["id"])
                 new.append(j)
             else:
                 rec["last_seen"] = now

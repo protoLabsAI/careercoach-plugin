@@ -23,13 +23,17 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower().replace("&", " and "))
 
 
-def _key(name: str, drop: set[str]) -> str:
+def _key_words(name: str, drop: set[str]) -> list[str]:
     words = _words(name.replace(".", "") if name else "")
     if words and words[0] == "the" and len(words) > 1:
         words = words[1:]
     while len(words) > 1 and words[-1] in drop:
         words.pop()
-    return "".join(words)
+    return words
+
+
+def _key(name: str, drop: set[str]) -> str:
+    return "".join(_key_words(name, drop))
 
 
 def company_key(name: str) -> str:
@@ -41,8 +45,10 @@ def company_key(name: str) -> str:
 
 def company_hint_key(name: str) -> str:
     """A LOOSE key that also drops generic descriptors ("Arize AI" ~ "Arize"). Good for "you've
-    applied here" / "you know someone there" hints; never for deciding two rows are one."""
-    return _key(name, _LEGAL | _GENERIC)
+    applied here" / "you know someone there" hints; never for deciding two rows are one. A plural
+    word folds to the singular ("Bright Visions" ~ "Bright Vision")."""
+    stripped = _key_words(name, _LEGAL | _GENERIC)  # suffixes first, so "Systems" still drops
+    return "".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in stripped)
 
 
 def role_key(title: str) -> str:
