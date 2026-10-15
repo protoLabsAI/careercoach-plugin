@@ -1,22 +1,26 @@
 """Live job search — a small provider abstraction over real job APIs.
 
 Providers:
-- ``jsearch``  — [JSearch on RapidAPI](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch),
+- ``jsearch``    — [JSearch on RapidAPI](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch),
   which aggregates Google-for-Jobs (LinkedIn, Indeed, ZipRecruiter, …). Needs a key
   (`X-RapidAPI-Key`, the plugin's `jobs_api_key` secret).
-- ``remotive``  — the [Remotive](https://remotive.com/api-documentation) remote-jobs board.
-  Keyless — the zero-setup default for remote roles.
+- ``himalayas``  — the [Himalayas](https://himalayas.app/docs/remote-jobs-api) remote-jobs board.
+  Keyless, searches by query, newest first, with a posting date and salary. The zero-setup default.
+- ``hn``         — this month's Hacker News "Ask HN: Who is hiring?" thread, searched through the
+  Algolia HN API. Keyless; startups and remote roles, posted on the first weekday of each month.
+- ``remotive``   — the Remotive board. Kept only for an explicit ``jobs_provider: remotive``: since
+  2026-10 its API returns one fixed 14-posting feed whatever the query, so ``auto`` never picks it.
 
-Selection: ``provider="auto"`` uses jsearch when a key is present, else remotive.
+Selection: ``provider="auto"`` uses jsearch when a key is present, else himalayas.
 
-Remotive's ``?search=`` is not a relevance filter we can rely on — it answered every query with the
-same unrelated postings — so its results are ranked and filtered client-side against the query with
-``prescore``, and the result says which provider answered, so a keyless fallback is never mistaken
-for a real search.
+Neither Himalayas' nor Remotive's search is a relevance filter we can rely on (Himalayas matches
+query words loosely — "design engineer" returns plumbing roles), so keyless results are ranked and
+filtered client-side against the query with ``prescore``, and the result says which provider
+answered, so a keyless fallback is never mistaken for a search of the whole market.
 
-**This module is the only outbound-calling code in the plugin** — `capabilities.network` in the
-manifest lists exactly these two hosts. Only ``search_jobs()`` touches the network (via httpx, a
-host dependency); the response parsers and ``prescore`` are pure and unit-tested.
+Company job boards (Ashby / Greenhouse / Lever) are read by ``boards.py``. Only ``search_jobs()``
+here touches the network (via httpx, a host dependency); the response parsers and ``prescore`` are
+pure and unit-tested.
 """
 
 from __future__ import annotations
@@ -26,6 +30,9 @@ from dataclasses import dataclass, field
 
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
+HIMALAYAS_URL = "https://himalayas.app/jobs/api/search"
+HN_SEARCH_URL = "https://hn.algolia.com/api/v1/search"
+HN_BY_DATE_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
 
 def _job(
@@ -84,11 +91,82 @@ def parse_remotive(payload: dict) -> list[dict]:
     return out
 
 
+def _iso_epoch(value) -> str:
+    from .boards import _iso
+
+    return _iso(value)
+
+
+def parse_himalayas(payload: dict) -> list[dict]:
+    out: list[dict] = []
+    for j in (payload or {}).get("jobs") or []:
+        where = ", ".join(j.get("locationRestrictions") or []) or "Anywhere"
+        job = _job(
+            title=j.get("title") or "",
+            company=j.get("companyName") or "",
+            location=f"Remote ({where})",
+            url=j.get("applicationLink") or j.get("guid") or "",
+            posted=_iso_epoch(j.get("pubDate")),
+            snippet=_strip_html(j.get("excerpt") or j.get("description") or "")[:400],
+            source="himalayas",
+        )
+        lo, hi = j.get("minSalary"), j.get("maxSalary")
+        if lo and hi:
+            job["comp"] = f"{j.get('currency') or ''} {int(lo):,}–{int(hi):,}".strip()
+        out.append(job)
+    return out
+
+
+def _hn_fields(text: str) -> tuple[str, str, str]:
+    """``(company, role, location)`` from a Who-is-hiring comment's first line, which by thread
+    convention reads ``Company | Role | Location | …`` (order varies; best effort)."""
+    import html as _html
+
+    first = _html.unescape(re.split(r"<p>|\n", text or "", maxsplit=1)[0])
+    first = re.sub(r"<[^>]+>", "", first)
+    parts = [p.strip() for p in first.split("|") if p.strip()]
+    if not parts:
+        return "", "", ""
+    company = re.sub(r"\s*\(.*?\)\s*", " ", parts[0]).strip()
+    role = next(
+        (
+            p
+            for p in parts[1:]
+            if re.search(r"engineer|developer|designer|scientist|lead|architect|manager|head", p, re.I)
+        ),
+        "",
+    )
+    location = next(
+        (p for p in parts[1:] if re.search(r"remote|onsite|on-site|hybrid|, [A-Z]{2}\b|\bUS\b|USA|NYC|SF\b", p)), ""
+    )
+    return company, role or (parts[1] if len(parts) > 1 else ""), location
+
+
+def parse_hn(payload: dict) -> list[dict]:
+    out: list[dict] = []
+    for h in (payload or {}).get("hits") or []:
+        company, role, location = _hn_fields(h.get("comment_text") or "")
+        if not company:
+            continue
+        out.append(
+            _job(
+                title=role,
+                company=company,
+                location=location,
+                url=f"https://news.ycombinator.com/item?id={h.get('objectID')}",
+                posted=h.get("created_at") or "",
+                snippet=_strip_html(h.get("comment_text") or "")[:400],
+                source="hn",
+            )
+        )
+    return out
+
+
 def choose_provider(provider: str, api_key: str) -> str:
-    """Resolve ``auto`` → ``jsearch`` when a key is set, else ``remotive``. Explicit wins."""
+    """Resolve ``auto`` → ``jsearch`` when a key is set, else ``himalayas``. Explicit wins."""
     p = (provider or "auto").strip().lower()
     if p == "auto":
-        return "jsearch" if (api_key or "").strip() else "remotive"
+        return "jsearch" if (api_key or "").strip() else "himalayas"
     return p
 
 
@@ -114,10 +192,30 @@ def prescore(job: dict, target_roles: str) -> int:
     return min(100, round(70 * coverage + 30 * title_hit))
 
 
+def best_prescore(job: dict, target_roles: str) -> int:
+    """How much of the best-matching target role's wording the TITLE carries (0-100), each
+    comma-separated role scored on its own. Scoring against all roles at once (``prescore``) divides
+    by every word of every role, so listing more roles sank every score — an exact "Forward Deployed
+    Engineer" title scored 60 against five roles."""
+    roles = [r for r in re.split(r"[,;\n]", target_roles or "") if r.strip()]
+    title = set(re.findall(r"[a-z0-9]+", (job.get("title") or "").lower()))
+    best = 0
+    for r in roles:
+        # every word counts here, "AI" and "ML" included — "AI Engineer" must not reduce to "engineer"
+        words = re.findall(r"[a-z0-9]+", r.lower())
+        if words:
+            best = max(best, round(100 * sum(w in title for w in words) / len(words)))
+    return best
+
+
 PROVIDER_LABELS = {
     "jsearch": "JSearch (Google-for-Jobs)",
-    "remotive": "Remotive (remote-jobs board)",
+    "himalayas": "Himalayas (remote-jobs board)",
+    "hn": "Hacker News 'Who is hiring?' (this month's thread)",
+    "remotive": "Remotive (remote-jobs board; returns a fixed feed, query ignored)",
 }
+
+KEYLESS = ("himalayas", "hn", "remotive")
 
 
 def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
@@ -133,7 +231,7 @@ def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
 @dataclass
 class JobSearch:
     """What a search returned and WHO answered it — ``provider`` is the source that was actually
-    queried, ``keyless_fallback`` is True when ``auto`` fell back to Remotive for want of a key,
+    queried, ``keyless_fallback`` is True when ``auto`` fell back to a keyless board for want of a key,
     ``fetched`` is how many postings the provider sent, ``matched`` how many survived relevance
     filtering (before ``limit``)."""
 
@@ -158,24 +256,33 @@ async def search_jobs(
     api_key: str = "",
     provider: str = "auto",
     rank: bool = True,
+    country: str = "",
 ) -> JobSearch:
     """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
-    naming the provider that answered. Remotive's results are filtered to the query and ranked
+    naming the provider that answered. Keyless results are filtered to the query and ranked
     by ``prescore`` before ``limit`` is applied, unless ``rank=False`` (a caller that scores
-    the raw feed itself against more than this one query, like the watch scan). Raises
-    ``ValueError`` if jsearch is selected without a key."""
+    the raw feed itself against more than this one query, like the watch scan). ``country``
+    narrows Himalayas to roles open to that country. Raises ``ValueError`` if jsearch is
+    selected without a key, or for an unknown provider."""
     limit = max(1, min(int(limit), 25))
     prov = choose_provider(provider, api_key)
-    keyless = (provider or "auto").strip().lower() == "auto" and prov == "remotive"
+    keyless = (provider or "auto").strip().lower() == "auto" and prov in KEYLESS
+    if prov not in PROVIDER_LABELS:
+        raise ValueError(f"unknown job source {prov!r} — use auto, jsearch, himalayas, hn or remotive")
     if prov == "jsearch":
         if not (api_key or "").strip():
             raise ValueError(
-                "JSearch needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'remotive'."
+                "JSearch needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'himalayas' (keyless)."
             )
         jobs = await _get_jsearch(query, location, remote, api_key)
         fetched = len(jobs)
     else:
-        raw = await _get_remotive(query)
+        if prov == "himalayas":
+            raw = await _get_himalayas(query, country)
+        elif prov == "hn":
+            raw = await _get_hn(query)
+        else:
+            raw = await _get_remotive(query)
         fetched = len(raw)
         jobs = rank_by_query(raw, query) if rank else raw
     return JobSearch(jobs=jobs[:limit], provider=prov, keyless_fallback=keyless, fetched=fetched, matched=len(jobs))
@@ -204,3 +311,42 @@ async def _get_remotive(query: str) -> list[dict]:
         resp = await client.get(REMOTIVE_URL, params={"search": (query or "").strip()})
         resp.raise_for_status()
         return parse_remotive(resp.json())
+
+
+async def _get_himalayas(query: str, country: str = "") -> list[dict]:
+    import httpx
+
+    params = {"q": (query or "").strip(), "sort": "recent"}
+    if country:
+        params["country"] = country
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(HIMALAYAS_URL, params=params)
+        resp.raise_for_status()
+        return parse_himalayas(resp.json())
+
+
+async def _get_hn(query: str) -> list[dict]:
+    """Find the newest "Ask HN: Who is hiring?" story, then search its comments for ``query``."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(HN_BY_DATE_URL, params={"tags": "story,author_whoishiring", "hitsPerPage": "10"})
+        resp.raise_for_status()
+        story = next(
+            (
+                h
+                for h in resp.json().get("hits") or []
+                if (h.get("title") or "").lower().startswith("ask hn: who is hiring")
+            ),
+            None,
+        )
+        if story is None:
+            return []
+        resp = await client.get(
+            HN_SEARCH_URL,
+            params={"tags": f"comment,story_{story['objectID']}", "query": (query or "").strip(), "hitsPerPage": "50"},
+        )
+        resp.raise_for_status()
+        # top-level comments only — replies are questions to the poster, not postings
+        hits = [h for h in resp.json().get("hits") or [] if str(h.get("parent_id")) == str(story["objectID"])]
+        return parse_hn({"hits": hits})

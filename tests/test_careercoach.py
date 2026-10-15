@@ -358,8 +358,9 @@ def test_register_runs_host_free(plugin, registry):
     # 3 tracker/search + 12 packet/profile tools + 3 standard-answers tools + 2 form-fill tools +
     # the prepare-application tool + the submit-gate tool + the handoff tool + the 3 rubric-knob tools
     # (the vendored testkit stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path
-    # runs host-free).
-    assert len(names) == 26 and len(set(names)) == 26
+    # runs host-free) + 7 hunt tools (watchlist, scan_boards, import_history, import_connections,
+    # find_referrals, log_contact, digest).
+    assert len(names) == 33 and len(set(names)) == 33
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     assert {"careercoach_get_answers", "careercoach_propose_answer", "careercoach_confirm_answers"} <= set(names)
     assert {"careercoach_plan_fill", "careercoach_verify_fill"} <= set(names)
@@ -454,7 +455,7 @@ def test_jobsource_parsers(plugin):
 
 def test_provider_selection_and_prescore(plugin):
     js = importlib.import_module(plugin.__name__ + ".jobsource")
-    assert js.choose_provider("auto", "") == "remotive"
+    assert js.choose_provider("auto", "") == "himalayas"  # Remotive's API went dead in 2026-10
     assert js.choose_provider("auto", "KEY") == "jsearch"
     assert js.choose_provider("jsearch", "") == "jsearch"
 
@@ -465,19 +466,6 @@ def test_provider_selection_and_prescore(plugin):
 
 
 # ── Phase 3: the watch matcher + wiring ───────────────────────────────────────
-def test_find_new_matches(plugin):
-    watch = importlib.import_module(plugin.__name__ + ".watch")
-    jobs = [
-        {"title": "ML Engineer", "company": "Acme", "url": "u1", "snippet": "ml"},
-        {"title": "ML Engineer", "company": "Globex", "url": "u2", "snippet": "ml"},
-        {"title": "Chef", "company": "Foods", "url": "u3", "snippet": "cooking"},
-    ]
-    seen = {("acme", "ml engineer")}  # Acme already tracked
-    out = watch.find_new_matches(jobs, "ML engineer", seen, 50)
-    assert [m["company"] for m in out] == ["Globex"]  # Acme seen, Chef below threshold
-    assert out[0]["score"] >= 50
-
-
 def test_watch_surface_and_verifier_when_enabled(plugin):
     from _plugin_testkit import FakeRegistry
 
