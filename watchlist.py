@@ -144,6 +144,31 @@ def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = S
     return new, log
 
 
+INBOX = "watch-inbox.json"
+INBOX_CAP = 200  # oldest drop off; the digest shows the newest
+
+
+def add_to_inbox(jobs: list[dict]) -> int:
+    """Queue the background watch's new matches for the next digest. Returns the inbox size."""
+    keep = ("id", "company", "title", "location", "url", "posted", "comp", "source", "first_seen", "ghost")
+    with _store._locked("inbox"):
+        box = _load(INBOX, [])
+        have = {j.get("id") for j in box}
+        box += [{k: j.get(k) for k in keep} for j in jobs if j.get("id") not in have]
+        box = box[-INBOX_CAP:]
+        _save(INBOX, box)
+        return len(box)
+
+
+def take_inbox() -> list[dict]:
+    """Everything the watch queued since the last digest, newest posting first — and empty it."""
+    with _store._locked("inbox"):
+        box = _load(INBOX, [])
+        if box:
+            _save(INBOX, [])
+    return sorted(box, key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
+
+
 def ghost_flags(job: dict, now: datetime | None = None) -> list[str]:
     """Reasons to doubt a posting is a live, fillable opening — shown as a warning, never used to
     hide a role. Heuristics, not proof (no standard exists): long-open, reposted, thin text."""

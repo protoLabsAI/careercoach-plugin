@@ -343,6 +343,14 @@ def register_hunt_tools(registry, cfg) -> None:
                 "## New roles\nNo watchlist or target roles yet — add companies with careercoach_watchlist and set "
                 "Target roles in Settings."
             )
+        index = scan.tracked_index(rows)
+        inbox = [j for j in wl.take_inbox() if not scan.annotate(dict(j), index)["tracked"]]
+        if inbox:
+            sections.append(
+                f"## From the background watch ({len(inbox)} since the last digest)\n"
+                + "\n".join(scan.format_job(j, i) for i, j in enumerate(inbox[:25], 1))
+                + (f"\n…and {len(inbox) - 25} more." if len(inbox) > 25 else "")
+            )
         try:
             due = contacts.due_followups()
         except contacts.StoreUnreadable:

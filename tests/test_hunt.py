@@ -528,6 +528,9 @@ def test_watch_tracks_exact_title_matches_despite_many_target_roles(watch_env, m
     assert not any(m["company"] == "Farco" for m in got)  # the market sweep honours `locations`
     assert reg.emitted and reg.emitted[0][0] == "new_matches"
     assert asyncio.run(plugin._watch_tick(reg, cfg, 75)) == []  # handled once
+    assert mods.state.load_applications() == []  # the watch never writes the tracker
+    queued = mods.watchlist.take_inbox()
+    assert {j["company"] for j in queued} >= {"Acme", "Newco"} and mods.watchlist.take_inbox() == []
 
 
 def test_a_digest_does_not_steal_the_watchs_new_roles(watch_env, mods, plugin):
@@ -631,3 +634,49 @@ def test_connections_import_reports_a_bad_zip(hunt_tools, iso):
     bad.write_text("not a zip")
     out = hunt_tools["careercoach_import_connections"].invoke({"path": str(bad)})
     assert out.startswith("Couldn't read export.zip")
+
+
+def test_the_watch_waits_its_interval_between_scans(plugin, iso, monkeypatch):
+    """`interval` is only supervise()'s watchdog period; the pause between scans is `breath`.
+    Passing the scan period as `interval` ran the scan every 3 s on the live agent."""
+    import sys
+
+    from _plugin_testkit import FakeRegistry
+
+    seen: dict = {}
+
+    class _Engine:
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    def fake_supervise(work, **kw):
+        seen.update(kw)
+        return _Engine()
+
+    monkeypatch.setattr(sys.modules["graph.sdk"], "supervise", fake_supervise, raising=False)
+    reg = FakeRegistry({"watch_enabled": True, "watch_interval_min": 180, "target_roles": "AI Engineer"})
+    plugin.register(reg)
+    start, _stop, _reload = reg.surface_specs["careercoach-watch"]
+    asyncio.run(start())
+    assert seen.get("breath") == 180 * 60 and "interval" not in seen
+
+
+def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):
+    mods.watchlist.add_to_inbox(
+        [
+            {
+                "id": "himalayas:x",
+                "company": "Newco",
+                "title": "Forward Deployed Engineer",
+                "url": "https://h/x",
+                "posted": _ago(1),
+                "source": "himalayas",
+            }
+        ]  # fmt: skip
+    )
+    out = _run(hunt_tools["careercoach_digest"], {})
+    assert "## From the background watch (1 since the last digest)" in out and "Newco" in out
+    assert "From the background watch" not in _run(hunt_tools["careercoach_digest"], {})
