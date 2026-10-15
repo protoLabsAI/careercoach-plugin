@@ -121,7 +121,7 @@ def test_limit_applies_after_relevance_ranking(js, remotive):
 
 def test_rank_false_returns_the_raw_feed_for_a_caller_that_scores_it_itself(js, remotive):
     # The watch scan queries with the first target role but scores against ALL of them
-    # (find_new_matches), so a posting matching only a later role must survive the search.
+    # (best_prescore), so a posting matching only a later role must survive the search.
     out = _search(js, "data engineer", rank=False, limit=25)
     assert len(out.jobs) == out.fetched == 4
     assert "Bakery Co" in [j["company"] for j in out.jobs]

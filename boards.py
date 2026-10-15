@@ -54,6 +54,11 @@ def _iso(value) -> str:
         return ""
 
 
+def _clip(text: str, n: int = 160) -> str:
+    """Board text is untrusted and lands in tool output and the tracker: one line, bounded length."""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", text or "").strip()[:n]
+
+
 def age_days(posted: str, now: datetime | None = None) -> float | None:
     """Days since ``posted`` (an ISO string), or None when unknown."""
     if not posted:
@@ -67,10 +72,11 @@ def age_days(posted: str, now: datetime | None = None) -> float | None:
     return max(0.0, ((now or datetime.now(UTC)) - then).total_seconds() / 86400)
 
 
-def content_hash(title: str, description: str) -> str:
+def content_hash(title: str, description: str, location: str = "") -> str:
     """A fingerprint of a posting's substance — the same text re-listed under a new id/URL (a
-    repost) keeps its hash, so the first-seen log can tell a repost from a new opening."""
-    text = re.sub(r"\s+", " ", f"{title} {description}".lower()).strip()
+    repost) keeps its hash, so the first-seen log can tell a repost from a new opening. Location is
+    part of it: one role listed per city with identical text is several openings, not a repost."""
+    text = re.sub(r"\s+", " ", f"{title} {location} {description}".lower()).strip()
     return hashlib.sha1(text.encode()).hexdigest()[:16]
 
 
@@ -82,8 +88,8 @@ def _job(*, company: str, ats: str, slug: str, job_id: str, title: str, location
         "ats": ats,
         "slug": slug,
         "id": f"{ats}:{slug}:{job_id}",
-        "title": (title or "").strip(),
-        "location": (location or "").strip(),
+        "title": _clip(title),
+        "location": _clip(location, 200),
         "remote": remote,  # True / False / None (unknown)
         "countries": sorted({c for c in countries or [] if c}),  # structured, when the ATS gives it
         "url": (url or "").strip(),
@@ -92,7 +98,7 @@ def _job(*, company: str, ats: str, slug: str, job_id: str, title: str, location
         "department": department,
         "snippet": description[:400],
         "desc_len": len(description),
-        "hash": content_hash(title or "", description),
+        "hash": content_hash(title or "", description, location or ""),
         "source": ats,
     }
 
@@ -193,14 +199,30 @@ URLS = {"ashby": ASHBY_URL, "greenhouse": GREENHOUSE_URL, "lever": LEVER_URL}
 
 
 # ── filters ───────────────────────────────────────────────────────────────────
-_NON_US = re.compile(
+_US = re.compile(
     r"\b(emea|europe|eu|uk|united kingdom|london|ireland|dublin|germany|berlin|france|paris|spain|"
     r"netherlands|amsterdam|poland|india|bangalore|bengaluru|apac|singapore|japan|tokyo|korea|seoul|"
     r"australia|sydney|latam|brazil|mexico|argentina|israel|tel aviv|zurich|switzerland|canada|toronto|"
     r"vancouver|montreal|uae|dubai|abu dhabi|saudi|riyadh|qatar|china|hong kong|taiwan|philippines|vietnam)\b",
     re.I,
 )
-_US = re.compile(r"\b(us|usa|u\.s\.|united states|north america|americas|anywhere|worldwide|global)\b", re.I)
+_US = re.compile(
+    r"\b(us|usa|u\.s\.|united states|north america|americas|anywhere|worldwide|global|"
+    r"san francisco|sf|bay area|new york|nyc|seattle|austin|boston|chicago|los angeles|denver|portland|"
+    r"atlanta|washington|miami|san diego|san jose|palo alto|mountain view)\b",
+    re.I,
+)
+# A US state as written in a location ("Portland, OR", "Austin - TX") — upper-case after a comma or
+# dash only, so the words "in", "or", "me" never read as states.
+_US_STATE = re.compile(
+    r"(?:,|-|\()\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|"
+    r"NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b"
+)
+# What's left of a location once the remote/workplace words are gone — if it names anything, it
+# names a place, and that place must be in the US for a role to count as US-remote.
+_REMOTE_NOISE = re.compile(
+    r"\b(remote|fully|hybrid|on-?site|in-office|first|friendly|optional|only|or|and|any|location|locations)\b", re.I
+)
 _US_COUNTRIES = {"united states", "us", "usa", "united states of america"}
 
 
@@ -209,11 +231,31 @@ def _phrases(roles: str) -> list[list[str]]:
     return [ws for ws in (re.findall(r"[a-z0-9]+", p.lower()) for p in re.split(r"[,;\n]", roles or "")) if ws]
 
 
+# Abbreviations a title uses for a role spelled out in target roles (and vice versa).
+_ALIASES = {
+    "fde": ("forward", "deployed", "engineer"),
+    "mts": ("member", "technical", "staff"),
+    "swe": ("software", "engineer"),
+    "ml": ("machine", "learning"),
+}
+
+
+def _title_words(title: str) -> set[str]:
+    words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
+    for short, long in _ALIASES.items():
+        if short in words:
+            words.update(long)
+        if all(w in words for w in long):
+            words.add(short)
+    return words
+
+
 def title_matches(title: str, roles: str, exclude: str = "") -> bool:
     """True when every word of at least one target role appears in the title ("Design Engineer"
     matches "Senior Design Systems Engineer", not "Product Designer"), and no exclude word does.
-    An empty ``roles`` matches every title."""
-    words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
+    An empty ``roles`` matches every title. Common abbreviations count both ways: "FDE" = "Forward
+    Deployed Engineer", "MTS" = "Member of Technical Staff", "SWE", "ML"."""
+    words = _title_words(title)
     for bad in _phrases(exclude):
         if all(w in words for w in bad):
             return False
@@ -223,12 +265,15 @@ def title_matches(title: str, roles: str, exclude: str = "") -> bool:
 
 def location_matches(job: dict, locations: str) -> bool:
     """``locations`` is a comma list of places plus the special term ``remote`` (= remote and
-    open to the US). Empty matches everything. A remote role pinned to a non-US region only
-    ("Remote - EMEA") is not a US remote role."""
+    open to the US). Empty matches everything. A remote role counts when its structured country
+    list includes the US, or its text says US (or a US state/city), or it names no place at all
+    ("Remote"); "Remote - EMEA", "Remote, Sweden", "Remote - Latin America" don't. A place term
+    matches as a substring of the location ("portland, or" to rule out Portland, ME)."""
     terms = [t.strip().lower() for t in (locations or "").split(",") if t.strip()]
     if not terms:
         return True
-    loc = (job.get("location") or "").lower()
+    raw = job.get("location") or ""
+    loc = raw.lower()
     for t in terms:
         if t in ("remote", "remote-us", "remote us"):
             if not (job.get("remote") is True or "remote" in loc):
@@ -237,8 +282,11 @@ def location_matches(job: dict, locations: str) -> bool:
             if countries:  # structured beats text: a remote role must be open in the US
                 if any(c in _US_COUNTRIES for c in countries):
                     return True
-            elif not _NON_US.search(loc) or _US.search(loc):
+            elif _US.search(loc) or _US_STATE.search(raw):
                 return True
+            elif not re.search(r"[a-z]", _REMOTE_NOISE.sub(" ", loc)):
+                return True  # plain "Remote" — no place named
+            # anything else names a non-US place ("Remote, Sweden", "Remote - Latin America")
         elif t in loc:
             return True
     return False
@@ -291,9 +339,11 @@ def slug_candidates(company: str) -> list[str]:
     raw = re.findall(r"[A-Za-z0-9]+", company.replace(".", ""))
     if not raw:
         return []
-    from .companies import company_key
+    from .companies import company_hint_key
 
-    out = ["".join(raw).lower(), company_key(company), "-".join(raw).lower(), "".join(raw)]
+    # the loose key ("Scale AI" → scale) is a guess; probe() checks a board found that way names
+    # the right company before trusting it
+    out = ["".join(raw).lower(), company_hint_key(company), "-".join(raw).lower(), "".join(raw)]
     seen, uniq = set(), []
     for s in out:
         if s and s not in seen:
@@ -302,23 +352,56 @@ def slug_candidates(company: str) -> list[str]:
     return uniq
 
 
-async def probe(company: str, slug: str = "") -> list[tuple[str, str, int]]:
-    """Find which ATS boards a company posts on: tries every (ATS, slug candidate) and returns
-    ``(ats, slug, open_roles)`` for each that answered. Empty → not found on any of the three."""
+def _board_name_ok(company: str, jobs: list[dict]) -> bool:
+    """Greenhouse names the company on every posting; a board found under a shortened slug must name
+    the company we asked for ("Mercury Systems" must not land on the Mercury fintech board)."""
+    from .companies import company_key
+
+    names = {j.get("company", "") for j in jobs if j.get("ats") == "greenhouse"}
+    if not names:
+        return True  # Ashby / Lever don't say; trust the slug
+    want = company_key(company)
+    # exact, or the asked-for name inside the board's ("Grafana" → "Grafana Labs") — never the
+    # reverse, which is how "Mercury Systems" would land on "Mercury"
+    return any(company_key(n) == want or company.lower() in n.lower() for n in names)
+
+
+async def probe(company: str, slug: str = "", *, client=None, sem=None) -> tuple[list[tuple[str, str, int]], list[str]]:
+    """Find which ATS boards a company posts on: tries every (ATS, slug candidate). Returns
+    ``(found, problems)`` — ``found`` is ``(ats, slug, open_roles)`` for each board that answered
+    with roles and names the right company (most roles first); ``problems`` notes boards rejected
+    for naming another company and any error that wasn't a plain "no such board" (a 429 or timeout
+    must not read as "not found")."""
     import httpx
 
     slugs = [slug] if slug else slug_candidates(company)
-    found: list[tuple[str, str, int]] = []
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+    hits: list[tuple[str, str, int]] = []
+    problems: list[str] = []
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=20.0, follow_redirects=True)
+    sem = sem or asyncio.Semaphore(10)
 
-        async def _try(ats: str, s: str):
+    async def _try(ats: str, s: str):
+        async with sem:
             try:
-                return ats, s, len(await fetch_board(ats, s, company, client=client))
-            except Exception:  # noqa: BLE001 — a miss is the normal case while probing
-                return None
+                return ats, s, await fetch_board(ats, s, company, client=client), ""
+            except BoardNotFound:
+                return ats, s, None, ""
+            except Exception as e:  # noqa: BLE001
+                return ats, s, None, f"{ats}/{s}: {type(e).__name__}: {e}"[:200]
 
+    try:
         results = await asyncio.gather(*(_try(a, s) for a in ATS for s in slugs))
-    for r in results:
-        if r and not any(f[0] == r[0] for f in found):  # first slug that answers per ATS
-            found.append(r)
-    return found
+    finally:
+        if own:
+            await client.aclose()
+    for ats, s, jobs, err in results:
+        if err:
+            problems.append(err)
+        if not jobs or any(h[0] == ats for h in hits):
+            continue
+        if not slug and not _board_name_ok(company, jobs):
+            problems.append(f"{ats}/{s} is {jobs[0].get('company')!r}'s board, not {company!r}")
+            continue
+        hits.append((ats, s, len(jobs)))
+    return sorted(hits, key=lambda h: -h[2]), problems

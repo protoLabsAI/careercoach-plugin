@@ -466,19 +466,6 @@ def test_provider_selection_and_prescore(plugin):
 
 
 # ── Phase 3: the watch matcher + wiring ───────────────────────────────────────
-def test_find_new_matches(plugin):
-    watch = importlib.import_module(plugin.__name__ + ".watch")
-    jobs = [
-        {"title": "ML Engineer", "company": "Acme", "url": "u1", "snippet": "ml"},
-        {"title": "ML Engineer", "company": "Globex", "url": "u2", "snippet": "ml"},
-        {"title": "Chef", "company": "Foods", "url": "u3", "snippet": "cooking"},
-    ]
-    seen = {("acme", "ml engineer")}  # Acme already tracked
-    out = watch.find_new_matches(jobs, "ML engineer", seen, 50)
-    assert [m["company"] for m in out] == ["Globex"]  # Acme seen, Chef below threshold
-    assert out[0]["score"] >= 50
-
-
 def test_watch_surface_and_verifier_when_enabled(plugin):
     from _plugin_testkit import FakeRegistry
 

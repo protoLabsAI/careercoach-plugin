@@ -152,14 +152,15 @@ def mods(plugin, iso, monkeypatch):
 
 
 # ── companies ─────────────────────────────────────────────────────────────────
-def test_company_key_folds_legal_and_generic_suffixes(mods):
-    ck = mods.companies.company_key
-    assert ck("Arize AI") == ck("arize") == "arize"
-    assert ck("Scale AI, Inc.") == ck("Scale") == "scale"
-    assert ck("DPR COnstruction") == ck("DPR Construction")
-    assert ck("Change.org") == "changeorg"
-    assert ck("AI") == "ai"  # never stripped to nothing
-    assert ck("The Browser Company") == "browser"
+def test_company_key_is_exact_and_the_hint_key_is_loose(mods):
+    c = mods.companies
+    assert c.company_key("DPR COnstruction") == c.company_key("DPR Construction, Inc.")
+    assert c.company_key("Change.org") == "changeorg"
+    # different companies must never share the EXACT key — a tracker write keys on it
+    for a, b in (("Mercury", "Mercury Systems"), ("Magic", "Magic Labs"), ("Box", "Box Group"), ("Arize", "Arize AI")):
+        assert c.company_key(a) != c.company_key(b)
+    assert c.company_hint_key("Arize AI") == c.company_hint_key("arize")  # fine for a hint
+    assert c.company_hint_key("AI") == "ai"  # never stripped to nothing
 
 
 # ── board parsers + filters ───────────────────────────────────────────────────
@@ -214,7 +215,7 @@ def test_age_filter_uses_first_published_and_keeps_undated(mods):
 def test_watchlist_one_row_per_company(mods):
     wl = mods.watchlist
     _, created = wl.add_company("Scale AI", "greenhouse", "scaleai")
-    _, again = wl.add_company("Scale", "greenhouse", "scale")
+    _, again = wl.add_company("Scale AI, Inc.", "greenhouse", "scale")
     assert created and not again
     assert [(r["company"], r["slug"]) for r in wl.load_watchlist()] == [("Scale AI", "scale")]
     assert wl.remove_company("scale ai") and wl.load_watchlist() == []
@@ -241,14 +242,32 @@ def test_ghost_flags_short_text(mods):
 
 
 # ── tracker: normalized dedup, history import, cap ────────────────────────────
-def test_tracker_dedups_on_normalized_company_and_url(mods):
+def test_tracker_dedups_on_normalized_company_and_job_url(mods):
     st = mods.state
-    st.track_application(company="Arize AI", role="Design Engineer", fit_score=83, source="https://x/1")
-    st.track_application(company="arize", role="design engineer", status="applied")  # status-only update
+    url = "https://jobs.ashbyhq.com/arize/8152eaf6-012b-4154-95e2-7d6c52faba93"
+    st.track_application(company="Arize AI", role="Design Engineer", fit_score=83, source=url)
+    st.track_application(company="arize ai, inc.", role="design engineer", status="applied")  # status-only
     rows = st.load_applications()
     assert len(rows) == 1 and rows[0]["status"] == "applied" and rows[0]["fit_score"] == 83  # score kept
-    st.track_application(company="Arize", role="Retitled Design Engineer II", source="https://x/1/")
-    assert len(st.load_applications()) == 1  # same posting URL → same application
+    st.track_application(company="Arize AI", role="Retitled Design Engineer II", source=url + "/")
+    assert len(st.load_applications()) == 1  # same job URL, same company → same application
+    assert st.load_applications()[0]["role"] == "Design Engineer"  # a URL hit never renames the role
+
+
+def test_tracker_never_merges_on_a_shared_url_or_a_look_alike_company(mods):
+    st = mods.state
+    careers = "https://acme.com/careers"
+    st.track_application(company="Acme", role="Backend Engineer", status="applied", fit_score=80, source=careers)
+    st.track_application(company="Acme", role="Frontend Engineer", source=careers)
+    st.track_application(company="Mercury", role="SWE", status="interviewing")
+    st.track_application(company="Mercury Systems", role="SWE")
+    job = "https://boards.greenhouse.io/x/jobs/123456"
+    st.track_application(company="Globex", role="SRE", source=job)
+    st.track_application(company="Initech", role="SRE II", source=job)  # same URL, other company
+    rows = {(r["company"], r["role"]): r for r in st.load_applications()}
+    assert len(rows) == 6
+    assert rows[("Acme", "Backend Engineer")]["status"] == "applied"
+    assert rows[("Mercury", "SWE")]["status"] == "interviewing"
 
 
 def test_import_history_never_downgrades_a_status(mods):
@@ -273,7 +292,7 @@ def test_tracking_a_fourth_live_application_at_one_company_warns(tools):
     t = tools["careercoach_track_application"]
     for i in range(3):
         assert "Heads-up" not in t.invoke({"company": "Acme", "role": f"Role {i}", "status": "applied"})
-    out = t.invoke({"company": "Acme AI", "role": "Role 4", "status": "applied"})
+    out = t.invoke({"company": "Acme, Inc.", "role": "Role 4", "status": "applied"})
     assert "Heads-up" in out and "4 live applications" in out
 
 
@@ -393,3 +412,139 @@ def test_digest_new_roles_followups_and_quiet_applications(hunt_tools, mods):
     assert "## Follow-ups due" in out and "send portfolio" in out
     assert "## Gone quiet" in out and "Staff Engineer @ Old Co" in out
     assert "## Pipeline" in out and "applied 1" in out
+
+
+# ── review regressions (PR #29) ───────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("loc", "ok"),
+    [
+        ("Remote", True),
+        ("Remote (US or Canada)", True),
+        ("Remote - San Francisco", True),
+        ("Remote, Portland, OR", True),
+        ("US - Remote", True),
+        ("Remote, Sweden", False),
+        ("Remote - Latin America", False),
+        ("Remote - Estonia", False),
+        ("Remote - work in Colombia", False),  # "in" is not Indiana
+    ],
+)
+def test_text_remote_needs_a_us_place_or_no_place(mods, loc, ok):
+    assert mods.boards.location_matches({"location": loc, "remote": None}, "remote") is ok
+
+
+def test_title_aliases_count_both_ways(mods):
+    tm = mods.boards.title_matches
+    assert tm("FDE, Enterprise", "Forward Deployed Engineer")
+    assert tm("Senior Forward Deployed Engineer", "FDE")
+    assert tm("Member of Technical Staff, Applied AI", "MTS")
+
+
+def test_one_role_per_city_is_not_a_repost(mods):
+    wl, b = mods.watchlist, mods.boards
+    base = b.parse_ashby(ASHBY, company="Acme", slug="acme")[0]
+    cities = [{**base, "id": f"ashby:acme:{c}", "location": c, "hash": b.content_hash(base["title"], LONG, c)}
+              for c in ("London", "Paris")]  # fmt: skip
+    wl.record_sightings(cities[:1])
+    new, _ = wl.record_sightings(cities[1:])
+    assert len(new) == 1 and "repost_of" not in cities[1]
+    twins = [{**base, "id": f"ashby:acme:t{i}", "hash": "same"} for i in range(2)]  # same text, one scan
+    wl.record_sightings(twins)
+    assert "repost_of" not in twins[0] and twins[1]["repost_of"] == "ashby:acme:t0"
+
+
+def test_probe_rejects_a_look_alike_board_and_reports_errors(mods, monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "boards-api.greenhouse.io" and request.url.path.endswith("/mercury/jobs"):
+            return httpx.Response(200, json={"jobs": [{**GREENHOUSE["jobs"][1], "company_name": "Mercury"}]})
+        if request.url.host == "api.lever.co":
+            return httpx.Response(429, json={})
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    found, problems = asyncio.run(mods.boards.probe("Mercury Systems"))
+    assert found == []
+    assert any("'Mercury''s board, not 'Mercury Systems'" in p for p in problems)
+    assert any("lever/" in p and "429" in p for p in problems)  # a rate limit is not "not found"
+    found, _ = asyncio.run(mods.boards.probe("Mercury"))
+    assert found == [("greenhouse", "mercury", 1)]
+
+
+def test_a_corrupt_store_answers_instead_of_raising(hunt_tools, iso):
+    (iso / "cc").mkdir(parents=True, exist_ok=True)
+    (iso / "cc" / "watchlist.json").write_text("{not json")
+    out = _run(hunt_tools["careercoach_watchlist"], {})
+    assert "unreadable" in out and "don't overwrite" in out
+    assert "unreadable" in _run(hunt_tools["careercoach_scan_boards"], {})
+
+
+HIMALAYAS = {
+    "jobs": [
+        {"title": "Forward Deployed Engineer", "companyName": "Newco", "locationRestrictions": ["United States"],
+         "applicationLink": "https://himalayas.app/companies/newco/jobs/fde", "excerpt": LONG,
+         "pubDate": int((NOW - timedelta(days=1)).timestamp())},
+        {"title": "AI Engineer (Latam)", "companyName": "Farco", "locationRestrictions": ["Brazil", "Argentina"],
+         "applicationLink": "https://himalayas.app/companies/farco/jobs/ai", "excerpt": LONG,
+         "pubDate": int((NOW - timedelta(days=1)).timestamp())},
+    ]
+}  # fmt: skip
+
+
+@pytest.fixture
+def watch_env(plugin, iso, monkeypatch, mods):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=HIMALAYAS)
+        return _route(request)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    from _plugin_testkit import FakeRegistry
+
+    cfg = {
+        "target_roles": "Forward Deployed Engineer, Design Engineer, AI Engineer, Applied AI Engineer, Staff Software Engineer",
+        "locations": "remote, portland",
+        "max_age_days": 30,
+    }
+    reg = FakeRegistry(cfg)
+    reg.emitted = []
+    reg.emit = lambda topic, payload: reg.emitted.append((topic, payload))
+    for c, ats, slug in (
+        ("Acme", "ashby", "acme"),
+        ("Globex", "greenhouse", "globex"),
+        ("Initech", "lever", "initech"),
+    ):
+        mods.watchlist.add_company(c, ats, slug)
+    return plugin, reg, cfg
+
+
+def test_watch_tracks_exact_title_matches_despite_many_target_roles(watch_env, mods):
+    plugin, reg, cfg = watch_env
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    titles = sorted((m["company"], m["title"]) for m in got)
+    assert ("Acme", "Forward Deployed Engineer") in titles and ("Newco", "Forward Deployed Engineer") in titles
+    assert all(m["score"] >= 75 for m in got)
+    assert not any(m["company"] == "Farco" for m in got)  # the market sweep honours `locations`
+    assert reg.emitted and reg.emitted[0][0] == "new_matches"
+    assert asyncio.run(plugin._watch_tick(reg, cfg, 75)) == []  # handled once
+
+
+def test_a_digest_does_not_steal_the_watchs_new_roles(watch_env, mods, plugin):
+    _, reg, cfg = watch_env
+    asyncio.run(
+        mods.scan.scan_watchlist(mods.watchlist.load_watchlist(), roles=cfg["target_roles"], locations="remote")
+    )  # what the digest / scan tool do: record in seen.json
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    assert any(m["company"] == "Acme" for m in got)
+
+
+def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin, monkeypatch):
+    _, reg, cfg = watch_env
+    many = {"jobs": [{**ASHBY["jobs"][0], "id": f"a{i}", "jobUrl": f"https://jobs.ashbyhq.com/acme/{i}",
+                      "title": f"Forward Deployed Engineer {i}"} for i in range(20)]}  # fmt: skip
+    monkeypatch.setitem(BOARDS, ("api.ashbyhq.com", "acme"), many)
+    first = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    second = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    assert len(first) == 15 and len(second) >= 5
+    assert not {m["url"] for m in first} & {m["url"] for m in second}

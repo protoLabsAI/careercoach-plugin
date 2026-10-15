@@ -107,7 +107,6 @@ careercoach-plugin/
 ├─ companies.py               # company/role normalization ("Arize AI" = "Arize") for every dedup
 ├─ contacts.py                # LinkedIn Connections import, referrals, follow-ups — tested
 ├─ hunt.py                    # the job-hunt tools (watchlist, scan, history, contacts, digest)
-├─ watch.py                   # the background-watch matcher — pure, tested
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
 ├─ skills/
 │  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter

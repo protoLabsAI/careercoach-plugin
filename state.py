@@ -13,6 +13,7 @@ background job-watch — and a load-edit-save without a lock loses one of them.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -88,8 +89,6 @@ def track_application(
         r = _find(rows, company, role, source)
         if r is not None:
             r.update(
-                company=company,
-                role=role,
                 # a status-only update ("mark it applied") passes the default 0 — keep the score
                 fit_score=int(fit_score) or int(r.get("fit_score") or 0),
                 status=status,
@@ -114,13 +113,23 @@ def track_application(
         return row
 
 
+def job_specific_url(url: str) -> bool:
+    """True when a URL names ONE posting (it carries a numeric or UUID job id) — not a careers page
+    or a board search that many roles share."""
+    return bool(re.search(r"\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-", url or "", re.I))
+
+
 def _find(rows: list[dict], company: str, role: str, source: str = "") -> dict | None:
+    """The tracked row this (company, role, posting URL) refers to. The same job-specific URL at the
+    same company is the same application even if the title was retyped; a shared URL (a careers
+    page) never merges two roles, and a URL never merges two companies."""
+    ck = company_key(company)
     url = (source or "").strip().rstrip("/")
-    if url:
+    if url and job_specific_url(url):
         for r in rows:
-            if (r.get("source") or "").strip().rstrip("/") == url:
+            if (r.get("source") or "").strip().rstrip("/") == url and company_key(r.get("company", "")) == ck:
                 return r
-    key = (company_key(company), role_key(role))
+    key = (ck, role_key(role))
     for r in rows:
         if (company_key(r.get("company", "")), role_key(r.get("role", ""))) == key:
             return r

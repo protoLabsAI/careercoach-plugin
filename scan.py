@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import boards
 from . import watchlist as wl
-from .companies import company_key, role_key
+from .companies import company_hint_key, company_key, role_key
 
 ACTIVE = ("applied", "interviewing", "offer")
 
@@ -28,14 +28,17 @@ class ScanResult:
 
 
 def tracked_index(rows: list[dict]) -> tuple[dict, dict, dict]:
-    """``(by_role, by_url, by_company)`` lookups over the tracker rows."""
+    """``(by_role, by_url, by_company)`` lookups over the tracker rows. Role matches key on the
+    exact company; the per-company count keys on the loose hint ("Arize AI" ~ "Arize") — it only
+    feeds a "you've applied here" hint."""
+    from .state import job_specific_url
+
     by_role, by_url, by_company = {}, {}, {}
     for r in rows:
-        ck = company_key(r.get("company", ""))
-        by_role[(ck, role_key(r.get("role", "")))] = r
-        if r.get("source"):
+        by_role[(company_key(r.get("company", "")), role_key(r.get("role", "")))] = r
+        if r.get("source") and job_specific_url(r["source"]):
             by_url[r["source"].rstrip("/")] = r
-        by_company.setdefault(ck, []).append(r)
+        by_company.setdefault(company_hint_key(r.get("company", "")), []).append(r)
     return by_role, by_url, by_company
 
 
@@ -43,10 +46,13 @@ def annotate(job: dict, index: tuple[dict, dict, dict]) -> dict:
     """Stamp ``tracked`` (the tracker row for this exact role, if any), ``applied_here`` (how many
     roles at this company are applied / interviewing / offer) and ``ghost`` flags onto a job."""
     by_role, by_url, by_company = index
-    ck = company_key(job.get("company", ""))
-    row = by_url.get((job.get("url") or "").rstrip("/")) or by_role.get((ck, role_key(job.get("title", ""))))
+    row = by_url.get((job.get("url") or "").rstrip("/")) or by_role.get(
+        (company_key(job.get("company", "")), role_key(job.get("title", "")))
+    )
     job["tracked"] = row.get("status", "tracked") if row else ""
-    job["applied_here"] = sum(1 for r in by_company.get(ck, []) if r.get("status") in ACTIVE)
+    job["applied_here"] = sum(
+        1 for r in by_company.get(company_hint_key(job.get("company", "")), []) if r.get("status") in ACTIVE
+    )
     job["ghost"] = wl.ghost_flags(job)
     return job
 
@@ -60,7 +66,12 @@ async def scan_watchlist(
     max_age_days: float = 0,
     tracker_rows: list[dict] | None = None,
     concurrency: int = 8,
+    log_name: str = wl.SEEN,
+    record: bool = True,
 ) -> ScanResult:
+    """Scan the boards and filter. ``record`` logs the matches in ``log_name`` (the scan tool and
+    the digest share ``seen.json``); the background watch passes ``record=False`` and logs only what
+    it actually handled, in its own file."""
     import httpx
 
     res = ScanResult()
@@ -86,7 +97,7 @@ async def scan_watchlist(
             j["company"] = c["company"]  # the watchlist's spelling, not the board's
             if boards.passes(j, roles=roles, exclude=exclude, locations=locations, max_age_days=max_age_days):
                 kept.append(j)
-    new, _ = wl.record_sightings(kept)
+    new = wl.record_sightings(kept, log_name=log_name)[0] if record else wl.unseen(kept, log_name)
     new_ids = {j["id"] for j in new}
     index = tracked_index(tracker_rows or [])
     for j in kept:

@@ -192,6 +192,14 @@ def prescore(job: dict, target_roles: str) -> int:
     return min(100, round(70 * coverage + 30 * title_hit))
 
 
+def best_prescore(job: dict, target_roles: str) -> int:
+    """``prescore`` against each comma-separated target role on its own, best wins. Scoring against
+    all roles at once divides by every word of every role, so listing more roles sank every score
+    (an exact "Forward Deployed Engineer" title scored 60 against five roles)."""
+    roles = [r for r in re.split(r"[,;\n]", target_roles or "") if r.strip()]
+    return max((prescore(job, r) for r in roles), default=0)
+
+
 PROVIDER_LABELS = {
     "jsearch": "JSearch (Google-for-Jobs)",
     "himalayas": "Himalayas (remote-jobs board)",

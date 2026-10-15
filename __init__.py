@@ -1844,80 +1844,7 @@ def _register_job_watch(registry, cfg) -> None:
     holder: dict = {"engine": None}
 
     async def _scan() -> None:
-        from . import boards, jobsource, scan, state
-        from . import watchlist as wl
-        from .hunt import filters
-
-        f = filters(cfg)
-        roles = f["roles"].strip()
-        if not roles:
-            return
-        rows = state.load_applications()
-        found: list[dict] = []
-        # 1) the watched companies' own boards — exact titles, real first-published dates
-        try:
-            watched = wl.load_watchlist()
-            if watched:
-                res = await scan.scan_watchlist(
-                    watched, roles=roles, exclude=f["exclude"], locations=f["locations"],
-                    max_age_days=f["max_age_days"], tracker_rows=rows,
-                )  # fmt: skip
-                found += [j for j in res.new if not j["tracked"]]
-        except Exception as e:  # noqa: BLE001
-            log.info("[careercoach] watch board scan failed: %s", e)
-        # 2) a keyless market sweep per target role, for companies not on the watchlist yet
-        market: list[dict] = []
-        for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-            try:
-                got = await jobsource.search_jobs(
-                    role, remote=True, limit=25, api_key=cfg.get("jobs_api_key", ""),
-                    provider=cfg.get("jobs_provider", "auto"), country=cfg.get("search_country", "") or "",
-                )  # fmt: skip
-            except Exception as e:  # noqa: BLE001
-                log.info("[careercoach] watch market search failed for %r: %s", role, e)
-                continue
-            for j in got.jobs:
-                if boards.passes(j, roles=roles, exclude=f["exclude"], max_age_days=f["max_age_days"]):
-                    j["id"] = f"{j['source']}:{j['url']}"
-                    j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""))
-                    market.append(j)
-        if market:
-            uniq = list({j["id"]: j for j in market}.values())
-            new, _ = wl.record_sightings(uniq)
-            index = scan.tracked_index(rows)
-            found += [j for j in (scan.annotate(j, index) for j in new) if not j["tracked"]]
-        if not found:
-            return
-        found.sort(key=lambda j: j.get("posted") or "", reverse=True)
-        matches = []
-        try:
-            for j in found[:15]:  # a first scan of a big watchlist must not flood the pipeline
-                score = jobsource.prescore(j, roles)
-                if score < min_score:
-                    continue
-                state.track_application(
-                    company=j["company"], role=j["title"], fit_score=score, status="considering",
-                    source=j["url"], notes=f"auto-surfaced by watch ({j['source']}) · prescore {score}",
-                )  # fmt: skip
-                matches.append({**j, "score": score})
-        except state.StoreUnreadable as e:
-            log.warning("[careercoach] watch scan recorded nothing: %s", e)
-            return
-        if matches:
-            try:
-                registry.emit(
-                    "new_matches",
-                    {
-                        "count": len(matches),
-                        "min_score": min_score,
-                        "top": [
-                            {"title": m["title"], "company": m["company"], "score": m["score"]} for m in matches[:3]
-                        ],
-                    },
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            log.info("[careercoach] watch surfaced %d new match(es) >= %d", len(matches), min_score)
+        await _watch_tick(registry, cfg, min_score)
 
     async def _start() -> None:
         try:
@@ -1938,6 +1865,89 @@ def _register_job_watch(registry, cfg) -> None:
                 pass
 
     registry.register_surface(_start, stop=_stop, name="careercoach-watch")
+
+
+async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
+    """One background-watch pass (see ``_register_job_watch``). Returns what it tracked."""
+    from . import boards, jobsource, scan, state
+    from . import watchlist as wl
+    from .hunt import filters
+
+    f = filters(cfg)
+    roles = f["roles"].strip()
+    if not roles:
+        return []
+    rows = state.load_applications()
+    found: list[dict] = []
+    # The watch keeps its OWN first-seen log (watch-seen.json) and records only what it handled:
+    # a morning digest showing a role first must not make the watch skip it, and a role cut by
+    # the per-scan cap must come back next scan.
+    # 1) the watched companies' own boards — exact titles, real first-published dates
+    try:
+        watched = wl.load_watchlist()
+        if watched:
+            res = await scan.scan_watchlist(
+                watched, roles=roles, exclude=f["exclude"], locations=f["locations"],
+                max_age_days=f["max_age_days"], tracker_rows=rows, log_name=wl.WATCH_SEEN, record=False,
+            )  # fmt: skip
+            found += [j for j in res.new if not j["tracked"]]
+    except Exception as e:  # noqa: BLE001
+        log.info("[careercoach] watch board scan failed: %s", e)
+    # 2) a keyless market sweep per target role, for companies not on the watchlist yet
+    market: dict[str, dict] = {}
+    for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
+        try:
+            got = await jobsource.search_jobs(
+                role, remote=True, limit=25, api_key=cfg.get("jobs_api_key", ""),
+                provider=cfg.get("jobs_provider", "auto"), country=cfg.get("search_country", "") or "",
+            )  # fmt: skip
+        except Exception as e:  # noqa: BLE001
+            log.info("[careercoach] watch market search failed for %r: %s", role, e)
+            continue
+        for j in got.jobs:
+            if boards.passes(
+                j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
+            ):
+                j["id"] = f"{j['source']}:{j['url']}"
+                j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
+                market[j["id"]] = j
+    try:
+        if market:
+            index = scan.tracked_index(rows)
+            fresh = wl.unseen(list(market.values()), wl.WATCH_SEEN)
+            found += [j for j in (scan.annotate(j, index) for j in fresh) if not j["tracked"]]
+        if not found:
+            return []
+        found.sort(key=lambda j: j.get("posted") or "", reverse=True)
+        batch = found[:15]  # a first scan of a big watchlist must not flood the pipeline
+        matches = []
+        for j in batch:
+            score = jobsource.best_prescore(j, roles)
+            if score < min_score:
+                continue
+            state.track_application(
+                company=j["company"], role=j["title"], fit_score=score, status="considering",
+                source=j["url"], notes=f"auto-surfaced by watch ({j['source']}) · title match {score}",
+            )  # fmt: skip
+            matches.append({**j, "score": score})
+        wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: tracked, or below the bar
+    except state.StoreUnreadable as e:
+        log.warning("[careercoach] watch scan recorded nothing: %s", e)
+        return []
+    if matches:
+        try:
+            registry.emit(
+                "new_matches",
+                {
+                    "count": len(matches),
+                    "min_score": min_score,
+                    "top": [{"title": m["title"], "company": m["company"], "score": m["score"]} for m in matches[:3]],
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("[careercoach] watch surfaced %d new match(es) >= %d", len(matches), min_score)
+    return matches
 
 
 def _register_watch_verifier(registry) -> None:

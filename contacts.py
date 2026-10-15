@@ -18,7 +18,7 @@ import json
 from datetime import UTC, date, datetime
 
 from . import profile as _store
-from .companies import company_key
+from .companies import company_hint_key, company_key
 
 StoreUnreadable = _store.StoreUnreadable
 
@@ -104,11 +104,12 @@ def merge_contacts(incoming: list[dict]) -> tuple[int, int]:
 
 
 def at_company(company: str, rows: list[dict] | None = None) -> list[dict]:
-    """Contacts whose current company is ``company`` (normalized: "Scale AI" finds "Scale")."""
-    key = company_key(company)
+    """Contacts whose current company is ``company`` — loosely matched ("Scale AI" finds "Scale"):
+    a referral lead is a hint to check, not a record to merge."""
+    key = company_hint_key(company)
     if not key:
         return []
-    return [c for c in (load_contacts() if rows is None else rows) if company_key(c.get("company", "")) == key]
+    return [c for c in (load_contacts() if rows is None else rows) if company_hint_key(c.get("company", "")) == key]
 
 
 def log_touch(name: str, company: str = "", *, note: str = "", next_action: str = "", due: str = "",

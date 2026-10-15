@@ -85,18 +85,29 @@ def remove_company(company: str) -> bool:
 
 
 # ── first-seen log ────────────────────────────────────────────────────────────
-def load_seen() -> dict:
-    return _load("seen.json", {})
+SEEN = "seen.json"  # what the scan tool + digest have shown the operator
+WATCH_SEEN = "watch-seen.json"  # what the background watch has handled — its own log, so a morning
+# digest that shows a role first doesn't leave the watch thinking it's old news
 
 
-def record_sightings(jobs: list[dict], now: str | None = None) -> tuple[list[dict], dict]:
+def load_seen(log_name: str = SEEN) -> dict:
+    return _load(log_name, {})
+
+
+def unseen(jobs: list[dict], log_name: str) -> list[dict]:
+    """The jobs absent from a log, without recording anything."""
+    log = _load(log_name, {})
+    return [j for j in jobs if j["id"] not in log]
+
+
+def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = SEEN) -> tuple[list[dict], dict]:
     """Log one scan's postings. Returns ``(new_jobs, log)`` — ``new_jobs`` are the postings never
     seen before, each annotated with ``first_seen`` and (when its text matches a posting we already
     logged under another id) ``repost_of``. Every job in ``jobs`` gets ``first_seen``/``sightings``
     stamped in place, so a caller can show freshness for the whole scan."""
     now = now or _now()
-    with _store._locked("seen"):
-        log = _load("seen.json", {})
+    with _store._locked(log_name):
+        log = _load(log_name, {})
         by_hash: dict[str, str] = {}
         for jid, rec in log.items():
             by_hash.setdefault(rec.get("hash", ""), jid)
@@ -119,6 +130,7 @@ def record_sightings(jobs: list[dict], now: str | None = None) -> tuple[list[dic
                     rec["repost_of"] = prior
                     rec["first_seen"] = log[prior].get("first_seen", now)
                 log[j["id"]] = rec
+                by_hash.setdefault(rec["hash"], j["id"])
                 new.append(j)
             else:
                 rec["last_seen"] = now
@@ -127,7 +139,7 @@ def record_sightings(jobs: list[dict], now: str | None = None) -> tuple[list[dic
             j["sightings"] = rec["sightings"]
             if rec.get("repost_of"):
                 j["repost_of"] = rec["repost_of"]
-        _save("seen.json", log)
+        _save(log_name, log)
     return new, log
 
 

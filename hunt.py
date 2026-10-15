@@ -12,6 +12,8 @@ can call them bare:
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -21,21 +23,53 @@ from langchain_core.tools import tool
 log = logging.getLogger("protoagent.plugins.careercoach")
 
 
+DEFAULT_EXCLUDE = "intern, internship, new grad"  # the manifest default, for a host that doesn't merge it
+MAX_EXPORT_BYTES = 50 * 1024 * 1024  # a Connections.csv is KBs; refuse anything absurd inside the zip
+
+
 def _int(value, default: int) -> int:
     try:
-        return int(value)
+        return int(float(value))
     except (TypeError, ValueError):
         return default
 
 
 def filters(cfg) -> dict:
     """The scan filters as configured (the tools' defaults)."""
+    exclude = cfg.get("title_exclude")
     return {
         "roles": cfg.get("target_roles", "") or "",
-        "exclude": cfg.get("title_exclude", "") or "",
+        "exclude": DEFAULT_EXCLUDE if exclude is None else exclude,
         "locations": cfg.get("locations", "") or "",
         "max_age_days": _int(cfg.get("max_age_days", 30), 30),
     }
+
+
+def _guarded(fn):
+    """A store file that can't be read (corrupt JSON) answers as a message, like the tracker tools,
+    instead of raising through the turn — and nothing gets written over it."""
+    from .profile import StoreUnreadable
+
+    msg = "A Career Coach store file is unreadable, so I stopped: {}. Tell the operator; don't overwrite it."
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def _a(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except StoreUnreadable as e:
+                return msg.format(e)
+
+        return _a
+
+    @functools.wraps(fn)
+    def _s(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except StoreUnreadable as e:
+            return msg.format(e)
+
+    return _s
 
 
 def register_hunt_tools(registry, cfg) -> None:
@@ -46,6 +80,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return [n.strip() for n in (names or "").split(",") if n.strip()]
 
     @tool
+    @_guarded
     async def careercoach_watchlist(action: str = "list", company: str = "", slug: str = "", ats: str = "",
                                     notes: str = "") -> str:  # fmt: skip
         """Manage the companies whose job boards you scan for fresh roles.
@@ -86,12 +121,19 @@ def register_hunt_tools(registry, cfg) -> None:
             return f"Watching {names[0]} — {ats}/{slug}, {n} open role(s) right now."
         import asyncio
 
-        found = await asyncio.gather(*(boards.probe(n) for n in names))
-        added, missed = [], []
-        for name, hits in zip(names, found, strict=True):
-            hits = sorted(hits, key=lambda h: -h[2])  # the board with the most roles is the live one
+        import httpx
+
+        # one client and one concurrency cap for the whole batch — 60 companies × 3 ATSes × a few
+        # slug spellings must not open hundreds of connections at once
+        sem = asyncio.Semaphore(10)
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            found = await asyncio.gather(*(boards.probe(n, client=client, sem=sem) for n in names))
+        added, missed, notes_out = [], [], []
+        for name, (hits, problems) in zip(names, found, strict=True):
+            notes_out += [f"{name}: {p}" for p in problems if "board, not" in p]
             if not hits:
-                missed.append(name)
+                errs = [p for p in problems if "board, not" not in p]
+                missed.append(f"{name} (lookup errors: {errs[0]})" if errs else name)
                 continue
             a, s, n = hits[0]
             wl.add_company(name, a, s, notes)
@@ -100,6 +142,8 @@ def register_hunt_tools(registry, cfg) -> None:
         out = []
         if added:
             out.append(f"Watching {len(added)}:\n" + "\n".join(added))
+        if notes_out:
+            out.append("Skipped look-alike boards:\n" + "\n".join(f"- {n}" for n in notes_out[:10]))
         if missed:
             out.append(
                 f"Not found on Ashby, Greenhouse or Lever: {', '.join(missed)}. They may use Workday or their own "
@@ -108,6 +152,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return "\n\n".join(out)
 
     @tool
+    @_guarded
     async def careercoach_scan_boards(companies: str = "", roles: str = "", locations: str = "",
                                       max_age_days: int = -1, only_new: bool = False, limit: int = 40) -> str:  # fmt: skip
         """Scan the watched companies' job boards for open roles that fit — the freshest source there is (the
@@ -149,6 +194,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return head + "\n\n" + "\n".join(lines) + more
 
     @tool
+    @_guarded
     def careercoach_import_history(entries: str) -> str:
         """Bring past applications the tracker never saw (from a notes file, a spreadsheet, an email search)
         into the pipeline, so sweeps stop re-suggesting roles already applied to. `entries` is a JSON list of
@@ -183,6 +229,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return p
 
     @tool
+    @_guarded
     def careercoach_import_connections(path: str) -> str:
         """Import the operator's LinkedIn connections so the coach can find referrals. The operator downloads them
         from LinkedIn (Settings → Data privacy → Get a copy of your data → Connections; it arrives by email as a
@@ -196,10 +243,14 @@ def register_hunt_tools(registry, cfg) -> None:
                 import zipfile
 
                 with zipfile.ZipFile(p) as z:
-                    name = next((n for n in z.namelist() if n.lower().endswith("connections.csv")), None)
-                    if name is None:
+                    info = next((i for i in z.infolist() if i.filename.lower().endswith("connections.csv")), None)
+                    if info is None:
                         return f"{p.name} has no Connections.csv — request the Connections data in the export."
-                    text = z.read(name).decode("utf-8-sig", errors="replace")
+                    if info.file_size > MAX_EXPORT_BYTES:
+                        return (
+                            f"Connections.csv in {p.name} is {info.file_size:,} bytes — that isn't a LinkedIn export."
+                        )
+                    text = z.read(info).decode("utf-8-sig", errors="replace")
             else:
                 text = p.read_text(encoding="utf-8-sig", errors="replace")
             people = contacts.parse_linkedin_connections(text)
@@ -213,6 +264,7 @@ def register_hunt_tools(registry, cfg) -> None:
         )
 
     @tool
+    @_guarded
     def careercoach_find_referrals(company: str = "") -> str:
         """Who the operator knows at a company — the referral path, which converts far better than a cold
         application. With no `company`, checks every watched company and every role in the pipeline that's still
@@ -247,6 +299,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return "\n".join(out)
 
     @tool
+    @_guarded
     def careercoach_log_contact(name: str, company: str = "", note: str = "", next_action: str = "", due: str = "",
                                 title: str = "", url: str = "") -> str:  # fmt: skip
         """Log a networking touch (message sent, intro asked, call held) and the next step, so follow-ups don't
@@ -262,6 +315,7 @@ def register_hunt_tools(registry, cfg) -> None:
         return f"Logged {c['name']}" + (f" @ {c['company']}" if c.get("company") else "") + "." + nxt
 
     @tool
+    @_guarded
     async def careercoach_digest(days: int = 3) -> str:
         """The daily job-hunt digest: roles first posted in the last `days` days on watched boards that fit and
         aren't tracked yet (freshest first — early applications get read), follow-ups due with contacts,
