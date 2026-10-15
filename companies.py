@@ -20,16 +20,22 @@ _GENERIC = {"technologies", "technology", "labs", "lab", "ai", "hq", "group", "s
 
 
 def _words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", (text or "").lower().replace("&", " and "))
+    # a possessive belongs to its word: "Moody's" = "Moodys", never "moody" + "s"
+    text = re.sub(r"(\w)['’]s\b", r"\1s", (text or "").lower())
+    return re.findall(r"[a-z0-9]+", text.replace("&", " and "))
 
 
-def _key(name: str, drop: set[str]) -> str:
+def _key_words(name: str, drop: set[str]) -> list[str]:
     words = _words(name.replace(".", "") if name else "")
     if words and words[0] == "the" and len(words) > 1:
         words = words[1:]
     while len(words) > 1 and words[-1] in drop:
         words.pop()
-    return "".join(words)
+    return words
+
+
+def _key(name: str, drop: set[str]) -> str:
+    return "".join(_key_words(name, drop))
 
 
 def company_key(name: str) -> str:
@@ -41,8 +47,15 @@ def company_key(name: str) -> str:
 
 def company_hint_key(name: str) -> str:
     """A LOOSE key that also drops generic descriptors ("Arize AI" ~ "Arize"). Good for "you've
-    applied here" / "you know someone there" hints; never for deciding two rows are one."""
-    return _key(name, _LEGAL | _GENERIC)
+    applied here" / "you know someone there" hints; never for deciding two rows are one. A plural
+    word folds to the singular ("Bright Visions" ~ "Bright Vision")."""
+    words = _key_words(name, _LEGAL | _GENERIC)  # suffixes first, so "Systems" still drops
+    # Fold only the LAST word of a multi-word name: "Bright Visions" ~ "Bright Vision", but a one-word
+    # brand ending in -s is rarely a plural (Atlas ≠ Atla, Canvas ≠ Canva, Brooks ≠ Brook).
+    last = words[-1] if words else ""
+    if len(words) > 1 and len(last) > 3 and last.endswith("s") and not last.endswith("ss"):
+        words = [*words[:-1], last[:-1]]
+    return "".join(words)
 
 
 def role_key(title: str) -> str:

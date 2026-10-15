@@ -414,7 +414,7 @@ def test_digest_new_roles_followups_and_quiet_applications(hunt_tools, mods):
     assert "## Pipeline" in out and "applied 1" in out
 
 
-# ── review regressions (PR #29) ───────────────────────────────────────────────
+# ── filter edge cases: US-remote text, aliases, per-city listings, look-alike boards, watch ──
 @pytest.mark.parametrize(
     ("loc", "ok"),
     [
@@ -553,7 +553,7 @@ def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin,
     assert not {m["url"] for m in first} & {m["url"] for m in second}
 
 
-# ── review round 2 ────────────────────────────────────────────────────────────
+# ── one board per row, full-name slugs, spelling-variant hints, US time zones, job URLs ──
 def test_one_board_one_watchlist_row(mods):
     wl = mods.watchlist
     wl.add_company("Scale", "greenhouse", "scaleai")
@@ -609,7 +609,7 @@ def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
     assert bp({"title": "Senior AI Engineer"}, roles) == 100
 
 
-# ── live QA on jobCoach (2026-10-15) ──────────────────────────────────────────
+# ── city + state terms, slug guesses, export zip errors ──
 def test_a_state_after_a_city_stays_with_the_city(mods):
     b = mods.boards
     assert b.location_terms("remote, portland, or") == ["remote", "portland, or"]
@@ -682,7 +682,7 @@ def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):
     assert "From the background watch" not in _run(hunt_tools["careercoach_digest"], {})
 
 
-# ── #30 review ────────────────────────────────────────────────────────────────
+# ── location term splitting, digest inbox paging, region words ──
 @pytest.mark.parametrize(
     ("setting", "terms"),
     [
@@ -767,3 +767,28 @@ def test_shorthands_provinces_and_dc(mods, loc, setting, ok):
 )
 def test_more_foreign_regions_stay_out(mods, loc):
     assert not mods.boards.location_matches({"location": loc}, "remote")
+
+
+# ── fingerprints and plural company names ──
+def test_hashless_jobs_are_never_reposts_of_each_other(mods):
+    jobs = [{"id": f"x:{i}", "company": "Co", "title": f"Role {i}", "hash": ""} for i in range(3)]
+    mods.watchlist.record_sightings(jobs)
+    assert not any("repost_of" in j for j in jobs)
+
+
+def test_the_hint_key_folds_plurals(mods):
+    hk = mods.companies.company_hint_key
+    assert hk("Bright Visions Technologies") == hk("Bright Vision Technologies")
+    assert hk("Glass") == "glass"  # -ss isn't a plural
+    assert mods.companies.company_key("Bright Visions") != mods.companies.company_key(
+        "Bright Vision"
+    )  # exact stays exact
+
+
+def test_the_plural_fold_spares_one_word_brands_and_keeps_possessives(mods):
+    hk = mods.companies.company_hint_key
+    for a, b in (("Atlas", "Atla"), ("Canvas", "Canva"), ("Brooks", "Brook")):
+        assert hk(a) != hk(b), (a, b)
+    assert hk("Moody's") == hk("Moodys") and hk("McDonald’s") == hk("McDonalds")
+    assert hk("Wells Fargo") == "wellsfargo"  # only the last word of a name folds
+    assert "atla" not in mods.boards.slug_candidates("Atlas")

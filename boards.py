@@ -441,14 +441,15 @@ def slug_candidates(company: str) -> list[str]:
     raw = re.findall(r"[A-Za-z0-9]+", company.replace(".", ""))
     if not raw:
         return []
-    from .companies import company_hint_key
+    from .companies import _GENERIC, _LEGAL, _key
 
     # the loose key ("Scale AI" → scale) is a guess; probe() checks a board found that way names
     # the right company before trusting it
     base = re.sub(r"\.(com|ai|io|co|dev|app|org|so)$", "", company.strip(), flags=re.I)  # "Owner.com" → owner
     braw = re.findall(r"[A-Za-z0-9]+", base.replace(".", "")) or raw
     joined = "".join(braw).lower()
-    out = ["".join(raw).lower(), joined, company_hint_key(base), "-".join(braw).lower(), "".join(braw)]
+    # the suffix-stripped name, unfolded — a plural-folded guess would probe misspelled slugs
+    out = ["".join(raw).lower(), joined, _key(base, _LEGAL | _GENERIC), "-".join(braw).lower(), "".join(braw)]
     # boards often carry a suffix the company name doesn't ("Arize" posts as arizeai, Glean as
     # gleanwork) — guesses, so probe() name-checks what they find
     out += [f"{joined}{suffix}" for suffix in ("ai", "hq", "labs", "work", "inc") if not joined.endswith(suffix)]
