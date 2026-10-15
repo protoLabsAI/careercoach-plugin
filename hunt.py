@@ -130,9 +130,9 @@ def register_hunt_tools(registry, cfg) -> None:
             found = await asyncio.gather(*(boards.probe(n, client=client, sem=sem) for n in names))
         added, missed, notes_out = [], [], []
         for name, (hits, problems) in zip(names, found, strict=True):
-            notes_out += [f"{name}: {p}" for p in problems if "board, not" in p]
+            notes_out += [f"{name}: {p}" for p in problems if "board, not" in p or "confirm it's" in p]
             if not hits:
-                errs = [p for p in problems if "board, not" not in p]
+                errs = [p for p in problems if "board, not" not in p and "confirm it's" not in p]
                 missed.append(f"{name} (lookup errors: {errs[0]})" if errs else name)
                 continue
             a, s, n = hits[0]
@@ -143,7 +143,7 @@ def register_hunt_tools(registry, cfg) -> None:
         if added:
             out.append(f"Watching {len(added)}:\n" + "\n".join(added))
         if notes_out:
-            out.append("Skipped look-alike boards:\n" + "\n".join(f"- {n}" for n in notes_out[:10]))
+            out.append("Check these:\n" + "\n".join(f"- {n}" for n in notes_out[:10]))
         if missed:
             out.append(
                 f"Not found on Ashby, Greenhouse or Lever: {', '.join(missed)}. They may use Workday or their own "

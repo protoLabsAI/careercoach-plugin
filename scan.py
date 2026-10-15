@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import boards
 from . import watchlist as wl
-from .companies import company_hint_key, company_key, role_key
+from .companies import company_hint_key, role_key
 
 ACTIVE = ("applied", "interviewing", "offer")
 
@@ -28,14 +28,15 @@ class ScanResult:
 
 
 def tracked_index(rows: list[dict]) -> tuple[dict, dict, dict]:
-    """``(by_role, by_url, by_company)`` lookups over the tracker rows. Role matches key on the
-    exact company; the per-company count keys on the loose hint ("Arize AI" ~ "Arize") — it only
-    feeds a "you've applied here" hint."""
+    """``(by_role, by_url, by_company)`` lookups over the tracker rows, keyed on the loose company
+    hint ("Arize AI" ~ "Arize") — they only decide what to SHOW as tracked / applied-here."""
     from .state import job_specific_url
 
     by_role, by_url, by_company = {}, {}, {}
     for r in rows:
-        by_role[(company_key(r.get("company", "")), role_key(r.get("role", "")))] = r
+        # read-only lookup, so the loose key is safe here: an applied "Scale" row hides a "Scale AI"
+        # posting of the same role (writes still key on the exact name — state._find)
+        by_role[(company_hint_key(r.get("company", "")), role_key(r.get("role", "")))] = r
         if r.get("source") and job_specific_url(r["source"]):
             by_url[r["source"].rstrip("/")] = r
         by_company.setdefault(company_hint_key(r.get("company", "")), []).append(r)
@@ -47,7 +48,7 @@ def annotate(job: dict, index: tuple[dict, dict, dict]) -> dict:
     roles at this company are applied / interviewing / offer) and ``ghost`` flags onto a job."""
     by_role, by_url, by_company = index
     row = by_url.get((job.get("url") or "").rstrip("/")) or by_role.get(
-        (company_key(job.get("company", "")), role_key(job.get("title", "")))
+        (company_hint_key(job.get("company", "")), role_key(job.get("title", "")))
     )
     job["tracked"] = row.get("status", "tracked") if row else ""
     job["applied_here"] = sum(
@@ -87,6 +88,7 @@ async def scan_watchlist(
 
         results = await asyncio.gather(*(_one(c) for c in companies))
     kept: list[dict] = []
+    ids: set[str] = set()
     for c, jobs, err in results:
         if err:
             res.errors.append(err)
@@ -95,7 +97,10 @@ async def scan_watchlist(
         res.total += len(jobs)
         for j in jobs:
             j["company"] = c["company"]  # the watchlist's spelling, not the board's
+            if j["id"] in ids:  # two watchlist rows on one board must not list its roles twice
+                continue
             if boards.passes(j, roles=roles, exclude=exclude, locations=locations, max_age_days=max_age_days):
+                ids.add(j["id"])
                 kept.append(j)
     new = wl.record_sightings(kept, log_name=log_name)[0] if record else wl.unseen(kept, log_name)
     new_ids = {j["id"] for j in new}

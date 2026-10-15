@@ -114,9 +114,18 @@ def track_application(
 
 
 def job_specific_url(url: str) -> bool:
-    """True when a URL names ONE posting (it carries a numeric or UUID job id) — not a careers page
-    or a board search that many roles share."""
-    return bool(re.search(r"\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-", url or "", re.I))
+    """True when a URL names ONE posting — a path segment that IS a job id (digits or a UUID), or a
+    ``gh_jid``-style query id — not a careers page, a search page or a tracking parameter."""
+    from urllib.parse import parse_qs, urlparse
+
+    u = urlparse(url or "")
+    for seg in u.path.split("/"):
+        if re.fullmatch(r"\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", seg, re.I):
+            return True
+    q = parse_qs(u.query)
+    return any(
+        re.fullmatch(r"\d{5,}", v[0] or "") for k, v in q.items() if k.lower() in ("gh_jid", "jobid", "job_id", "jid")
+    )
 
 
 def _find(rows: list[dict], company: str, role: str, source: str = "") -> dict | None:

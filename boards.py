@@ -200,22 +200,16 @@ URLS = {"ashby": ASHBY_URL, "greenhouse": GREENHOUSE_URL, "lever": LEVER_URL}
 
 # ── filters ───────────────────────────────────────────────────────────────────
 _US = re.compile(
-    r"\b(emea|europe|eu|uk|united kingdom|london|ireland|dublin|germany|berlin|france|paris|spain|"
-    r"netherlands|amsterdam|poland|india|bangalore|bengaluru|apac|singapore|japan|tokyo|korea|seoul|"
-    r"australia|sydney|latam|brazil|mexico|argentina|israel|tel aviv|zurich|switzerland|canada|toronto|"
-    r"vancouver|montreal|uae|dubai|abu dhabi|saudi|riyadh|qatar|china|hong kong|taiwan|philippines|vietnam)\b",
-    re.I,
-)
-_US = re.compile(
     r"\b(us|usa|u\.s\.|united states|north america|americas|anywhere|worldwide|global|"
     r"san francisco|sf|bay area|new york|nyc|seattle|austin|boston|chicago|los angeles|denver|portland|"
-    r"atlanta|washington|miami|san diego|san jose|palo alto|mountain view)\b",
+    r"atlanta|washington|miami|san diego|san jose|palo alto|mountain view|"
+    r"west coast|east coast|pacific|eastern|central|mountain time|pst|pdt|pt|est|edt|et|cst|cdt|ct|mst|mt)\b",
     re.I,
 )
-# A US state as written in a location ("Portland, OR", "Austin - TX") — upper-case after a comma or
-# dash only, so the words "in", "or", "me" never read as states.
+# A US state as written after a city ("Portland, OR") — upper-case, after a word and a comma only, so
+# "in"/"or"/"me" never read as states and a bare "Remote - DE" (Germany) isn't Delaware.
 _US_STATE = re.compile(
-    r"(?:,|-|\()\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|"
+    r"[A-Za-z.]{3,},\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|"
     r"NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b"
 )
 # What's left of a location once the remote/workplace words are gone — if it names anything, it
@@ -375,6 +369,8 @@ async def probe(company: str, slug: str = "", *, client=None, sem=None) -> tuple
     import httpx
 
     slugs = [slug] if slug else slug_candidates(company)
+    full = {"".join(re.findall(r"[A-Za-z0-9]+", company.replace(".", " "))).lower()}
+    loose = {s for s in slugs if s.lower() not in full and "-" not in s}
     hits: list[tuple[str, str, int]] = []
     problems: list[str] = []
     own = client is None
@@ -400,8 +396,13 @@ async def probe(company: str, slug: str = "", *, client=None, sem=None) -> tuple
             problems.append(err)
         if not jobs or any(h[0] == ats for h in hits):
             continue
-        if not slug and not _board_name_ok(company, jobs):
-            problems.append(f"{ats}/{s} is {jobs[0].get('company')!r}'s board, not {company!r}")
-            continue
+        if not slug and s in loose:
+            # found under a SHORTENED name: Greenhouse says whose board it is — check; Ashby and
+            # Lever don't, so say it's unverified rather than trust it silently
+            if not _board_name_ok(company, jobs):
+                problems.append(f"{ats}/{s} is {jobs[0].get('company')!r}'s board, not {company!r}")
+                continue
+            if ats != "greenhouse":
+                problems.append(f"{ats}/{s} matched by the short name {s!r} — confirm it's {company}'s board")
         hits.append((ats, s, len(jobs)))
     return sorted(hits, key=lambda h: -h[2]), problems

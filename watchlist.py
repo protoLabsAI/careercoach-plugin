@@ -56,13 +56,14 @@ def load_watchlist() -> list[dict]:
 
 
 def add_company(company: str, ats: str, slug: str, notes: str = "") -> tuple[dict, bool]:
-    """Add (or re-point) a company. Returns ``(row, created)``. One row per company key: adding
-    "Scale AI" when "Scale" is listed updates that row rather than scanning the board twice."""
+    """Add (or re-point) a company. Returns ``(row, created)``. One row per company and one per
+    board: re-adding "Scale AI, Inc." or adding "Scale" on the same ``greenhouse/scaleai`` board
+    updates the existing row rather than scanning the board twice."""
     with _store._locked("watchlist"):
         rows = _load("watchlist.json", [])
         key = company_key(company)
         for r in rows:
-            if company_key(r.get("company", "")) == key:
+            if company_key(r.get("company", "")) == key or (r.get("ats"), r.get("slug")) == (ats, slug):
                 r.update(ats=ats, slug=slug, notes=notes or r.get("notes", ""))
                 _save("watchlist.json", rows)
                 return r, False

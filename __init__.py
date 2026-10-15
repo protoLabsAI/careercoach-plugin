@@ -1926,7 +1926,8 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             if score < min_score:
                 continue
             state.track_application(
-                company=j["company"], role=j["title"], fit_score=score, status="considering",
+                # fit stays 0 — a title match is not a fit evaluation; the coach scores it on demand
+                company=j["company"], role=j["title"], fit_score=0, status="considering",
                 source=j["url"], notes=f"auto-surfaced by watch ({j['source']}) · title match {score}",
             )  # fmt: skip
             matches.append({**j, "score": score})

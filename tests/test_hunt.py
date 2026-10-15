@@ -548,3 +548,59 @@ def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin,
     second = asyncio.run(plugin._watch_tick(reg, cfg, 75))
     assert len(first) == 15 and len(second) >= 5
     assert not {m["url"] for m in first} & {m["url"] for m in second}
+
+
+# ── review round 2 ────────────────────────────────────────────────────────────
+def test_one_board_one_watchlist_row(mods):
+    wl = mods.watchlist
+    wl.add_company("Scale", "greenhouse", "scaleai")
+    _, created = wl.add_company("Scale AI", "greenhouse", "scaleai")
+    assert not created and len(wl.load_watchlist()) == 1
+
+
+def test_probe_trusts_a_full_name_slug_and_flags_unverifiable_short_ones(mods, monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.url.host == "boards-api.greenhouse.io" and path.endswith("/figureai/jobs"):
+            return httpx.Response(200, json={"jobs": [{**GREENHOUSE["jobs"][1], "company_name": "Figure"}]})
+        if request.url.host == "api.ashbyhq.com" and path.endswith("/magic"):
+            return httpx.Response(200, json=ASHBY)
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    found, problems = asyncio.run(mods.boards.probe("Figure AI"))
+    assert found == [("greenhouse", "figureai", 1)] and problems == []
+    found, problems = asyncio.run(mods.boards.probe("Magic Labs"))
+    assert found == [("ashby", "magic", 3)] and any("confirm it's Magic Labs" in p for p in problems)
+
+
+def test_already_applied_hides_a_spelling_variant_posting(mods):
+    idx = mods.scan.tracked_index([{"company": "Scale", "role": "Forward Deployed Engineer", "status": "applied"}])
+    job = mods.scan.annotate({"company": "Scale AI", "title": "Forward Deployed Engineer", "url": ""}, idx)
+    assert job["tracked"] == "applied"
+
+
+@pytest.mark.parametrize(
+    ("loc", "ok"),
+    [("Remote (West Coast)", True), ("Remote, Pacific Time", True), ("Remote (PST)", True),
+     ("Remote - DE", False), ("Remote (IL)", False)],
+)  # fmt: skip
+def test_us_time_zones_count_and_bare_codes_dont(mods, loc, ok):
+    assert mods.boards.location_matches({"location": loc}, "remote") is ok
+
+
+def test_job_specific_url(mods):
+    js = mods.state.job_specific_url
+    assert js("https://boards.greenhouse.io/x/jobs/8698330002")
+    assert js("https://jobs.ashbyhq.com/x/8152eaf6-012b-4154-95e2-7d6c52faba93")
+    assert js("https://databricks.com/careers/job?gh_jid=8805655002")
+    assert not js("https://www.indeed.com/q-engineer-l-94105-jobs")
+    assert not js("https://acme.com/careers?utm_campaign=2026101")
+
+
+def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
+    bp = mods.boards and importlib.import_module(mods.state.__name__.rsplit(".", 1)[0] + ".jobsource").best_prescore
+    roles = "AI Engineer, Forward Deployed Engineer"
+    assert bp({"title": "Solutions Engineer"}, roles) < 75  # "AI" counts — not just "engineer"
+    assert bp({"title": "Senior AI Engineer"}, roles) == 100
