@@ -16,6 +16,7 @@ import functools
 import inspect
 import json
 import logging
+import zipfile
 from pathlib import Path
 
 from langchain_core.tools import tool
@@ -240,8 +241,6 @@ def register_hunt_tools(registry, cfg) -> None:
             return f"No file at {p}. Download the export from LinkedIn first, then pass its path."
         try:
             if p.suffix.lower() == ".zip":
-                import zipfile
-
                 with zipfile.ZipFile(p) as z:
                     info = next((i for i in z.infolist() if i.filename.lower().endswith("connections.csv")), None)
                     if info is None:
@@ -257,6 +256,8 @@ def register_hunt_tools(registry, cfg) -> None:
             added, updated = contacts.merge_contacts(people)
         except (ValueError, contacts.StoreUnreadable) as e:
             return f"Not imported: {e}"
+        except (OSError, zipfile.BadZipFile) as e:
+            return f"Couldn't read {p.name}: {e}. Pass LinkedIn's Connections.csv or the export .zip."
         companies = len({c["company"] for c in people if c.get("company")})
         return (
             f"Imported {len(people)} connection(s) across {companies} companies ({added} new, {updated} updated). "

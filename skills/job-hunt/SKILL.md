@@ -68,6 +68,9 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
   see them all in one ATS and many cap repeat applicants. Pick the best-fit role there.
 - **Fresh first.** Sort by first-posted date; a role posted today beats a slightly better fit posted
   five weeks ago.
+- **Re-test before you call a tool broken.** A friction entry or a memory that a tool "returns
+  junk" is history, not the current state — plugins update under you. Call it, read the output, then
+  say what it did.
 - **Don't confuse "I didn't find it" with "it doesn't exist".** A board the scan couldn't read is
   listed under "Couldn't read" — say so rather than concluding the company isn't hiring.
 - **Proof of work over prose.** Outreach and applications point at real artifacts (repos, demos,

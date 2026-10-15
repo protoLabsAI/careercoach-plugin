@@ -604,3 +604,30 @@ def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
     roles = "AI Engineer, Forward Deployed Engineer"
     assert bp({"title": "Solutions Engineer"}, roles) < 75  # "AI" counts — not just "engineer"
     assert bp({"title": "Senior AI Engineer"}, roles) == 100
+
+
+# ── live QA on jobCoach (2026-10-15) ──────────────────────────────────────────
+def test_a_state_after_a_city_stays_with_the_city(mods):
+    b = mods.boards
+    assert b.location_terms("remote, portland, or") == ["remote", "portland, or"]
+    assert b.location_terms("Portland, OR, Seattle, WA, remote") == ["portland, or", "seattle, wa", "remote"]
+    for loc in ("New York", "Singapore", "San Francisco, CA | New York City, NY"):  # "or" in y-OR-k / singap-OR-e
+        assert not b.location_matches({"location": loc, "remote": False}, "remote, portland, or"), loc
+    assert b.location_matches({"location": "Portland, OR", "remote": False}, "remote, portland, or")
+    assert not b.location_matches({"location": "Portland, ME", "remote": False}, "remote, portland, or")
+    assert not b.location_matches({"location": "Seattle", "remote": False}, "eat")  # whole words only
+    assert b.location_matches({"location": "Remote - California", "remote": True}, "remote")  # a US state, spelled out
+
+
+def test_slug_guesses_cover_domain_names_and_board_suffixes(mods):
+    sc = mods.boards.slug_candidates
+    assert "owner" in sc("Owner.com")
+    assert {"arizeai", "gleanwork"} <= set(sc("Arize")) | set(sc("Glean"))
+
+
+def test_connections_import_reports_a_bad_zip(hunt_tools, iso):
+    bad = iso / "ws" / "export.zip"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("not a zip")
+    out = hunt_tools["careercoach_import_connections"].invoke({"path": str(bad)})
+    assert out.startswith("Couldn't read export.zip")
