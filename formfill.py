@@ -151,6 +151,66 @@ def _phone_key(hay: str) -> str | None:
     return None
 
 
+# A field that asks about ANOTHER person — the employee who referred you, a reference, a manager,
+# an emergency contact — must never receive the candidate's OWN email / phone / LinkedIn / URL /
+# location. Seen live (2026-10-16, Greenhouse): the candidate's own email was planned into "…full
+# name and work email of the LaunchDarkly employee who referred you." The third-party noun must OWN
+# the contact noun — a mere mention elsewhere in the label is helper text about the CANDIDATE's own
+# field ("Phone (for recruiter contact)", "LinkedIn (shared with the hiring manager)"). Ownership is:
+#   * a third-party noun followed within two words by a contact noun ("Previous manager phone",
+#     "Partner's email", "Ref 1 email", "Referring employee email"), or
+#   * "<contact noun> … of the/your/a … <third-party noun>" ("work email of the LaunchDarkly
+#     employee"), or "who referred" / "employee who" anywhere.
+# All matching is word-bounded ("Preferred name" / "preferences" are not "reference"). Only the
+# candidate's personal free-text keys are guarded (``_PERSONAL_KEYS``): a yes/no or EEO question
+# ("Willing to relocate? (referral bonus applies)") is never about someone else's details.
+_TP_NOUN = (
+    r"(?:referr\w*|referees?|refs?\s?#?\d+|references?(?:\s?#?\d+)?|(?:hiring\s)?managers?|supervisors?"
+    r"|recruiters?|emergency(?:\scontacts?)?|next\sof\skin|kin|ice(?:\scontacts?)?|spouses?|partners?"
+    r"|parents?|guardians?|mentors?|professors?|employees?|interviewers?|contact\spersons?"
+    r"|point[\s-]of[\s-]contact|employers?|schools?|advisors?|friends?|colleagues?|landlords?"
+    r"|his|her|their)(?:['’]s?)?"
+)
+_CONTACT_NOUN = (
+    r"(?:e-?\s?mails?|(?:tele)?phones?|mobile|cell|numbers?|names?|linked\s?in|locations?|city"
+    r"|address|website|portfolio|url|profiles?)"
+)
+_THIRD_PARTY = re.compile(
+    rf"\b{_TP_NOUN}(?:\W+[\w'’]+){{0,2}}?\W+{_CONTACT_NOUN}\b"
+    rf"|\b{_CONTACT_NOUN}(?:\W+\w+)?\W+of\s+(?:your|the|a|an|my|our|their|this|that)\s+(?:[\w'’-]+\s+){{0,2}}?{_TP_NOUN}\b"
+    r"|\bwho\s+referred\b|\bemployee\s+who\b"
+)
+_PERSONAL_KEYS = frozenset(
+    {"email", "phone_number", "phone_country", "linkedin_url", "portfolio_url", "current_location"}
+)
+# A field whose name/id sits under a work-history / education section (``workExperience-3--location``,
+# ``education_0_phone``) describes that employer or school, never the candidate's own location/phone.
+_SECTION_PREFIX = re.compile(r"^(?:work experience|education|employment)\b")
+_SECTION_KEYS = frozenset({"current_location", "phone_number"})
+_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+_ID_SEPARATORS = re.compile(r"[_\-.\[\]/]+")
+
+
+def _split_ident(text: object) -> str:
+    """A field ``name`` / ``id`` as words: camelCase and letter/digit runs split BEFORE lowercasing
+    (``hiringManagerEmail`` → "hiring manager email", ``reference1Email`` → "reference 1 email"),
+    and ``_ - . [ ] /`` folded to spaces."""
+    raw = str(text if text is not None else "")
+    return _norm(_ID_SEPARATORS.sub(" ", _CAMEL.sub(" ", raw)))
+
+
+def _is_third_party(field: dict) -> bool:
+    """True when a field's label, name or id asks for SOMEONE ELSE's contact details — each source
+    checked on its own, so a pattern never spans the label into the id."""
+    texts = [_norm(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
+    return any(t and _THIRD_PARTY.search(t) for t in texts)
+
+
+def _in_history_section(field: dict) -> bool:
+    """True when a field's name or id puts it under a work-experience / education / employment entry."""
+    return any(_SECTION_PREFIX.search(_split_ident(field.get(k))) for k in ("name", "id"))
+
+
 def classify(field: dict) -> str | None:
     """Map one ``browser_form_read`` field to a ``answers.STANDARD_KEYS`` key, or ``None``.
 
@@ -159,7 +219,12 @@ def classify(field: dict) -> str | None:
     The phone match is folded into the SAME candidate set as the table, so a field that reads as
     both a phone input AND another key is ambiguous and returns ``None``. A field that matches no
     key, or two different keys, returns ``None`` — it never guesses between two keys, and an
-    ambiguous field is one for the operator to resolve."""
+    ambiguous field is one for the operator to resolve.
+
+    A personal-key field (email / phone / LinkedIn / URL / location) that asks for ANOTHER person's
+    details (``_is_third_party`` — a referrer, a reference, a manager, an emergency contact) returns
+    ``None``: the candidate's own answers never describe someone else, so it is left for the
+    operator."""
     if not isinstance(field, dict):
         return None
     hay = _hay(field)
@@ -171,9 +236,14 @@ def classify(field: dict) -> str | None:
     if phone_key is not None:
         matched.add(phone_key)
 
-    if len(matched) == 1:
-        return next(iter(matched))
-    return None  # no match, or ambiguous between keys → never guess
+    if len(matched) != 1:
+        return None  # no match, or ambiguous between keys → never guess
+    key = next(iter(matched))
+    if key in _PERSONAL_KEYS and _is_third_party(field):
+        return None  # someone else's email / phone / profile — the candidate's answer never fits
+    if key in _SECTION_KEYS and _in_history_section(field):
+        return None  # an employer's / school's location or phone, not the candidate's
+    return key
 
 
 # ── options ───────────────────────────────────────────────────────────────────────────────
@@ -744,11 +814,15 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
             continue
         label = row.get("label", "")
         target = row.get("target") or label
+        expected = str(row.get("value") or "")
+        if not expected.strip():
+            # The plan assigned no value to this field — never demand one. (A REQUIRED field left
+            # blank is still caught by the required-empty pass below, as it isn't marked covered.)
+            continue
         field = _match_field(row, by_id, by_name, by_label)
         if field is not None:
             covered.add(id(field))
         actual = str((field or {}).get("value") or "") if field else ""
-        expected = str(row.get("value") or "")
         if not _values_equal(expected, actual, row):
             mismatches.append({"label": label, "target": target, "expected": expected, "actual": actual})
 
