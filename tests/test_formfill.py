@@ -867,3 +867,96 @@ def test_plan_and_verify_tools_round_trip(tools, answers):
     wrong[2]["value"] = "Afghanistan"  # the country reverted
     out = tools["careercoach_verify_fill"].invoke({"session_id": sid, "form_json": json.dumps(wrong)})
     assert out.startswith("NOT verified") and "Phone country" in out and "Afghanistan" in out
+
+
+# ── third-party fields: a question about SOMEONE ELSE never takes the candidate's own answers ──
+LAUNCHDARKLY_REFERRER = (
+    "If yes, please provide the full name and work email of the LaunchDarkly employee who referred you."
+)
+
+
+@pytest.mark.parametrize(
+    "f",
+    [
+        field(LAUNCHDARKLY_REFERRER, "text", name="question_32969259003", id="question_32969259003"),
+        field("Referrer's email", "email"),
+        field("Referrer’s email", "email"),
+        field("Email", "email", name="referrer_email", id="referrer_email"),
+        field("Reference 1 phone", "tel"),
+        field("References: LinkedIn profile"),
+        field("Emergency contact phone", "tel"),
+        field("Hiring manager name"),
+        field("Recruiter email", "email"),
+        field("Your manager's email", "email"),
+        field("Supervisor phone number", "tel"),
+        field("Please provide their email"),
+        field("Point of contact email"),
+    ],
+    ids=lambda f: f["label"][:40],
+)
+def test_a_field_about_another_person_never_classifies(formfill, f):
+    assert formfill.classify(f) is None
+
+
+@pytest.mark.parametrize(
+    ("f", "key"),
+    [
+        (field("Email", "email"), "email"),
+        (field("Your email address", "email"), "email"),
+        (field("Work email", "email"), "email"),
+        (field("Phone", "tel"), "phone_number"),
+        (field("LinkedIn Profile"), "linkedin_url"),
+    ],
+    ids=lambda x: x["label"] if isinstance(x, dict) else x,
+)
+def test_the_candidates_own_fields_still_classify(formfill, f, key):
+    assert formfill.classify(f) == key
+
+
+def test_preferred_name_and_source_questions_do_not_read_as_third_party(formfill):
+    # "Preferred"/"preferences" contain "refer"/"reference" as substrings — not a third party.
+    assert not formfill._is_third_party("preferred name")
+    assert not formfill._is_third_party("communication preferences")
+    assert formfill.classify(field("Preferred email address", "email")) == "email"
+    # a source question is unchanged: it never mapped to a personal key, and still doesn't
+    assert formfill.classify(field("How did you hear about us? (referral)")) is None
+    assert formfill.classify(field("How did you hear about us?")) is None
+
+
+def test_the_launchdarkly_referrer_field_is_never_planned_or_demanded(formfill):
+    confirmed = {"email": "ada@example.com", "phone_number": "555-123-4567"}
+    form = [
+        field("Email", "email", name="email", id="email", required=True),
+        field(LAUNCHDARKLY_REFERRER, "text", name="question_32969259003", id="question_32969259003"),
+    ]
+    plan = formfill.build_plan(form, confirmed)
+    by_id = {r.get("id"): r for r in plan["rows"]}
+    assert by_id["email"]["value"] == "ada@example.com"
+    ref = by_id["question_32969259003"]
+    assert ref["action"] == formfill.SKIP and ref["value"] == "" and ref["key"] is None
+    assert "ada@example.com" not in [r["value"] for r in plan["rows"] if r.get("id") != "email"]
+
+    # read back with the referrer field blank (or holding the real referrer) — VERIFIED either way
+    after = [dict(f) for f in form]
+    after[0]["value"] = "ada@example.com"
+    assert formfill.diff(plan, after) == []
+    after[1]["value"] = "Grace Hopper, grace@launchdarkly.com"
+    assert formfill.diff(plan, after) == []
+
+
+def test_verify_never_demands_a_value_for_an_unassigned_row(formfill):
+    # A non-skip row carrying no value (nothing assigned) is not a mismatch however it reads back;
+    # a REQUIRED field left blank is still reported by the required-empty pass.
+    plan = {
+        "rows": [
+            {"label": "Referrer", "id": "ref", "target": "#ref", "key": None, "value": "", "action": "fill"},
+            {"label": "Must", "id": "must", "target": "#must", "key": None, "value": "", "action": "fill"},
+        ]
+    }
+    after = [
+        field("Referrer", id="ref", value="Grace Hopper"),
+        field("Must", id="must", required=True, value=""),
+    ]
+    mism = formfill.diff(plan, after)
+    assert [m["target"] for m in mism] == ["#must"]
+    assert mism[0]["expected"] == "(required — not yet filled)"

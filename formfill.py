@@ -151,6 +151,34 @@ def _phone_key(hay: str) -> str | None:
     return None
 
 
+# A field that asks about ANOTHER person — the employee who referred you, a reference, a recruiter,
+# a hiring manager, an emergency contact — must never receive the candidate's OWN email / phone /
+# LinkedIn / name. Matched with WORD BOUNDARIES over the label/name/id with ``_ - . [ ]`` folded to
+# spaces (so ``referrer_email`` still reads as "referrer email"), and never as a bare substring:
+# "Preferred name" / "preferences" must not read as "reference", "How did you hear about us?" is a
+# source question, not a third party. Seen live (2026-10-16, Greenhouse): the candidate's own email
+# was planned into "…full name and work email of the LaunchDarkly employee who referred you."
+_THIRD_PARTY = re.compile(
+    r"\breferr(?:ed|al|als|er|ers)\b"
+    r"|\breferences?\b"
+    r"|\brecruiters?\b"
+    r"|\bhiring managers?\b"
+    r"|\bmanager['’]?s\b"
+    r"|\bsupervisors?\b"
+    r"|\bemergency contacts?\b"
+    r"|\bemployee who\b"
+    r"|\btheir (?:full |work |personal )?(?:e-?mail|name|phone|number|linked\s?in|contact)"
+    r"|\bcontact at\b"
+    r"|\bpoint of contact\b"
+)
+_ID_SEPARATORS = re.compile(r"[_\-.\[\]]+")
+
+
+def _is_third_party(hay: str) -> bool:
+    """True when a field's label/name/id asks about someone other than the candidate."""
+    return _THIRD_PARTY.search(_ID_SEPARATORS.sub(" ", hay)) is not None
+
+
 def classify(field: dict) -> str | None:
     """Map one ``browser_form_read`` field to a ``answers.STANDARD_KEYS`` key, or ``None``.
 
@@ -159,11 +187,15 @@ def classify(field: dict) -> str | None:
     The phone match is folded into the SAME candidate set as the table, so a field that reads as
     both a phone input AND another key is ambiguous and returns ``None``. A field that matches no
     key, or two different keys, returns ``None`` — it never guesses between two keys, and an
-    ambiguous field is one for the operator to resolve."""
+    ambiguous field is one for the operator to resolve.
+
+    A field asking about ANOTHER person (``_is_third_party`` — a referrer, a reference, a recruiter,
+    a hiring manager, an emergency contact) returns ``None``: the candidate's own answers never
+    describe someone else, so it is left for the operator."""
     if not isinstance(field, dict):
         return None
     hay = _hay(field)
-    if not hay:
+    if not hay or _is_third_party(hay):
         return None
 
     matched = {key for key, pat in _KEY_PATTERNS if pat.search(hay)}
@@ -744,11 +776,15 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
             continue
         label = row.get("label", "")
         target = row.get("target") or label
+        expected = str(row.get("value") or "")
+        if not expected.strip():
+            # The plan assigned no value to this field — never demand one. (A REQUIRED field left
+            # blank is still caught by the required-empty pass below, as it isn't marked covered.)
+            continue
         field = _match_field(row, by_id, by_name, by_label)
         if field is not None:
             covered.add(id(field))
         actual = str((field or {}).get("value") or "") if field else ""
-        expected = str(row.get("value") or "")
         if not _values_equal(expected, actual, row):
             mismatches.append({"label": label, "target": target, "expected": expected, "actual": actual})
 
