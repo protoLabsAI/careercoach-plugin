@@ -168,7 +168,8 @@ _TP_NOUN = (
     r"(?:referr\w*|referees?|refs?\s?#?\d+|references?(?:\s?#?\d+)?|(?:hiring\s)?managers?|supervisors?"
     r"|recruiters?|emergency(?:\scontacts?)?|next\sof\skin|kin|ice(?:\scontacts?)?|spouses?|partners?"
     r"|parents?|guardians?|mentors?|professors?|employees?|interviewers?|contact\spersons?"
-    r"|point\sof\scontact|his|her|their)(?:['’]s?)?"
+    r"|point[\s-]of[\s-]contact|employers?|schools?|advisors?|friends?|colleagues?|landlords?"
+    r"|his|her|their)(?:['’]s?)?"
 )
 _CONTACT_NOUN = (
     r"(?:e-?\s?mails?|(?:tele)?phones?|mobile|cell|numbers?|names?|linked\s?in|locations?|city"
@@ -182,6 +183,10 @@ _THIRD_PARTY = re.compile(
 _PERSONAL_KEYS = frozenset(
     {"email", "phone_number", "phone_country", "linkedin_url", "portfolio_url", "current_location"}
 )
+# A field whose name/id sits under a work-history / education section (``workExperience-3--location``,
+# ``education_0_phone``) describes that employer or school, never the candidate's own location/phone.
+_SECTION_PREFIX = re.compile(r"^(?:work experience|education|employment)\b")
+_SECTION_KEYS = frozenset({"current_location", "phone_number"})
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
 _ID_SEPARATORS = re.compile(r"[_\-.\[\]/]+")
 
@@ -199,6 +204,11 @@ def _is_third_party(field: dict) -> bool:
     checked on its own, so a pattern never spans the label into the id."""
     texts = [_norm(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
     return any(t and _THIRD_PARTY.search(t) for t in texts)
+
+
+def _in_history_section(field: dict) -> bool:
+    """True when a field's name or id puts it under a work-experience / education / employment entry."""
+    return any(_SECTION_PREFIX.search(_split_ident(field.get(k))) for k in ("name", "id"))
 
 
 def classify(field: dict) -> str | None:
@@ -231,6 +241,8 @@ def classify(field: dict) -> str | None:
     key = next(iter(matched))
     if key in _PERSONAL_KEYS and _is_third_party(field):
         return None  # someone else's email / phone / profile — the candidate's answer never fits
+    if key in _SECTION_KEYS and _in_history_section(field):
+        return None  # an employer's / school's location or phone, not the candidate's
     return key
 
 

@@ -910,6 +910,18 @@ THIRD_PARTY_FIELDS = [
     field("Ref 1 email", "email"),
     field("Their e-mail", "email"),
     field("Name and email of your referrer"),
+    # adversarial-review misses (round 2)
+    field("Employer phone number", "tel"),
+    field("Current employer location"),
+    field("School location"),
+    field("Location", name="workExperience-3--location", id="workExperience-3--location"),
+    field("Phone", "tel", name="education_0_phone", id="education_0_phone"),
+    field("City", name="employment[1][city]", id="employment-1-city"),
+    field("Advisor email", "email"),
+    field("Colleague email", "email"),
+    field("Friend's email", "email"),
+    field("Landlord phone", "tel"),
+    field("Point-of-contact email", "email"),
     # camelCase / digit ids behind a bare "Email" label
     field("Email", "email", name="referrerEmail", id="referrerEmail"),
     field("Email", "email", name="hiringManagerEmail", id="hiringManagerEmail"),
@@ -934,6 +946,8 @@ OWN_FIELDS = [
     (field("Gender (this will not be shared with the hiring manager)", "select"), "gender"),
     (field("Veteran status (not shared with your recruiter or interviewer)", "select"), "veteran_status"),
     (field("Email", "email", name="candidateEmail", id="candidate_email"), "email"),
+    (field("Email (company email OK)", "email"), "email"),
+    (field("Location", name="location", id="candidate-location"), "current_location"),
 ]
 
 
