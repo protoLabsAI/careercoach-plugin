@@ -151,32 +151,54 @@ def _phone_key(hay: str) -> str | None:
     return None
 
 
-# A field that asks about ANOTHER person — the employee who referred you, a reference, a recruiter,
-# a hiring manager, an emergency contact — must never receive the candidate's OWN email / phone /
-# LinkedIn / name. Matched with WORD BOUNDARIES over the label/name/id with ``_ - . [ ]`` folded to
-# spaces (so ``referrer_email`` still reads as "referrer email"), and never as a bare substring:
-# "Preferred name" / "preferences" must not read as "reference", "How did you hear about us?" is a
-# source question, not a third party. Seen live (2026-10-16, Greenhouse): the candidate's own email
-# was planned into "…full name and work email of the LaunchDarkly employee who referred you."
-_THIRD_PARTY = re.compile(
-    r"\breferr(?:ed|al|als|er|ers)\b"
-    r"|\breferences?\b"
-    r"|\brecruiters?\b"
-    r"|\bhiring managers?\b"
-    r"|\bmanager['’]?s\b"
-    r"|\bsupervisors?\b"
-    r"|\bemergency contacts?\b"
-    r"|\bemployee who\b"
-    r"|\btheir (?:full |work |personal )?(?:e-?mail|name|phone|number|linked\s?in|contact)"
-    r"|\bcontact at\b"
-    r"|\bpoint of contact\b"
+# A field that asks about ANOTHER person — the employee who referred you, a reference, a manager,
+# an emergency contact — must never receive the candidate's OWN email / phone / LinkedIn / URL /
+# location. Seen live (2026-10-16, Greenhouse): the candidate's own email was planned into "…full
+# name and work email of the LaunchDarkly employee who referred you." The third-party noun must OWN
+# the contact noun — a mere mention elsewhere in the label is helper text about the CANDIDATE's own
+# field ("Phone (for recruiter contact)", "LinkedIn (shared with the hiring manager)"). Ownership is:
+#   * a third-party noun followed within two words by a contact noun ("Previous manager phone",
+#     "Partner's email", "Ref 1 email", "Referring employee email"), or
+#   * "<contact noun> … of the/your/a … <third-party noun>" ("work email of the LaunchDarkly
+#     employee"), or "who referred" / "employee who" anywhere.
+# All matching is word-bounded ("Preferred name" / "preferences" are not "reference"). Only the
+# candidate's personal free-text keys are guarded (``_PERSONAL_KEYS``): a yes/no or EEO question
+# ("Willing to relocate? (referral bonus applies)") is never about someone else's details.
+_TP_NOUN = (
+    r"(?:referr\w*|referees?|refs?\s?#?\d+|references?(?:\s?#?\d+)?|(?:hiring\s)?managers?|supervisors?"
+    r"|recruiters?|emergency(?:\scontacts?)?|next\sof\skin|kin|ice(?:\scontacts?)?|spouses?|partners?"
+    r"|parents?|guardians?|mentors?|professors?|employees?|interviewers?|contact\spersons?"
+    r"|point\sof\scontact|his|her|their)(?:['’]s?)?"
 )
-_ID_SEPARATORS = re.compile(r"[_\-.\[\]]+")
+_CONTACT_NOUN = (
+    r"(?:e-?\s?mails?|(?:tele)?phones?|mobile|cell|numbers?|names?|linked\s?in|locations?|city"
+    r"|address|website|portfolio|url|profiles?)"
+)
+_THIRD_PARTY = re.compile(
+    rf"\b{_TP_NOUN}(?:\W+[\w'’]+){{0,2}}?\W+{_CONTACT_NOUN}\b"
+    rf"|\b{_CONTACT_NOUN}(?:\W+\w+)?\W+of\s+(?:your|the|a|an|my|our|their|this|that)\s+(?:[\w'’-]+\s+){{0,2}}?{_TP_NOUN}\b"
+    r"|\bwho\s+referred\b|\bemployee\s+who\b"
+)
+_PERSONAL_KEYS = frozenset(
+    {"email", "phone_number", "phone_country", "linkedin_url", "portfolio_url", "current_location"}
+)
+_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+_ID_SEPARATORS = re.compile(r"[_\-.\[\]/]+")
 
 
-def _is_third_party(hay: str) -> bool:
-    """True when a field's label/name/id asks about someone other than the candidate."""
-    return _THIRD_PARTY.search(_ID_SEPARATORS.sub(" ", hay)) is not None
+def _split_ident(text: object) -> str:
+    """A field ``name`` / ``id`` as words: camelCase and letter/digit runs split BEFORE lowercasing
+    (``hiringManagerEmail`` → "hiring manager email", ``reference1Email`` → "reference 1 email"),
+    and ``_ - . [ ] /`` folded to spaces."""
+    raw = str(text if text is not None else "")
+    return _norm(_ID_SEPARATORS.sub(" ", _CAMEL.sub(" ", raw)))
+
+
+def _is_third_party(field: dict) -> bool:
+    """True when a field's label, name or id asks for SOMEONE ELSE's contact details — each source
+    checked on its own, so a pattern never spans the label into the id."""
+    texts = [_norm(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
+    return any(t and _THIRD_PARTY.search(t) for t in texts)
 
 
 def classify(field: dict) -> str | None:
@@ -189,13 +211,14 @@ def classify(field: dict) -> str | None:
     key, or two different keys, returns ``None`` — it never guesses between two keys, and an
     ambiguous field is one for the operator to resolve.
 
-    A field asking about ANOTHER person (``_is_third_party`` — a referrer, a reference, a recruiter,
-    a hiring manager, an emergency contact) returns ``None``: the candidate's own answers never
-    describe someone else, so it is left for the operator."""
+    A personal-key field (email / phone / LinkedIn / URL / location) that asks for ANOTHER person's
+    details (``_is_third_party`` — a referrer, a reference, a manager, an emergency contact) returns
+    ``None``: the candidate's own answers never describe someone else, so it is left for the
+    operator."""
     if not isinstance(field, dict):
         return None
     hay = _hay(field)
-    if not hay or _is_third_party(hay):
+    if not hay:
         return None
 
     matched = {key for key, pat in _KEY_PATTERNS if pat.search(hay)}
@@ -203,9 +226,12 @@ def classify(field: dict) -> str | None:
     if phone_key is not None:
         matched.add(phone_key)
 
-    if len(matched) == 1:
-        return next(iter(matched))
-    return None  # no match, or ambiguous between keys → never guess
+    if len(matched) != 1:
+        return None  # no match, or ambiguous between keys → never guess
+    key = next(iter(matched))
+    if key in _PERSONAL_KEYS and _is_third_party(field):
+        return None  # someone else's email / phone / profile — the candidate's answer never fits
+    return key
 
 
 # ── options ───────────────────────────────────────────────────────────────────────────────

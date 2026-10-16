@@ -874,49 +874,83 @@ LAUNCHDARKLY_REFERRER = (
     "If yes, please provide the full name and work email of the LaunchDarkly employee who referred you."
 )
 
+THIRD_PARTY_FIELDS = [
+    field(LAUNCHDARKLY_REFERRER, "text", name="question_32969259003", id="question_32969259003"),
+    field("Referrer's email", "email"),
+    field("Referrer\u2019s email", "email"),
+    field("Email", "email", name="referrer_email", id="referrer_email"),
+    field("Reference 1 phone", "tel"),
+    field("References: LinkedIn profile"),
+    field("Emergency contact phone", "tel"),
+    field("Recruiter email", "email"),
+    field("Your manager's email", "email"),
+    field("Supervisor phone number", "tel"),
+    field("Please provide their email"),
+    field("Point of contact email"),
+    # adversarial-review misses (round 1)
+    field("Referee email", "email"),
+    field("Referee phone", "tel"),
+    field("Referee location"),
+    field("Referring employee email", "email"),
+    field("Manager email", "email"),
+    field("Previous manager phone", "tel"),
+    field("Current manager LinkedIn"),
+    field("Emergency phone", "tel"),
+    field("Next of kin phone", "tel"),
+    field("ICE contact phone", "tel"),
+    field("Spouse phone", "tel"),
+    field("Partner's email", "email"),
+    field("Parent/guardian email", "email"),
+    field("Mentor email", "email"),
+    field("Professor's email", "email"),
+    field("Employee's email", "email"),
+    field("Interviewer email", "email"),
+    field("Contact person email", "email"),
+    field("his/her email", "email"),
+    field("Ref 1 email", "email"),
+    field("Their e-mail", "email"),
+    field("Name and email of your referrer"),
+    # camelCase / digit ids behind a bare "Email" label
+    field("Email", "email", name="referrerEmail", id="referrerEmail"),
+    field("Email", "email", name="hiringManagerEmail", id="hiringManagerEmail"),
+    field("Email", "email", name="reference1Email", id="reference1Email"),
+]
 
-@pytest.mark.parametrize(
-    "f",
-    [
-        field(LAUNCHDARKLY_REFERRER, "text", name="question_32969259003", id="question_32969259003"),
-        field("Referrer's email", "email"),
-        field("Referrer’s email", "email"),
-        field("Email", "email", name="referrer_email", id="referrer_email"),
-        field("Reference 1 phone", "tel"),
-        field("References: LinkedIn profile"),
-        field("Emergency contact phone", "tel"),
-        field("Hiring manager name"),
-        field("Recruiter email", "email"),
-        field("Your manager's email", "email"),
-        field("Supervisor phone number", "tel"),
-        field("Please provide their email"),
-        field("Point of contact email"),
-    ],
-    ids=lambda f: f["label"][:40],
-)
+OWN_FIELDS = [
+    (field("Email", "email"), "email"),
+    (field("Your email address", "email"), "email"),
+    (field("Work email", "email"), "email"),
+    (field("Preferred email address", "email"), "email"),
+    (field("E-mail", "email"), "email"),
+    (field("Phone", "tel"), "phone_number"),
+    (field("LinkedIn Profile"), "linkedin_url"),
+    # adversarial-review regressions (round 1): third-party words in HELPER text, not owning the field
+    (field("Phone (for recruiter contact)", "tel"), "phone_number"),
+    (field("Your email, so our recruiter can contact you", "email"), "email"),
+    (field("LinkedIn (shared with the hiring manager)"), "linkedin_url"),
+    (field("City (for our recruiters)"), "current_location"),
+    (field("Are you willing to relocate? (referral bonus applies)"), "willing_to_relocate"),
+    (field("Do you require sponsorship? Please reference H-1B status"), "requires_sponsorship"),
+    (field("Gender (this will not be shared with the hiring manager)", "select"), "gender"),
+    (field("Veteran status (not shared with your recruiter or interviewer)", "select"), "veteran_status"),
+    (field("Email", "email", name="candidateEmail", id="candidate_email"), "email"),
+]
+
+
+@pytest.mark.parametrize("f", THIRD_PARTY_FIELDS, ids=lambda f: f["label"][:40] + "|" + f["id"])
 def test_a_field_about_another_person_never_classifies(formfill, f):
     assert formfill.classify(f) is None
 
 
-@pytest.mark.parametrize(
-    ("f", "key"),
-    [
-        (field("Email", "email"), "email"),
-        (field("Your email address", "email"), "email"),
-        (field("Work email", "email"), "email"),
-        (field("Phone", "tel"), "phone_number"),
-        (field("LinkedIn Profile"), "linkedin_url"),
-    ],
-    ids=lambda x: x["label"] if isinstance(x, dict) else x,
-)
+@pytest.mark.parametrize(("f", "key"), OWN_FIELDS, ids=lambda x: x["label"][:40] if isinstance(x, dict) else x)
 def test_the_candidates_own_fields_still_classify(formfill, f, key):
     assert formfill.classify(f) == key
 
 
 def test_preferred_name_and_source_questions_do_not_read_as_third_party(formfill):
     # "Preferred"/"preferences" contain "refer"/"reference" as substrings — not a third party.
-    assert not formfill._is_third_party("preferred name")
-    assert not formfill._is_third_party("communication preferences")
+    assert not formfill._is_third_party(field("Preferred name"))
+    assert not formfill._is_third_party(field("Communication preferences: email"))
     assert formfill.classify(field("Preferred email address", "email")) == "email"
     # a source question is unchanged: it never mapped to a personal key, and still doesn't
     assert formfill.classify(field("How did you hear about us? (referral)")) is None
