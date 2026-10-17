@@ -94,6 +94,30 @@ _RESUME_FIELD = re.compile(r"r[eé]sum[eé]|\bcv\b|curriculum\s+vitae")
 _COVER_LETTER_FIELD = re.compile(r"cover[\s_-]?letter")
 
 
+_PLAIN_CSS_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+
+
+def id_selector(field_id: str) -> str:
+    """A CSS selector that matches the element whose id is exactly ``field_id``.
+
+    A plain id (``email``, ``first_name``) is ``#email``. Anything else (``input-candidate.name-3``
+    from Recruitee, ``:r1:`` from React, Workday's ``a/b`` or ``x[0]``, a leading digit, a space)
+    would be MISREAD as ``#id``: ``#input-candidate.name-3`` means id ``input-candidate`` plus class
+    ``name-3``, and the fill fails with "Element not found". Those use the attribute form
+    ``[id="..."]``, with ``\\`` and ``"`` escaped (and a control character as a CSS hex escape)."""
+    if _PLAIN_CSS_ID.fullmatch(field_id):
+        return f"#{field_id}"
+    out = []
+    for ch in field_id:
+        if ch in ('"', "\\"):
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\{ord(ch):x} ")
+        else:
+            out.append(ch)
+    return '[id="' + "".join(out) + '"]'
+
+
 def _norm(text: object) -> str:
     """A label/name/value folded for matching: lowercased, whitespace collapsed."""
     return " ".join(str(text if text is not None else "").split()).lower()
@@ -535,13 +559,14 @@ def build_plan(
         key = classify(field)
 
         # Identity carried on every row / unmapped entry so same-label fields stay distinguishable:
-        # id and name when present, and ``target`` — the most specific locator (``#id`` else the label).
+        # id and name when present, and ``target`` — the most specific locator
+        # (``#id``, or ``[id="..."]`` for an id CSS would misread; else the label).
         ident = {"label": label, "kind": kind}
         if fid:
             ident["id"] = fid
         if fname:
             ident["name"] = fname
-        ident["target"] = f"#{fid}" if fid else label
+        ident["target"] = id_selector(fid) if fid else label
 
         # Where the value comes from: the operator's EXTRA answer WINS — keyed by the field's id, then
         # name, then label — and a confirmed standard answer is only the fallback when no non-empty
@@ -833,7 +858,7 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
             continue  # already flagged as a planned-row mismatch above
         label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
         raw_id = str(field.get("id") or "").strip()
-        target = f"#{raw_id}" if raw_id else label
+        target = id_selector(raw_id) if raw_id else label
         value = str(field.get("value") or "")
         if value.strip():
             continue

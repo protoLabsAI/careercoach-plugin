@@ -1008,3 +1008,78 @@ def test_verify_never_demands_a_value_for_an_unassigned_row(formfill):
     mism = formfill.diff(plan, after)
     assert [m["target"] for m in mism] == ["#must"]
     assert mism[0]["expected"] == "(required — not yet filled)"
+
+
+# ── targets are VALID CSS for any id: `#a.b` would mean id `a` + class `b` (Recruitee, live 10-17) ──
+@pytest.mark.parametrize(
+    ("fid", "target"),
+    [
+        ("email", "#email"),
+        ("first_name", "#first_name"),
+        ("iti-0__country", "#iti-0__country"),
+        ("input-candidate.name-3", '[id="input-candidate.name-3"]'),
+        (":r1:", '[id=":r1:"]'),
+        ("1st-field", '[id="1st-field"]'),
+        ("a b", '[id="a b"]'),
+        ("x[0]/y", '[id="x[0]/y"]'),
+        ('q"x\\y', '[id="q\\"x\\\\y"]'),
+        ("ok\n", '[id="ok\\a "]'),
+    ],
+)
+def test_id_selector_escapes_ids_css_would_misread(formfill, fid, target):
+    assert formfill.id_selector(fid) == target
+
+
+def test_plan_targets_are_valid_selectors_for_dotted_and_react_ids(formfill):
+    form = [
+        field("Full name", "text", name="candidate.name", id="input-candidate.name-3", required=True),
+        field("Email", "email", name="candidate.email", id="input-candidate.email-4", required=True),
+        field("Phone", "tel", id=":r1:", required=True),
+        field("LinkedIn Profile", "text", id="1st-field"),
+        field("How did you hear about us?", "text", id="a b"),
+        field("Email again", "email", name="email", id="email"),
+    ]
+    plan = formfill.build_plan(form, {"email": "ada@example.com"})
+    targets = {r.get("id"): r["target"] for r in plan["rows"]} | {u.get("id"): u["target"] for u in plan["unmapped"]}
+    assert targets["input-candidate.name-3"] == '[id="input-candidate.name-3"]'
+    assert targets["input-candidate.email-4"] == '[id="input-candidate.email-4"]'
+    assert targets[":r1:"] == '[id=":r1:"]'
+    assert targets["1st-field"] == '[id="1st-field"]'
+    assert targets["a b"] == '[id="a b"]'
+    assert targets["email"] == "#email"
+    assert not any(t.startswith("#") and "." in t for t in targets.values())
+
+
+def test_diff_matches_dotted_ids_and_reports_them_as_valid_selectors(formfill):
+    form = [
+        field("Email", "email", name="candidate.email", id="input-candidate.email-4", required=True),
+        field("Cover note", "textarea", id="input-candidate.cover-9", required=True),
+    ]
+    plan = formfill.build_plan(form, {"email": "ada@example.com"})
+    filled = [dict(form[0], value="ada@example.com"), dict(form[1], value="Hi.")]
+    assert formfill.diff(plan, filled) == []
+    wrong = [dict(form[0], value="nope@example.com"), dict(form[1], value="")]
+    targets = [m["target"] for m in formfill.diff(plan, wrong)]
+    assert '[id="input-candidate.email-4"]' in targets
+    assert '[id="input-candidate.cover-9"]' in targets  # the required-empty pass escapes too
+
+
+def test_verify_fill_round_trips_a_dotted_id(tools, answers):
+    import json
+    import re
+
+    answers.propose("email", "ada@example.com")
+    answers.confirm(["email"])
+    form = [field("Email", "email", name="candidate.email", id="input-candidate.email-4", required=True)]
+    out = tools["careercoach_plan_fill"].invoke({"form_json": json.dumps(form), "company": "Tether", "role": "SWE"})
+    assert '[id="input-candidate.email-4"]' in out and "#input-candidate.email-4" not in out
+    sid = re.search(r"session_id:\s*(\S+)", out).group(1)
+    filled = [dict(form[0], value="ada@example.com")]
+    assert (
+        tools["careercoach_verify_fill"]
+        .invoke({"session_id": sid, "form_json": json.dumps(filled)})
+        .startswith("VERIFIED")
+    )
+    wrong = [dict(form[0], value="")]
+    out = tools["careercoach_verify_fill"].invoke({"session_id": sid, "form_json": json.dumps(wrong)})
+    assert out.startswith("NOT verified") and '[id="input-candidate.email-4"]' in out
