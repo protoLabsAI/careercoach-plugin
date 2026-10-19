@@ -496,6 +496,12 @@ def test_request_submit_grants_only_on_approve(gate, monkeypatch):
     card = seen["payload"]
     assert card["company"] == "Acme" and card["role"] == "ML Engineer" and card["session_id"] == sid
     assert any(f["label"] == "Email" and f["value"] == "ada@example.com" for f in card["fields"])
+    # Core's approval shape: prose summary, the planned answers as the detail block, real buttons.
+    assert card["kind"] == "approval" and "Acme" in card["description"]
+    assert "Email -> ada@example.com" in card["detail"]
+    by_label = {o["label"]: o["value"] for o in card["options"]}
+    assert gate.plugin._is_submit_approval(by_label["Approve submit"]) is True
+    assert gate.plugin._is_submit_approval(by_label["Decline"]) is False
 
 
 def test_request_submit_declines_leave_no_grant(gate, monkeypatch):

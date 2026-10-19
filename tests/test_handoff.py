@@ -63,8 +63,17 @@ def test_handoff_done_requires_a_fresh_read_back_and_verify(handoff, monkeypatch
     # The card the operator saw named the step and pointed at a visible browser.
     card = seen["payload"]
     assert card["reason"] == "login" and card["session_id"] == "sid-42"
-    assert card["options"] == ["done", "cancel"]
-    assert "Browser panel" in card["prompt"] and "headed" in card["prompt"]
+    # Core's approval shape, so the console shows prose and buttons, not the dict's repr.
+    assert card["kind"] == "approval" and card["title"]
+    assert [o["value"] for o in card["options"]] == ["done", "cancel"]
+    assert "Browser panel" in card["description"] and "headed" in card["description"]
+
+
+def test_handoff_card_buttons_resume_with_values_the_tool_reads(handoff):
+    card = handoff.plugin._handoff_card("sid-9", "captcha")
+    by_label = {o["label"]: o["value"] for o in card["options"]}
+    assert handoff.plugin._is_handoff_done(by_label["Done"]) is True
+    assert handoff.plugin._is_handoff_done(by_label["Cancel"]) is False
 
 
 def test_handoff_cancel_returns_the_stop_message(handoff, monkeypatch):
