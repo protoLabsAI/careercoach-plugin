@@ -1214,13 +1214,24 @@ def _submit_approval_card(session, session_id: str) -> dict:
         + "\n\nApprove to authorize ONE submit click (valid 120s); decline to stop."
     )
     return {
+        # Core's approval shape (see `_handoff_card`): the summary as prose, the planned answers as
+        # the detail block, and Approve / Decline buttons whose values `_is_submit_approval` reads.
+        "kind": "approval",
         "type": "careercoach_submit_approval",
         "title": "Approve submitting this job application?",
+        "description": (
+            f"Submit this job application? ({who})\n\n"
+            "Approve to authorize ONE submit click (valid 120s); decline to stop."
+        ),
+        "detail": "\n".join(table_lines) if table_lines else "(no planned fields)",
+        "options": [
+            {"label": "Approve submit", "value": "approve", "primary": True},
+            {"label": "Decline", "value": "decline"},
+        ],
         "company": company,
         "role": role,
         "session_id": session_id,
         "fields": fields,
-        "options": ["approve", "decline"],
         "prompt": prompt,
     }
 
@@ -1438,11 +1449,16 @@ def _handoff_card(session_id: str, reason: str) -> dict:
         "its own card. Choose Done once the step is complete, or Cancel to stop."
     )
     return {
+        # Core's approval shape, so the console renders the prompt as prose with real Done / Cancel
+        # buttons; any other dict reaches the operator as its raw repr. Each button resumes with its
+        # `value`, which `_is_handoff_done` reads.
+        "kind": "approval",
         "type": "careercoach_handoff",
         "title": "Finish one step in the visible browser",
+        "description": prompt,
+        "options": [{"label": "Done", "value": "done", "primary": True}, {"label": "Cancel", "value": "cancel"}],
         "reason": reason,
         "session_id": session_id,
-        "options": ["done", "cancel"],
         "prompt": prompt,
     }
 
