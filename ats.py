@@ -61,8 +61,11 @@ _ASHBY_JOB = re.compile(
 
 # ── detect: a job URL → {ats, board, job_id} | None ───────────────────────────────────────
 def detect(url: str) -> dict | None:
-    """Recognise a Greenhouse or Ashby job URL, returning ``{"ats", "board", "job_id"}`` or ``None``.
+    """Recognise a Greenhouse, Ashby or Workable job URL, or return ``None``.
 
+    * Workable's ``apply.workable.com/<company>/j/<id>`` and ``<company>.workable.com/j/<id>``
+      (including ``/apply/``) → ``{ats, company, job_id, apply_url}``. The canonical apply URL
+      goes straight to the live form; no schema fetch or new network host is involved.
     * ``jobs.ashbyhq.com/<org>/<job-uuid>`` and the ``.../application`` form →
       ``{"ats": "ashby", "board": <org>, "job_id": <uuid>}``.
     * ``job-boards.greenhouse.io/<board>/jobs/<id>`` and the older ``boards.greenhouse.io/<board>/
@@ -82,6 +85,24 @@ def detect(url: str) -> dict | None:
     host = (parsed.hostname or "").lower()
     path = parsed.path or ""
     query = parse_qs(parsed.query or "")
+
+    # URL-only: the browser owns navigation to Workable's live form.
+    workable = None
+    if host == "apply.workable.com":
+        workable = re.fullmatch(r"/([A-Za-z0-9_-]+)/j/([A-Za-z0-9_-]+)(?:/apply)?/?", path)
+        if workable:
+            company, job_id = workable.groups()
+    elif re.fullmatch(r"[a-z0-9-]+\.workable\.com", host):
+        workable = re.fullmatch(r"/j/([A-Za-z0-9_-]+)(?:/apply)?/?", path)
+        if workable:
+            company, job_id = host.split(".")[0], workable.group(1)
+    if workable:
+        return {
+            "ats": "workable",
+            "company": company,
+            "job_id": job_id,
+            "apply_url": f"https://apply.workable.com/{company}/j/{job_id}/apply/",
+        }
 
     if host == ASHBY_HOST:
         m = _ASHBY_JOB.match(path)

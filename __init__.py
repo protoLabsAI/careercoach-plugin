@@ -854,6 +854,8 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 out.append(f"  {i}. [skip]   {target} — optional, no saved answer; leave blank")
                 continue
             value = r.get("value", "")
+            if r.get("kind", "").lower() in {"radio", "radio-group"}:
+                out.append("     Read back checked=true (or aria-checked=true) and the selected value after filling.")
             shown = value if action != formfill.UPLOAD else f"{value}  (browser_upload this file)"
             # A self-ID select whose options the reader couldn't list (options_unknown) is planned with
             # the stored decline wording verbatim — which is usually NOT the form's exact option text. Tell
@@ -964,6 +966,9 @@ def _register_formfill_tools(registry) -> None:
         """Verify a filled form against the plan from careercoach_plan_fill. `session_id` is the id
         that plan returned; `form_json` is the form read back with `browser_form_read` AFTER filling.
 
+        For radio/radio-group fields, include the live checked (or aria-checked) state as well as
+        the value. Missing or false checked state is unfilled, even when the value matches.
+
         Returns "VERIFIED — every field matches" when every planned field holds its planned value
         and no required field is empty, otherwise a numbered list of mismatches (field, expected,
         actual) plus any required fields still blank. Comparison ignores presentation: whitespace
@@ -993,6 +998,8 @@ def _register_formfill_tools(registry) -> None:
                 # name the field by its locator when its label is shared by another field
                 where = label if (not loc or loc == label) else f"{label} [{loc}]"
                 lines.append(f"  {i}. {where}: expected {m.get('expected', '')!r}, found {m.get('actual', '')!r}")
+                if m.get("reason"):
+                    lines.append(f"     {m['reason']}")
             lines.append(
                 "Fix these (browser_select / browser_fill / browser_upload), then re-read the form and verify again."
             )
@@ -1048,6 +1055,14 @@ def _register_prepare_tool(registry) -> None:
             detected = ats.detect(url)
             if not detected:
                 return f"{url!r} isn't a recognised Greenhouse job URL, so there's no public schema to prepare from. {live_path}"
+            if detected.get("ats") == "workable":
+                return (
+                    f"This is a Workable job ({detected['company']}/{detected['job_id']}). "
+                    f"Open apply_url directly: {detected['apply_url']} instead of clicking Apply on the overview. "
+                    "Use browser_form_read → careercoach_plan_fill → fill → browser_form_read again → "
+                    "careercoach_verify_fill. Read back the checked state of every radio/radio-group; "
+                    "a successful click is not proof of selection."
+                )
             if detected.get("ats") == "ashby":
                 org, ashby_id = detected.get("board") or "?", detected.get("job_id") or "?"
                 return (
