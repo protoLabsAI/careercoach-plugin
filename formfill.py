@@ -263,6 +263,11 @@ def classify(field: dict) -> str | None:
     if len(matched) != 1:
         return None  # no match, or ambiguous between keys → never guess
     key = next(iter(matched))
+    if key == "current_location" and re.search(
+        r"^(?:current\s+)?(?:state|province|region|country)\b",
+        _norm(field.get("label")) or _split_ident(field.get("name") or field.get("id")),
+    ):
+        return None  # split state/country inputs must not receive the full location
     if key in _PERSONAL_KEYS and _is_third_party(field):
         return None  # someone else's email / phone / profile — the candidate's answer never fits
     if key in _SECTION_KEYS and _in_history_section(field):
@@ -365,6 +370,24 @@ def _action_for(field: dict, options: list[str]) -> str:
     if kind in _SELECT_KINDS or options:
         return SELECT
     return FILL
+
+
+def _is_hidden(field: dict) -> bool:
+    return (
+        field.get("visible") is False
+        or field.get("hidden") is True
+        or _norm(field.get("type")) == "hidden"
+        or _norm(field.get("kind")) == "hidden"
+    )
+
+
+def _readback_value(field: dict, kind: str = "") -> str:
+    """A radio's value attribute is not evidence that the option is checked."""
+    if _norm(kind or field.get("kind")) in {"radio", "radio-group"}:
+        checked = field.get("checked", field.get("aria-checked"))
+        if checked is not True and checked != "true":
+            return ""
+    return str(field.get("value") or "")
 
 
 def _is_required(field: dict) -> bool:
@@ -532,7 +555,9 @@ def build_plan(
     drafts = _draft_values()
     is_ashby = _norm(ats) == "ashby"
 
-    fields = form_fields if isinstance(form_fields, list) else []
+    fields = [
+        f for f in (form_fields if isinstance(form_fields, list) else []) if isinstance(f, dict) and not _is_hidden(f)
+    ]
     # How many fields each normalized label covers — an extra answer keyed by a label shared by more
     # than one field can't be routed to a single field, so it fills none of them (asked about instead).
     label_counts: dict[str, int] = {}
@@ -596,6 +621,11 @@ def build_plan(
                 value, source = extra_norm[nlabel].strip(), "extra"
         if value is None and key is not None and key in confirmed:
             value, source = confirmed[key], "standard"
+            if key == "current_location" and re.search(
+                r"^(?:current\s+)?city\b", _norm(field.get("label")) or _split_ident(fname or fid)
+            ):
+                # Confirmed locations use city, region, country; never infer missing parts.
+                value = str(value or "").split(",", 1)[0].strip() or None
 
         # A cover-letter-ONLY file field NEVER receives the résumé PDF (or its placeholder): that is
         # the wrong document, so the value is dropped and the field is treated as having no answer.
@@ -847,19 +877,23 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
         field = _match_field(row, by_id, by_name, by_label)
         if field is not None:
             covered.add(id(field))
-        actual = str((field or {}).get("value") or "") if field else ""
+        actual = _readback_value(field, row.get("kind", "")) if field else ""
         if not _values_equal(expected, actual, row):
-            mismatches.append({"label": label, "target": target, "expected": expected, "actual": actual})
+            mismatch = {"label": label, "target": target, "expected": expected, "actual": actual}
+            if field and _norm(row.get("kind")) in {"radio", "radio-group"} and not actual:
+                mismatch["actual"] = str(field.get("value") or "")
+                mismatch["reason"] = "unfilled — no checked radio value read back"
+            mismatches.append(mismatch)
 
     for field in form_fields_after if isinstance(form_fields_after, list) else []:
-        if not isinstance(field, dict) or not _is_required(field):
+        if not isinstance(field, dict) or _is_hidden(field) or not _is_required(field):
             continue
         if id(field) in covered:
             continue  # already flagged as a planned-row mismatch above
         label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
         raw_id = str(field.get("id") or "").strip()
         target = id_selector(raw_id) if raw_id else label
-        value = str(field.get("value") or "")
+        value = _readback_value(field)
         if value.strip():
             continue
         mismatches.append({"label": label, "target": target, "expected": "(required — not yet filled)", "actual": ""})
