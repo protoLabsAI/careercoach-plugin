@@ -138,3 +138,67 @@ def test_city_does_not_use_drafts_or_override_explicit_answer(formfill, plugin):
     assert not plan["rows"]
     plan = formfill.build_plan([field], {"current_location": "Portland, Oregon, USA"}, {"city": "Salem"})
     assert plan["rows"][0]["value"] == "Salem"
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["City, State, Country", "Current City / Region / Country", "City and Country", "City / Province"],
+)
+def test_combined_city_location_keeps_confirmed_location(formfill, label):
+    field = {"id": "city", "label": label, "kind": "text"}
+    plan = formfill.build_plan([field], {"current_location": "Portland, Oregon, USA"})
+    assert plan["rows"][0]["value"] == "Portland, Oregon, USA"
+
+
+def native_radios():
+    return [
+        {
+            "id": value.lower(),
+            "name": "authorization",
+            "label": value,
+            "kind": "radio",
+            "value": value,
+            "required": True,
+            "checked": value == "Yes",
+        }
+        for value in ["No", "Yes"]
+    ]
+
+
+@pytest.mark.parametrize("planned", [False, True])
+@pytest.mark.parametrize("checked_attr", ["checked", "aria-checked"])
+def test_required_native_radio_group_accepts_checked_option(formfill, planned, checked_attr):
+    fields = native_radios()
+    plan = {"rows": [{**fields[1], "action": "fill"}]} if planned else {"rows": []}
+    for field in fields:
+        field[checked_attr] = "true" if field.pop("checked") else "false"
+    assert formfill.diff(plan, fields) == []
+
+
+def test_required_native_radio_group_rejects_no_selection(formfill):
+    fields = [{**field, "checked": False} for field in native_radios()]
+    assert formfill.diff({"rows": []}, fields)
+
+
+def test_selected_sibling_does_not_satisfy_planned_radio(formfill):
+    fields = native_radios()
+    plan = {"rows": [{**fields[0], "action": "fill"}]}
+    mismatches = formfill.diff(plan, fields)
+    assert len(mismatches) == 1
+    assert mismatches[0]["label"] == "No"
+    assert "unfilled" in mismatches[0]["reason"]
+
+
+@pytest.mark.parametrize("change", [{"name": "other"}, {"name": "Authorization"}, {"visible": False}, {"kind": "text"}])
+def test_other_fields_do_not_satisfy_required_radio_group(formfill, change):
+    fields = native_radios()
+    fields[1].update(change)
+    mismatches = formfill.diff({"rows": []}, fields)
+    assert any(m["label"] == "No" for m in mismatches)
+
+
+def test_unnamed_radios_do_not_share_requiredness(formfill):
+    fields = native_radios()
+    for field in fields:
+        field.pop("name")
+    assert formfill.diff({"rows": []}, fields)

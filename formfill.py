@@ -621,8 +621,11 @@ def build_plan(
                 value, source = extra_norm[nlabel].strip(), "extra"
         if value is None and key is not None and key in confirmed:
             value, source = confirmed[key], "standard"
-            if key == "current_location" and re.search(
-                r"^(?:current\s+)?city\b", _norm(field.get("label")) or _split_ident(fname or fid)
+            location_label = _norm(field.get("label")) or _split_ident(fname or fid)
+            if (
+                key == "current_location"
+                and re.search(r"^(?:current\s+)?city\b", location_label)
+                and not re.search(r"\b(?:state|region|province|country|location)\b", location_label)
             ):
                 # Confirmed locations use city, region, country; never infer missing parts.
                 value = str(value or "").split(",", 1)[0].strip() or None
@@ -863,6 +866,17 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
     by_id, by_name, by_label = _indexes(form_fields_after)
     mismatches: list[dict] = []
     covered: set[int] = set()  # id() of each matched read-back field, so a covered field isn't re-reported
+    # Native radios share requiredness by name. Only live, checked radio evidence can satisfy
+    # their group; keep planned-row comparisons below specific to the intended option.
+    selected_radio_names = {
+        field["name"]
+        for field in (form_fields_after if isinstance(form_fields_after, list) else [])
+        if isinstance(field, dict)
+        and not _is_hidden(field)
+        and _norm(field.get("kind")) == "radio"
+        and field.get("name")
+        and _readback_value(field).strip()
+    }
 
     for row in rows:
         if not isinstance(row, dict) or row.get("action") == SKIP:
@@ -890,6 +904,8 @@ def diff(plan: dict, form_fields_after) -> list[dict]:
             continue
         if id(field) in covered:
             continue  # already flagged as a planned-row mismatch above
+        if _norm(field.get("kind")) == "radio" and field.get("name") in selected_radio_names:
+            continue
         label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
         raw_id = str(field.get("id") or "").strip()
         target = id_selector(raw_id) if raw_id else label
