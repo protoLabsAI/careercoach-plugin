@@ -382,11 +382,20 @@ def _is_hidden(field: dict) -> bool:
 
 
 def _readback_value(field: dict, kind: str = "") -> str:
-    """A radio's value attribute is not evidence that the option is checked."""
-    if _norm(kind or field.get("kind")) in {"radio", "radio-group"}:
-        checked = field.get("checked", field.get("aria-checked"))
-        if checked is not True and checked != "true":
-            return ""
+    """The value a read-back proves is set.
+
+    A single radio's ``value`` attribute is not evidence that the option is checked, so it
+    needs a live ``checked``/``aria-checked``. A ``radio-group`` is different: the host's
+    form reader (``collapse_radio_groups``) collapses a native group into one field whose
+    ``value`` IS the checked option (empty when nothing is checked) and sends no ``checked``
+    key, so its value counts as proof. A ``checked`` key, when present, always wins."""
+    field_kind = _norm(kind or field.get("kind"))
+    if field_kind in {"radio", "radio-group"}:
+        has_checked = "checked" in field or "aria-checked" in field
+        if has_checked or field_kind == "radio":
+            checked = field.get("checked", field.get("aria-checked"))
+            if checked is not True and checked != "true":
+                return ""
     return str(field.get("value") or "")
 
 
