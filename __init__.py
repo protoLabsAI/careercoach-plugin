@@ -1210,6 +1210,7 @@ def _submit_approval_card(session, session_id: str) -> dict:
     rows = session.get("rows", []) if isinstance(session, dict) else []
     fields: list[dict] = []
     table_lines: list[str] = []
+    table_rows: list[list[str]] = []
     for r in rows:
         if not isinstance(r, dict) or r.get("action") == formfill.SKIP:
             continue
@@ -1219,6 +1220,7 @@ def _submit_approval_card(session, session_id: str) -> dict:
         fields.append({"label": label, "value": value, "action": action})
         shown = f"{value}  (upload)" if action == formfill.UPLOAD else value
         table_lines.append(f"  {label} -> {shown}")
+        table_rows.append([label, shown])
 
     company = str((session or {}).get("company") or "").strip()
     role = str((session or {}).get("role") or "").strip()
@@ -1243,6 +1245,13 @@ def _submit_approval_card(session, session_id: str) -> dict:
             {"label": "Approve submit", "value": "approve", "primary": True},
             {"label": "Decline", "value": "decline"},
         ],
+        # A structured rendering of the SAME non-SKIP, upload-marked rows the `detail` block carries,
+        # for the protoAgent display renderer (protoAgent#4405). Older consoles/clients ignore this
+        # key and fall back to `detail`/`prompt` unchanged; the shape follows the core table bounds.
+        "display": {
+            "component": "table",
+            "props": {"columns": ["Field", "Value"], "rows": table_rows},
+        },
         "company": company,
         "role": role,
         "session_id": session_id,
