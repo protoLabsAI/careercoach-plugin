@@ -1091,8 +1091,15 @@ def test_verify_fill_round_trips_a_dotted_id(tools, answers):
 def _host_radio_group(value=""):
     # Exactly what the host's browser_form_read emits for a native radio group: one field whose
     # value IS the checked option (empty when nothing is checked), and no `checked` key.
-    return {"label": "Authorized to work", "kind": "radio-group", "name": "auth", "id": "",
-            "required": True, "value": value, "options": ["Yes", "No"]}
+    return {
+        "label": "Authorized to work",
+        "kind": "radio-group",
+        "name": "auth",
+        "id": "",
+        "required": True,
+        "value": value,
+        "options": ["Yes", "No"],
+    }
 
 
 def test_a_selected_host_radio_group_verifies(formfill):
