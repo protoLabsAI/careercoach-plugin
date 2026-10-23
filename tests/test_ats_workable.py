@@ -77,6 +77,8 @@ def radio(kind):
 @pytest.mark.parametrize("kind", ["radio", "radio-group"])
 @pytest.mark.parametrize("state", [{}, {"checked": False}, {"checked": "false"}, {"aria-checked": "false"}])
 def test_radio_without_checked_evidence_is_unfilled(formfill, kind, state):
+    if kind == "radio-group" and not state:
+        pytest.skip("a host radio-group's value IS the checked option (see test_formfill host-shaped tests)")
     field = radio(kind)
     plan = formfill.build_plan([field], {"authorized_us": "Yes"})
     mismatches = formfill.diff(plan, [{**field, "value": "Yes", **state}])

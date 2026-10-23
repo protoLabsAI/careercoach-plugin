@@ -1083,3 +1083,41 @@ def test_verify_fill_round_trips_a_dotted_id(tools, answers):
     wrong = [dict(form[0], value="")]
     out = tools["careercoach_verify_fill"].invoke({"session_id": sid, "form_json": json.dumps(wrong)})
     assert out.startswith("NOT verified") and '[id="input-candidate.email-4"]' in out
+
+
+# ── host-shaped radio groups (core agent_browser collapse_radio_groups) ─────────────────
+
+
+def _host_radio_group(value=""):
+    # Exactly what the host's browser_form_read emits for a native radio group: one field whose
+    # value IS the checked option (empty when nothing is checked), and no `checked` key.
+    return {
+        "label": "Authorized to work",
+        "kind": "radio-group",
+        "name": "auth",
+        "id": "",
+        "required": True,
+        "value": value,
+        "options": ["Yes", "No"],
+    }
+
+
+def test_a_selected_host_radio_group_verifies(formfill):
+    plan = formfill.build_plan([_host_radio_group()], {"authorized_us": "Yes"})
+    assert formfill.diff(plan, [_host_radio_group("Yes")]) == []
+
+
+def test_an_unselected_host_radio_group_is_still_flagged(formfill):
+    plan = formfill.build_plan([_host_radio_group()], {"authorized_us": "Yes"})
+    mismatches = formfill.diff(plan, [_host_radio_group("")])
+    assert mismatches and mismatches[0]["expected"] == "Yes"
+
+
+def test_a_required_host_radio_group_with_a_value_is_not_reported_blank(formfill):
+    assert formfill.diff({"rows": []}, [_host_radio_group("No")]) == []
+    assert formfill.diff({"rows": []}, [_host_radio_group("")])[0]["expected"].startswith("(required")
+
+
+def test_an_explicit_checked_key_still_wins_for_a_group(formfill):
+    plan = formfill.build_plan([_host_radio_group()], {"authorized_us": "Yes"})
+    assert formfill.diff(plan, [{**_host_radio_group("Yes"), "checked": False}])
