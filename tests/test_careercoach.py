@@ -9,6 +9,7 @@ Two layers:
 from __future__ import annotations
 
 import importlib
+import tomllib
 import types
 from pathlib import Path
 
@@ -31,6 +32,16 @@ def test_manifest_is_valid():
         "packet_root",
     }
     assert m["views"][0]["path"] == "/plugins/careercoach/view"
+
+
+def test_manifest_and_pyproject_versions_are_in_lockstep():
+    """The release ritual tags whatever version the two manifests carry, and they must agree —
+    a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
+    This release is v0.11.6 (batches #37's Workable apply path and #38's radio-group read-back fix)."""
+    manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert str(manifest) == pyproject, (manifest, pyproject)
+    assert pyproject == "0.11.6"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
