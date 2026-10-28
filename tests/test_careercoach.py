@@ -37,11 +37,11 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.11.6 (batches #37's Workable apply path and #38's radio-group read-back fix)."""
+    This release is v0.11.7 (batches only #41's tool-description trim and apply-form skill rules)."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.11.6"
+    assert pyproject == "0.11.7"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
