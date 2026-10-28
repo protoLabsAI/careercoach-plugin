@@ -89,9 +89,8 @@ def _register_tracker_tools(registry) -> None:
         notes: str = "",
         source: str = "",
     ) -> str:
-        """Record or update a job in your pipeline: company, role, the 0-100 fit score from
-        the evaluation, status (considering/applied/interviewing/offer/rejected/passed),
-        free-text notes, and the posting URL. Feeds the Career Coach dashboard and /upskill."""
+        """Record or update a job in the pipeline: company, role, 0-100 fit score, status
+        (considering/applied/interviewing/offer/rejected/passed), notes, and `source` (posting URL)."""
         try:
             row = state.track_application(
                 company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
@@ -118,8 +117,7 @@ def _register_tracker_tools(registry) -> None:
 
     @tool
     def careercoach_list_applications(status: str = "") -> str:
-        """List the jobs in your pipeline, optionally filtered by status. Use it to review
-        where things stand or pick what to prepare for next."""
+        """List the jobs in the pipeline, optionally filtered by status."""
         rows, err = state.load_applications_checked(status=status or None)
         if err:
             return f"Your pipeline file {state._path()} is unreadable ({err}), so I can't list it — tell the operator."
@@ -140,13 +138,9 @@ def _register_jobsearch_tool(registry, cfg) -> None:
     async def careercoach_search_jobs(
         query: str, location: str = "", remote: bool = False, limit: int = 10, source: str = ""
     ) -> str:
-        """Search LIVE job postings across the market for `query` (a title, skill, or role), optionally
-        narrowed by `location` or `remote`-only. `source` picks the job source (default: Settings →
-        Career Coach): "himalayas" (keyless remote-jobs board, newest first), "hn" (this month's Hacker
-        News 'Who is hiring?' thread — startups, posted the first weekday of each month), or "jsearch"
-        (Google-for-Jobs incl. LinkedIn/Indeed; needs a Job-source API key). For companies you already
-        target, careercoach_scan_boards reads their own job boards and is fresher. Returns a numbered list
-        with apply links; offer to evaluate fit or track any of them."""
+        """Search live job postings for `query` (title, skill or role), optionally by `location` or `remote`-only.
+        `source` (default: Settings): "himalayas" (keyless remote board), "hn" (this month's HN 'Who is hiring?'),
+        "jsearch" (Google for Jobs; needs an API key). For watched companies, careercoach_scan_boards is fresher."""
         from . import jobsource
 
         try:
@@ -234,10 +228,8 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_init_workspace() -> str:
-        """Seed your job-search workspace with the fill-in reference templates (an Experience.md
-        the operator can write their history into, story bank, experience-reviewer rules, Humanize
-        skill, improvements log). Safe to re-run: it only adds files that are missing and never
-        overwrites your edits. Run this once before your first role packet."""
+        """Seed the job-search workspace with the fill-in templates (Experience.md, story bank, reviewer rules, humanize,
+        improvements log). Only adds missing files, never overwrites. Run once before the first role packet."""
         root = packet.resolve_root(_root())
         res = packet.init_workspace(root, templates_dir)
         if not res["created"]:
@@ -252,12 +244,9 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_get_profile(field: str = "") -> str:
-        """Read your operator's verified profile. With no `field`, returns the completeness
-        picture (what's known, what's missing) — the same index you already see in the
-        <operator_profile> block each turn. With a `field`, returns that section IN FULL:
-        `roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`, or an identity field
-        (`name`, `location`, `work_auth`, `contact`, `headlines`). Read the full section before
-        drafting anything from it — the always-on block is only an index."""
+        """Read the operator's verified profile. No `field`: the completeness index (same as the <operator_profile>
+        block). With `field` (roles, education, skills, do_not_claim, stories, notes, name, location, work_auth,
+        contact, headlines): that section in full — read it before drafting from it."""
         prof, err = profile.load_profile_checked()
         if err:
             return profile.unreadable_block(err)
@@ -287,18 +276,12 @@ def _register_packet_tools(registry, cfg) -> None:
     def careercoach_update_profile(
         field: str, content: str, mode: str = "append", confirm_removal: bool = False
     ) -> str:
-        """Record one field of your operator's profile, after THEY have confirmed it. `field` is
-        an identity fact (`name`, `location`, `work_auth`, `contact`, `headlines` — each set to
-        `content`) or a section (`roles`, `education`, `skills`, `do_not_claim`, `stories`,
-        `notes`). Sections APPEND by default, so recording roles one at a time keeps every one and
-        no ordinary write truncates a career history. To CORRECT something already recorded, read
-        the section with careercoach_get_profile, fix it, and write the whole section back with
-        `mode="replace"` — appending a correction leaves the wrong line beside it. Identity fields
-        hold one value each: for `contact` or `headlines`, pass the whole line (what's there plus
-        the addition). Dropping or rewording any `do_not_claim` line is refused unless
-        `confirm_removal=true` — set that only after the operator explicitly asked you to remove
-        that hard stop. Never record anything the operator didn't tell you or confirm: this
-        profile is the anti-fabrication anchor for every CV, letter and interview answer."""
+        """Record one profile field the operator told you or confirmed — never anything else; this profile is the
+        anti-fabrication anchor for every CV, letter and answer. `field`: identity (name, location, work_auth,
+        contact, headlines — pass the whole value) or section (roles, education, skills, do_not_claim, stories, notes
+        — appends). To correct, read it with careercoach_get_profile and write the whole section back with
+        mode="replace". Dropping or rewording a do_not_claim line needs confirm_removal=true, only when the operator
+        explicitly asked."""
         try:
             saved = profile.update_field(field, content, mode=mode, confirm_removal=confirm_removal)
         except (KeyError, ValueError, PermissionError, profile.StoreUnreadable) as e:
@@ -317,10 +300,8 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_export_experience() -> str:
-        """Write a portable markdown snapshot of the operator's profile (the single source of
-        truth) to `Resume/Experience (profile export).md` in their workspace — readable, diffable,
-        and handable to anyone. It never touches their own `Resume/Experience.md`; each run
-        regenerates the snapshot from the current profile."""
+        """Write a markdown snapshot of the profile to `Resume/Experience (profile export).md`, regenerated each run.
+        Never touches the operator's own Resume/Experience.md."""
         prof, err = profile.load_profile_checked()
         if err:
             return f"Not exported: {profile.unreadable_block(err)}"
@@ -332,15 +313,11 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_read_profile(doc: str = "experience") -> str:
-        """Read the candidate's record, or one of the workspace reference files — what every CV
-        bullet, evidence-map row and cover-letter claim must trace back to. `doc` is one of:
-        `experience` (their career record: ALWAYS the live operator profile — the single source of
-        truth, the same record careercoach_get_profile reads — rendered as markdown; the workspace
-        Resume/Experience.md is never read here, it reaches the profile only through
-        careercoach_import_experience), `story-bank` (pre-vetted STAR proof + the "do NOT claim"
-        guardrails), `reviewer` (the experience-reviewer discipline), `humanize` (anti-slop rules),
-        `improvements` (the workflow-audit log). Read `experience` BEFORE drafting anything in the
-        candidate's name — if it comes back empty, help them build the profile rather than inventing."""
+        """Read the candidate's record or a workspace reference file — every CV bullet, evidence row and letter claim
+        must trace to it. `doc`: experience (the live operator profile as markdown; Resume/Experience.md is never read
+        here — see careercoach_import_experience), story-bank (STAR proof + do-NOT-claim guardrails), reviewer,
+        humanize, improvements. Read `experience` before drafting in the candidate's name; if empty, build the profile
+        — never invent."""
         root = packet.resolve_root(_root())
         if doc == "experience":
             prof, err = profile.load_profile_checked()
@@ -392,19 +369,11 @@ def _register_packet_tools(registry, cfg) -> None:
     def careercoach_import_experience(
         apply: bool = False, preview_id: str = "", mode: str = "append", confirm_removal: bool = False
     ) -> str:
-        """Bring the operator's own Resume/Experience.md into their profile — the only way that
-        file's content reaches you (the profile is the single source of truth; nothing reads
-        Experience.md directly). Use it in /setup-coach when they already keep one, and whenever
-        they say they've edited it.
-
-        Call it first WITHOUT `apply`: it writes nothing and shows, field by field, the exact lines
-        it would add or remove (the template's hint text, and anything already in the profile, is
-        skipped), ending with a `preview_id`. Show that to the operator. Only after they confirm,
-        call again with `apply=true` and that `preview_id` — the apply does exactly what they saw,
-        and refuses if the file, the profile, `mode` or `confirm_removal` changed since. Sections
-        append by default, merging in only the lines that are missing; `mode="replace"` makes each
-        imported section match the file (for corrections they made there). Dropping a
-        `do_not_claim` line still needs `confirm_removal=true`, on their explicit say-so."""
+        """Import the operator's own Resume/Experience.md into the profile (the only way its content reaches you). Call
+        without `apply` first: writes nothing, returns a per-field preview and a `preview_id` — show it to the
+        operator. Only after they confirm, call with apply=true and that preview_id (refused if the file, profile,
+        mode or confirm_removal changed). mode="append" merges missing lines; "replace" makes sections match the file.
+        Dropping a do_not_claim line needs confirm_removal=true on their explicit say-so."""
         root = packet.resolve_root(_root())
         res = packet.read_source(root, "experience", templates_dir)
         if not res["exists"]:
@@ -465,12 +434,9 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_write_profile(doc: str, content: str) -> str:
-        """Save the candidate's story bank (`doc="story-bank"`) after THEY have confirmed the
-        content. It's the only workspace source file you write: the discipline files are read-only
-        by design, and their career history lives in the operator profile (record it with
-        careercoach_update_profile), never in Resume/Experience.md. This overwrites the whole file,
-        so read it first (careercoach_read_profile("story-bank")) and pass the full merged markdown,
-        never a fragment. Never write a claim the candidate didn't give you."""
+        """Save the story bank (doc="story-bank") after the candidate confirmed it — never write a claim they didn't give
+        you. Overwrites the whole file: read it first (careercoach_read_profile) and pass the full merged markdown.
+        Career history goes to careercoach_update_profile, not here."""
         if doc == "experience":
             return (
                 "Not written: Resume/Experience.md is the operator's own file, and their history lives in "
@@ -487,10 +453,9 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_scaffold_role(company: str, role: str, req: str = "", raw_jd: str = "") -> str:
-        """Start a role packet: create Companies/<company>/Roles/<role - req>/ and seed the intake
-        files (raw job description + process log). `req` is the requisition id (optional); paste the
-        full posting as `raw_jd`. Idempotent. This is Phase 1 (Intake) of the gated role-packet flow;
-        after it, produce the artifacts one gate at a time with careercoach_write_artifact."""
+        """Start a role packet (Phase 1, Intake): create Companies/<company>/Roles/<role - req>/ with the posting
+        (`raw_jd`) and a process log. `req` is an optional requisition id. Idempotent. Then write each gated artifact
+        with careercoach_write_artifact (role-packet skill)."""
         root = packet.resolve_root(_root())
         out = packet.scaffold_role(root, company, role, req, raw_jd=raw_jd)
         checklist = "\n".join(f"  - {packet.ARTIFACTS[k]}" for k in packet.AUTHORED)
@@ -505,10 +470,9 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_write_artifact(company: str, role: str, artifact: str, content: str, req: str = "") -> str:
-        """Write one packet artifact into a role folder and log it. `artifact` must be one of:
-        recruiter-brief, hiring-manager-profile, evidence-map, tailored-resume, skills-entry,
-        cover-letter, prompt-transcript. Pass the finished markdown as `content`. Use only after the
-        user has approved that step (this flow gates each phase)."""
+        """Write one packet artifact (markdown `content`) into a role folder. `artifact`: recruiter-brief,
+        hiring-manager-profile, evidence-map, tailored-resume, skills-entry, cover-letter, prompt-transcript. Only
+        after the user approved that step."""
         root = packet.resolve_root(_root())
         try:
             res = packet.write_artifact(root, company, role, req, artifact, content)
@@ -518,9 +482,8 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_assemble_packet(company: str, role: str, req: str = "") -> str:
-        """Phase 6 (QA): concatenate the produced artifacts into 'role packet.md' and refresh
-        'orchestration log.md' with a completeness checklist. Reports which sections are present and
-        which are still missing so you can see the packet is (or isn't) ready to submit."""
+        """Phase 6 (QA): build 'role packet.md' from the produced artifacts, refresh the orchestration log, and report
+        which sections are present or missing."""
         root = packet.resolve_root(_root())
         try:
             res = packet.assemble_packet(root, company, role, req)
@@ -536,9 +499,7 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_list_roles() -> str:
-        """List the role packets in your workspace with how many artifacts each has and each role
-        folder's absolute path, so you can see what's in flight, what still needs work, and where
-        a role's files (its tailored resume snapshot, its exports) live."""
+        """List role packets with artifact counts and each role folder's absolute path."""
         rows = packet.list_roles(packet.resolve_root(_root()))
         if not rows:
             return "No role packets yet. Start one with careercoach_scaffold_role(company, role)."
@@ -548,30 +509,13 @@ def _register_packet_tools(registry, cfg) -> None:
 
     @tool
     def careercoach_render_resume(company: str = "") -> str:
-        """Render the operator's résumé as a standalone HTML file in their workspace, ready to be
-        turned into a PDF an ATS form will accept. It prints ONLY the operator-approved résumé body
-        — the `resume` profile section plus the operator's `name` — into a self-contained,
-        print-correct document and ADDS NO CLAIMS. It does NOT read the coach's working record
-        (`location`, `contact`, `headlines`, `roles`, `skills`, `education`, `do_not_claim`,
-        `stories`, `notes`): those fields carry internal coaching annotations and must never reach an
-        employer (a 2026-10-05 PDF leaked exactly that). The `resume` body is: optional `Headline:` /
-        `Location:` / `Contact:` header lines and a summary before the first `## ` heading, then
-        `## ` sections (`### ` role headings and `-` bullets inside).
-
-        If the `resume` section is empty, this writes nothing and tells you to draft a clean résumé
-        body, show it to the operator, and save it with `careercoach_update_profile(field="resume",
-        …, mode="replace")` only after they approve it. It also refuses if the body carries any coach
-        annotation (quoting the offending lines) or has no `Contact:` line (an employer-bound résumé
-        always carries a way to reach the operator). Otherwise it writes `Resume/resume.html` and
-        returns its `file://` URL plus the exact next steps:
-          1. `browser_open <url>`
-          2. `browser_pdf("resume-<company>.pdf")`
-          3. pass the path `browser_pdf` returns to `browser_upload`.
-
-        The PDF MUST come from `browser_pdf`: `browser_upload` only accepts files that are already in
-        the browser plugin's own capture folder, and printing the opened `file://` page with
-        `browser_pdf` is the only way a file lands there. Pass `company` so the PDF name and the
-        upload are identifiable per role."""
+        """Render the operator's résumé to Resume/resume.html for an ATS upload. Prints ONLY the operator-approved
+        `resume` profile section plus `name` and adds no claims; never reads the coaching record (roles, skills,
+        notes, …), whose annotations must not reach an employer. Writes nothing and says why if the body is empty, has
+        no `Contact:` line, or carries coach annotations — then draft a clean body, show the operator, and save it
+        with careercoach_update_profile(field="resume", mode="replace") only after they approve. Returns the file://
+        URL and the steps (browser_open → browser_pdf → browser_upload; the PDF must come from browser_pdf). Pass
+        `company` to name the PDF. Body format: apply-form skill."""
         prof, err = profile.load_profile_checked()
         if err:
             return f"Not rendered: {profile.unreadable_block(err)}"
@@ -658,14 +602,10 @@ def _register_answers_tools(registry) -> None:
 
     @tool
     def careercoach_get_answers() -> str:
-        """List the operator's saved standard application answers — the fields every ATS form asks
-        for (email, phone, work authorization, sponsorship, LinkedIn, voluntary self-ID, pronouns) —
-        each with its value and whether it is CONFIRMED or still a DRAFT, plus which keys are
-        missing. Only confirmed answers may be used to fill a form; a draft must be shown to the
-        operator and confirmed with careercoach_confirm_answers first. On first use, if nothing is
-        stored yet, this seeds drafts from the verified profile (and defaults the self-ID fields to
-        "Decline to self-identify") for the operator to review — it never records anything as
-        confirmed on their behalf."""
+        """List the operator's standard application answers (email, phone, work authorization, sponsorship, LinkedIn,
+        self-ID, pronouns): value, CONFIRMED or DRAFT, and missing keys. Only confirmed answers may fill a form. First
+        use seeds drafts from the profile (self-ID: "Decline to self-identify"); it never confirms anything on the
+        operator's behalf."""
         try:
             stored, err = answers.load_checked()
             if err:
@@ -713,11 +653,8 @@ def _register_answers_tools(registry) -> None:
 
     @tool
     def careercoach_propose_answer(key: str, value: str) -> str:
-        """Save a DRAFT value for one standard application answer (e.g. key="phone_number",
-        value="555-123-4567", or key="authorized_us", value="yes"). A draft is never used to fill a
-        form until the operator confirms it with careercoach_confirm_answers. Changing a value that
-        was already confirmed sends it back to draft, so it must be confirmed again. If `key` isn't
-        one of the valid keys, this returns an error listing them (see careercoach_get_answers)."""
+        """Save a DRAFT value for one standard answer key (e.g. phone_number, authorized_us). Drafts never fill a form
+        until careercoach_confirm_answers; changing a confirmed value sends it back to draft."""
         key = (key or "").strip()
         try:
             answers.propose(key, value)
@@ -732,11 +669,8 @@ def _register_answers_tools(registry) -> None:
 
     @tool
     def careercoach_confirm_answers(keys: str) -> str:
-        """Promote the listed draft answers to CONFIRMED — `keys` is a comma-separated list, e.g.
-        "phone_number, authorized_us, linkedin_url". Call this ONLY after you have shown the operator
-        the exact values (careercoach_get_answers) and received their explicit confirmation in this
-        conversation; never confirm on their behalf. Confirmed values are the only ones ever used to
-        fill a form. If any key isn't a valid key, this returns an error listing the valid keys."""
+        """Promote drafts to CONFIRMED (`keys` comma-separated). Call ONLY after showing the operator the exact values
+        and getting their explicit confirmation in this conversation — never on their behalf."""
         requested = [k.strip() for k in (keys or "").split(",") if k.strip()]
         if not requested:
             return "No keys given. Pass a comma-separated list of the keys the operator confirmed."
@@ -912,31 +846,11 @@ def _register_formfill_tools(registry) -> None:
 
     @tool
     def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "", ats: str = "") -> str:
-        """Plan how to fill a job-application form, drawing ONLY from the operator's confirmed
-        standard answers (careercoach_get_answers) plus any one-off answers they've given for this
-        form. `form_json` is the exact JSON array that `browser_form_read` returned (one object per
-        field: label, kind, name, id, required, value, options). `extra_answers` is an optional JSON
-        object mapping a field LABEL to an operator-supplied value for a one-off question, e.g.
-        {"Desired start date": "Immediately"}. `ats` optionally names the applicant-tracking system
-        so the plan can apply its rules — pass "ashby" for a jobs.ashbyhq.com form (careercoach_prepare_application
-        tells you when a URL is Ashby).
-
-        Returns an ordered fill plan (each line: action, field, the value to use) followed by an
-        explicit "Ask the operator about ONLY these:" list — the required fields with no confirmed
-        answer, the selects whose answer matched no option (with the options), and any answers that
-        are still only drafts. A draft NEVER fills a form; a select answer is NEVER fuzzy-matched to
-        a nearest option.
-
-        For an Ashby form (ats="ashby"): the plan puts a required résumé UPLOAD row FIRST (its value
-        is "PDF from careercoach_render_resume → browser_pdf"), because Ashby always needs a résumé
-        file, and carries a note to upload it first and re-read every field after — Ashby's autofill
-        can overwrite typed values. If the profile can't render a résumé yet, the résumé is listed to
-        ask about instead.
-
-        The loop: browser_form_read → careercoach_plan_fill → ask the operator ONLY about the
-        listed items (confirm drafts with careercoach_confirm_answers) → fill with browser_select /
-        browser_fill / browser_upload in the order shown → browser_form_read again →
-        careercoach_verify_fill → repeat until VERIFIED."""
+        """Plan a job-form fill from ONLY the operator's confirmed standard answers plus `extra_answers` (JSON object:
+        field label → operator-supplied value). `form_json`: the exact array browser_form_read returned. `ats="ashby"`
+        for jobs.ashbyhq.com (adds a required résumé upload first). Returns a session_id, ordered fill rows, and an
+        "Ask the operator about ONLY these" list. A draft never fills; a select answer is never fuzzy-matched. The
+        full loop: apply-form skill."""
         try:
             fields, err = _parse_form_json(form_json)
             if err:
@@ -963,19 +877,10 @@ def _register_formfill_tools(registry) -> None:
 
     @tool
     def careercoach_verify_fill(session_id: str, form_json: str) -> str:
-        """Verify a filled form against the plan from careercoach_plan_fill. `session_id` is the id
-        that plan returned; `form_json` is the form read back with `browser_form_read` AFTER filling.
-
-        For radio/radio-group fields, include the live checked (or aria-checked) state as well as
-        the value. Missing or false checked state is unfilled, even when the value matches.
-
-        Returns "VERIFIED — every field matches" when every planned field holds its planned value
-        and no required field is empty, otherwise a numbered list of mismatches (field, expected,
-        actual) plus any required fields still blank. Comparison ignores presentation: whitespace
-        and case, digits-only for phone, file basename for uploads — so formatting differences don't
-        read as mismatches, but a react-select that reverted to the wrong option does. The result is
-        recorded; a session counts as verified only when its latest check found nothing. If it isn't
-        VERIFIED, fix the listed fields and run this again."""
+        """Diff a filled form, re-read with browser_form_read (include radio checked/aria-checked — unchecked is
+        unfilled), against the careercoach_plan_fill `session_id`. Returns VERIFIED or the mismatches and blank
+        required fields; whitespace, case, phone formatting and upload paths are ignored. Only the latest check counts
+        — fix and re-run until VERIFIED."""
         try:
             sid = (session_id or "").strip()
             session = formfill.load_session(sid)
@@ -1020,31 +925,11 @@ def _register_formfill_tools(registry) -> None:
 def _register_prepare_tool(registry) -> None:
     @tool
     async def careercoach_prepare_application(url: str, company: str = "", role: str = "") -> str:
-        """Prepare answers for a job application BEFORE opening the page, from the ATS's public
-        question schema. Give it the posting `url` (optionally `company` / `role`).
-
-        For a Greenhouse job URL — `job-boards.greenhouse.io/<board>/jobs/<id>`, the older
-        `boards.greenhouse.io/<board>/jobs/<id>` form — it fetches the job's public application
-        questions, builds a fill plan from your CONFIRMED standard answers (careercoach_get_answers),
-        and returns that plan plus an explicit "Ask the operator about ONLY these:" list: the required
-        questions it has no confirmed answer for. Values are drawn ONLY from confirmed answers; a
-        select answer is never fuzzy-matched; nothing is invented.
-
-        This is PREPARATION, not verification. It lets you resolve genuinely new questions with the
-        operator before the browser opens — but the LIVE form stays the source of truth: once the page
-        is open you MUST browser_form_read → careercoach_plan_fill → fill → browser_form_read again →
-        careercoach_verify_fill, and that read-back diff must be empty before any submit. The returned
-        session_id is for this schema plan.
-
-        For an Ashby job URL (`jobs.ashbyhq.com/<org>/<job-uuid>`): Ashby publishes NO public per-job
-        application-form schema (its posting API returns only job-listing metadata), so there's nothing
-        to prepare from and the page is NOT scraped — this returns the live-form path to use, with
-        `ats="ashby"` on careercoach_plan_fill, a required résumé upload FIRST, and read-back of every
-        field after it (Ashby's autofill can rewrite values). It makes no network call.
-
-        For a non-Greenhouse or unrecognised URL — and a company careers page using `?gh_jid=<id>`,
-        where the board token isn't in the URL so the schema can't be fetched — it returns a readable
-        message telling you to use the live-form path (browser_form_read → careercoach_plan_fill)."""
+        """Before opening a posting `url`, prepare answers from the ATS's public question schema. Greenhouse
+        (job-boards./boards.greenhouse.io/<board>/jobs/<id>): a plan from CONFIRMED answers only plus an "Ask the
+        operator about ONLY these" list. Ashby, Workable, gh_jid careers pages and other URLs: no schema; it returns
+        the live-form path. Preparation only — the live read-back (browser_form_read → careercoach_plan_fill → fill →
+        careercoach_verify_fill) is still required before any submit."""
         from . import answers, ats, formfill
 
         live_path = (
@@ -1268,23 +1153,10 @@ def _register_submit_gate(registry) -> None:
 
     @tool
     def careercoach_request_submit(session_id: str) -> str:
-        """Ask the OPERATOR to authorize submitting a filled application, then (only on their
-        explicit approval) unlock exactly one submit click for 120 seconds.
-
-        This is a HARD gate, not a suggestion: the submit-gate middleware BLOCKS every submit-like
-        browser call (a submit/finish click, an Enter press, a ``.submit()`` eval) unless this tool
-        has recorded an operator grant, and the grant is one-shot and time-limited. A job board's
-        "Apply" / "Apply now" button only OPENS the form and is not gated. It is defense in depth
-        over the browser tools — it does not sandbox the browser, and the operator can always submit
-        by hand in the visible browser.
-
-        `session_id` is the id from careercoach_plan_fill. This REFUSES, without asking the operator,
-        unless that session is VERIFIED (careercoach_verify_fill found no mismatches on the latest
-        read-back) and its plan is unchanged since. On a headless or autonomous turn (no operator to
-        answer) it also refuses and does not pause. On approval it authorizes one click; on decline
-        it tells you not to submit. The flow: browser_form_read → careercoach_plan_fill → fill →
-        careercoach_verify_fill until VERIFIED → careercoach_request_submit → click submit →
-        browser_form_read/snapshot to confirm the confirmation page."""
+        """Ask the operator to approve submitting a filled application; only on explicit approval, unlock exactly one
+        submit click for 120s. A hard gate: submit-like browser calls are blocked without it (an "Apply" button that
+        only opens the form isn't). Refuses without asking unless the careercoach_plan_fill `session_id` is VERIFIED
+        and unchanged since; refuses on headless/autonomous turns."""
         try:
             sid = (session_id or "").strip()
             session = formfill.load_session(sid)
@@ -1496,24 +1368,10 @@ def _register_handoff(registry) -> None:
 
     @tool
     def careercoach_handoff(session_id: str, reason: str) -> str:
-        """Hand the OPERATOR a visible browser to complete the one step only a human can do — a
-        captcha, a login/sign-in, or a legal attestation — while the agent has filled everything
-        else. `reason` is one of: captcha, login, attestation, other.
-
-        This NEVER solves, answers or bypasses a captcha, and it clicks nothing: it pauses the turn
-        and asks the operator to open the live page in a VISIBLE browser (the console's Browser
-        panel, or the real window if the browser plugin's `headed` setting is on), complete ONLY the
-        named step, and NOT submit the form unless they mean to. The card offers Done / Cancel.
-
-        On Done it returns the mandatory next step: re-read the form with browser_form_read and run
-        careercoach_verify_fill(session_id, <that JSON>) — a captcha or login can re-render the form
-        and clear filled fields, so this read-back is required and must report VERIFIED before any
-        careercoach_request_submit. On Cancel it tells you to stop. On a headless or autonomous turn
-        with no operator to answer, it REFUSES WITHOUT pausing and tells you to stop and report: a
-        human has to finish this step in an interactive session.
-
-        `session_id` is the id from careercoach_plan_fill, carried into the read-back instruction.
-        Use this only for a genuine human-required step — never to get past a bot check."""
+        """Hand the operator a visible browser for a step only a human can do; `reason`: captcha, login, attestation,
+        other. It NEVER solves or bypasses a captcha and clicks nothing — never use it to get past a bot check. Pauses
+        with Done/Cancel; refuses on headless turns. After Done, re-read with browser_form_read and
+        careercoach_verify_fill(session_id) until VERIFIED before careercoach_request_submit."""
         try:
             sid = (session_id or "").strip()
             key = (reason or "").strip().lower()
