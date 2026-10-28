@@ -14,6 +14,7 @@ helpers (``profile.py``). Host-free; network only through ``boards``.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -147,41 +148,131 @@ def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = S
 
 
 INBOX = "watch-inbox.json"
-INBOX_CAP = 200  # oldest drop off; the digest shows the newest
+DISMISSED = "inbox-dismissed.json"
+INBOX_CAP = 200  # trim to this: handled (digested/kept) rows evict first, oldest within each group
+
+
+def match_reason(job: dict, roles: str) -> str:
+    """Explain title overlap, location and posting date without I/O or a clock."""
+    title = set(re.findall(r"[a-z0-9]+", (job.get("title") or "").lower()))
+    best = None
+    for role in re.split(r"[,;\n]", roles or ""):
+        words = re.findall(r"[a-z0-9]+", role.lower())
+        if words:
+            hits = sum(w in title for w in words)
+            if best is None or hits / len(words) > best[0]:
+                best = (hits / len(words), role.strip(), hits, len(words))
+    bits = [f'title matches "{best[1]}" ({best[2]}/{best[3]} words)'] if best and best[2] else []
+    if job.get("remote") or "remote" in (job.get("location") or "").lower():
+        bits.append("remote")
+    if job.get("posted"):
+        bits.append(f"posted {job['posted'][:10]}")
+    return " ".join(" · ".join(bits or ["No target title words matched"]).split())
+
+
+def _dismissed(job: dict, dismissed: dict) -> bool:
+    return job.get("id") in dismissed or bool(
+        job.get("hash") and job["hash"] in {h for hashes in dismissed.values() for h in hashes}
+    )
+
+
+def _newest(jobs) -> list[dict]:
+    return sorted(jobs, key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
 
 
 def add_to_inbox(jobs: list[dict]) -> int:
-    """Queue the background watch's new matches for the next digest. Returns the inbox size."""
-    keep = ("id", "company", "title", "location", "url", "posted", "comp", "source", "first_seen", "ghost")
+    """Queue matches once, retaining their evidence and prior operator decisions."""
+    keep = (
+        "id",
+        "company",
+        "title",
+        "location",
+        "url",
+        "posted",
+        "comp",
+        "source",
+        "first_seen",
+        "ghost",
+        "reason",
+        "snippet",
+        "hash",
+    )
     with _store._locked("inbox"):
         box = _load(INBOX, [])
+        dismissed = _load(DISMISSED, {})
         have = {j.get("id") for j in box}
-        box += [{k: j.get(k) for k in keep} for j in jobs if j.get("id") not in have]
-        box = box[-INBOX_CAP:]
+        for j in jobs:
+            if j.get("id") not in have and not _dismissed(j, dismissed):
+                box.append({**{k: j.get(k) for k in keep}, "score": int(j.get("score") or 0)})
+                have.add(j.get("id"))
+        # Evict handled rows first, oldest within each group; preserve insertion order.
+        excess = max(0, len(box) - INBOX_CAP)
+        priority = sorted(range(len(box)), key=lambda i: not (box[i].get("digested") or box[i].get("kept")))
+        evict = set(priority[:excess])
+        box = [j for i, j in enumerate(box) if i not in evict]
         _save(INBOX, box)
         return len(box)
 
 
+def inbox_for_view() -> list[dict]:
+    """Actionable items, including those already digested, newest posting first."""
+    with _store._locked("inbox"):
+        dismissed = _load(DISMISSED, {})
+        return _newest(j for j in _load(INBOX, []) if not j.get("kept") and not _dismissed(j, dismissed))
+
+
 def peek_inbox() -> list[dict]:
-    """What the watch has queued, newest posting first — without removing anything."""
-    return sorted(_load(INBOX, []), key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
+    """Pending digest items, newest first, without consuming them."""
+    return [j for j in inbox_for_view() if not j.get("digested")]
 
 
 def drop_from_inbox(ids) -> None:
-    """Remove the items the operator has now been shown (only those — the rest wait)."""
+    """Mark just the items shown by a successful digest, retaining them for the view."""
     ids = set(ids)
     if not ids:
         return
     with _store._locked("inbox"):
         box = _load(INBOX, [])
-        _save(INBOX, [j for j in box if j.get("id") not in ids])
+        for j in box:
+            if j.get("id") in ids and not j.get("digested"):
+                j["digested"] = _now()
+        _save(INBOX, box)
 
 
 def take_inbox() -> list[dict]:
-    """Everything queued, newest first — and empty it."""
-    box = peek_inbox()
-    drop_from_inbox(j.get("id") for j in box)
-    return box
+    """Consume all pending digest items, retaining their rows."""
+    with _store._locked("inbox"):
+        rows = _load(INBOX, [])
+        dismissed = _load(DISMISSED, {})
+        box = _newest(j for j in rows if not j.get("digested") and not j.get("kept") and not _dismissed(j, dismissed))
+        result = [dict(j) for j in box]
+        for j in box:
+            j["digested"] = _now()
+        _save(INBOX, rows)
+        return result
+
+
+def dismiss(ids) -> None:
+    """Remember ids and known content fingerprints, even after inbox eviction."""
+    ids = set(ids)
+    with _store._locked("inbox"):
+        dismissed = _load(DISMISSED, {})
+        for jid in ids:
+            dismissed.setdefault(jid, [])
+        for j in _load(INBOX, []):
+            if j.get("id") in ids and j.get("hash") and j["hash"] not in dismissed[j["id"]]:
+                dismissed[j["id"]].append(j["hash"])
+        _save(DISMISSED, dismissed)
+
+
+def mark_kept(id: str) -> None:
+    """Hide an item the operator chose to keep from the actionable inbox."""
+    with _store._locked("inbox"):
+        box = _load(INBOX, [])
+        for j in box:
+            if j.get("id") == id:
+                j["kept"] = j.get("kept") or _now()
+        _save(INBOX, box)
 
 
 def ghost_flags(job: dict, now: datetime | None = None) -> list[str]:

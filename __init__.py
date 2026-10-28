@@ -1834,7 +1834,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         for j in batch:
             score = jobsource.best_prescore(j, roles)
             if score >= min_score:
-                matches.append({**j, "score": score})
+                matches.append({**j, "score": score, "reason": wl.match_reason(j, roles)})
         wl.add_to_inbox(matches)
         wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
     except state.StoreUnreadable as e:
@@ -1878,7 +1878,7 @@ def _register_watch_verifier(registry) -> None:
             if int(r.get("fit_score", 0)) >= int(min_score) and r.get("status") == "considering"
         ]
         try:
-            queued = len(wl._load(wl.INBOX, []))
+            queued = len(wl.peek_inbox())  # only PENDING matches — digested/kept/dismissed don't trip it
         except wl.StoreUnreadable:
             queued = 0
         n = len(hi) + queued
