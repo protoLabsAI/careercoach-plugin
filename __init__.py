@@ -90,7 +90,7 @@ def _register_tracker_tools(registry) -> None:
         source: str = "",
     ) -> str:
         """Record or update a job in the pipeline: company, role, 0-100 fit score, status
-        (considering/applied/interviewing/offer/rejected/passed), notes, and `source` (posting URL)."""
+        (considering/preparing/applied/interviewing/offer/rejected/passed), notes, and `source` (posting URL)."""
         try:
             row = state.track_application(
                 company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
@@ -1739,11 +1739,15 @@ def _register_views(registry, cfg) -> None:
         apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
         return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
 
-    @data.post("/inbox/{item_id}/keep")
+    @data.post("/inbox/{item_id:path}/keep")
     async def _keep(item_id: str):
         """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its score,
-        reason and posting evidence) and hide it from the inbox."""
-        item = next((j for j in wl.inbox_for_view() if j.get("id") == item_id), None)
+        reason and posting evidence) and hide it from the inbox. Existing applications are
+        preserved unchanged."""
+        try:
+            item = next((j for j in wl.inbox_for_view() if j.get("id") == item_id), None)
+        except wl.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
         if item is None:
             return JSONResponse({"error": f"no inbox item {item_id!r}"}, status_code=404)
         company = item.get("company") or ""
@@ -1759,14 +1763,15 @@ def _register_views(registry, cfg) -> None:
                 notes=item.get("reason") or "",
                 source=url,
                 posting=posting,
+                insert_only=True,
             )
-        except state.StoreUnreadable as e:
+            wl.mark_kept(item_id)
+        except (state.StoreUnreadable, wl.StoreUnreadable) as e:
             return JSONResponse({"error": str(e)}, status_code=409)
-        wl.mark_kept(item_id)
-        _emit_tracked(company, role, "considering")
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
 
-    @data.post("/inbox/{item_id}/dismiss")
+    @data.post("/inbox/{item_id:path}/dismiss")
     async def _dismiss(item_id: str):
         """Drop a watch-inbox item and remember the decision so it doesn't come back."""
         try:

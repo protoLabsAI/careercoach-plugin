@@ -115,12 +115,15 @@ def track_application(
     notes: str = "",
     source: str = "",
     posting: dict | None = None,
+    insert_only: bool = False,
 ) -> dict:
     """Insert or update one application. The same posting URL, or the same company + role after
     normalizing ("Arize AI" = "Arize", case and punctuation ignored), is the same application.
     Returns the stored row. An update preserves prior notes/source when new ones are blank, and
     appends a ``{status, date}`` history entry whenever the status actually changes. An optional
     ``posting`` ({title, location, snippet, url, posted}) is stored verbatim on the row.
+    ``insert_only`` returns an existing match unchanged, for inbox promotions that must not
+    overwrite operator updates. Matching and insertion share the applications lock.
     Raises ``StoreUnreadable`` rather than save one row over a pipeline it couldn't read."""
     today = _today()
     with _store._locked("applications"):
@@ -129,6 +132,8 @@ def track_application(
             raise StoreUnreadable(_path(), err)
         r = _find(rows, company, role, source)
         if r is not None:
+            if insert_only:
+                return r
             if status != r.get("status"):
                 r.setdefault("history", []).append({"status": status, "date": today})
             r.update(

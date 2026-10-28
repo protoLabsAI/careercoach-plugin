@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from urllib.parse import quote
 
 import pytest
 
@@ -166,6 +167,76 @@ def test_keep_unknown_item_is_4xx(client):
     tc, _reg = client
     r = tc.post("/api/plugins/careercoach/inbox/nope/keep")
     assert 400 <= r.status_code < 500 and "error" in r.json()
+
+
+@pytest.mark.parametrize("status", ["considering", "preparing", "applied", "interviewing", "offer"])
+@pytest.mark.parametrize("match", ["url", "company_role"])
+def test_keep_preserves_existing_application(plugin, client, monkeypatch, status, match):
+    tc, reg = client
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    st = importlib.import_module(plugin.__name__ + ".state")
+    _inbox_job(wl, "123456")
+    monkeypatch.setattr(st, "_today", lambda: "2026-10-01")
+    existing = st.track_application(
+        company="Acme",
+        role="Retyped title" if match == "url" else "AI Engineer",
+        source="https://acme.example/jobs/123456" if match == "url" else "",
+        status=status,
+        fit_score=81,
+        notes="Operator notes",
+        posting={"snippet": "Original evidence"},
+    )
+    before = st._path().read_bytes()
+    monkeypatch.setattr(st, "_today", lambda: "2026-10-28")
+    response = tc.post("/api/plugins/careercoach/inbox/123456/keep")
+    assert response.status_code == 200
+    assert response.json()["application"] == existing
+    assert st._path().read_bytes() == before
+    assert wl.inbox_for_view() == []
+    assert reg.emitted[-1][1]["status"] == status
+
+
+@pytest.mark.parametrize("action", ["keep", "dismiss"])
+@pytest.mark.parametrize("encoded", [False, True])
+def test_inbox_routes_accept_market_search_ids(plugin, client, action, encoded):
+    tc, _reg = client
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    item_id = "market:https://jobs.example/companies/acme/jobs/123456"
+    _inbox_job(wl, item_id)
+    path_id = quote(item_id, safe="") if encoded else item_id
+    response = tc.post(f"/api/plugins/careercoach/inbox/{path_id}/{action}")
+    assert response.status_code == 200
+    assert wl.inbox_for_view() == []
+    _inbox_job(wl, item_id)
+    assert wl.inbox_for_view() == []
+
+
+@pytest.mark.parametrize("operation", ["inbox_for_view", "mark_kept"])
+def test_keep_unreadable_inbox_returns_conflict(plugin, client, monkeypatch, operation):
+    tc, _reg = client
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    _inbox_job(wl)
+
+    def unreadable(*args):
+        raise wl.StoreUnreadable(wl._path("inbox"), "invalid JSON")
+
+    monkeypatch.setattr(wl, operation, unreadable)
+    response = tc.post("/api/plugins/careercoach/inbox/j1/keep")
+    assert response.status_code == 409
+    assert "error" in response.json()
+
+
+def test_track_application_history_only_records_status_changes(st, monkeypatch):
+    monkeypatch.setattr(st, "_today", lambda: "2026-10-01")
+    st.track_application(company="Acme", role="Engineer")
+    monkeypatch.setattr(st, "_today", lambda: "2026-10-02")
+    changed = st.track_application(company="Acme", role="Engineer", status="preparing")
+    assert changed["history"] == [
+        {"status": "considering", "date": "2026-10-01"},
+        {"status": "preparing", "date": "2026-10-02"},
+    ]
+    unchanged = st.track_application(company="Acme", role="Engineer", status="preparing", notes="Updated")
+    assert unchanged["history"] == changed["history"]
 
 
 def test_dismiss_removes_and_sticks(plugin, client):
