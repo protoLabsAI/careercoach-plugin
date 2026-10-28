@@ -84,11 +84,9 @@ def register_hunt_tools(registry, cfg) -> None:
     @_guarded
     async def careercoach_watchlist(action: str = "list", company: str = "", slug: str = "", ats: str = "",
                                     notes: str = "") -> str:  # fmt: skip
-        """Manage the companies whose job boards you scan for fresh roles.
-        action="list" shows them. action="add" adds one company or a comma-separated list: each is looked up on
-        Ashby, Greenhouse and Lever automatically (pass `ats` + `slug` to pin a board you already know, e.g. the
-        `anthropic` in boards.greenhouse.io/anthropic). action="remove" drops a company. Companies on Workday or
-        their own careers site can't be scanned — research those with web search instead."""
+        """Manage the companies whose job boards are scanned. action: "list"; "add" (one or a comma-separated list,
+        auto-found on Ashby/Greenhouse/Lever, or pin one with `ats` + `slug`); "remove". Workday and custom careers
+        sites can't be scanned — use web search."""
         action = (action or "list").strip().lower()
         if action == "list":
             rows = wl.load_watchlist()
@@ -156,13 +154,10 @@ def register_hunt_tools(registry, cfg) -> None:
     @_guarded
     async def careercoach_scan_boards(companies: str = "", roles: str = "", locations: str = "",
                                       max_age_days: int = -1, only_new: bool = False, limit: int = 40) -> str:  # fmt: skip
-        """Scan the watched companies' job boards for open roles that fit — the freshest source there is (the
-        employer's own board, with the date each role first went up). Filters default to Settings → Career Coach
-        (target roles, title exclusions, locations, max age); override with `roles` (comma-separated titles),
-        `locations` ("remote" = remote and open to the US, or place names) or `max_age_days` (0 = any age).
-        `companies` limits the scan to some watched companies. `only_new` shows just roles no earlier scan
-        returned. Each result says how fresh it is, whether you already tracked or applied there, and any
-        ghost-job warning. Track the ones worth pursuing with careercoach_track_application."""
+        """Scan the watched companies' own job boards (the freshest source) for fitting roles. Filters default to
+        Settings; override with `roles` (comma-separated titles), `locations` ("remote" = remote and US-open, or
+        places), `max_age_days` (0 = any age). `companies` limits to some watched ones; `only_new` shows only roles no
+        earlier scan returned. Results flag freshness, already tracked/applied, and ghost-job warnings."""
         f = filters(cfg)
         roles = roles or f["roles"]
         if not roles.strip():
@@ -197,12 +192,9 @@ def register_hunt_tools(registry, cfg) -> None:
     @tool
     @_guarded
     def careercoach_import_history(entries: str) -> str:
-        """Bring past applications the tracker never saw (from a notes file, a spreadsheet, an email search)
-        into the pipeline, so sweeps stop re-suggesting roles already applied to. `entries` is a JSON list of
-        objects: {"company", "role", "status" (default "applied"), "date" (YYYY-MM-DD, optional), "notes",
-        "source" (posting URL, optional)}. Extract them from the source yourself first — one object per role,
-        company and role as separate fields, skipping lines that aren't applications (interviews, to-dos).
-        A role already tracked keeps its status; only its blank fields are filled."""
+        """Import past applications the tracker never saw, so sweeps stop re-suggesting them. `entries`: JSON list, one
+        object per role: {company, role, status (default "applied"), date (YYYY-MM-DD), notes, source}; extract them
+        yourself and skip non-applications. A tracked role keeps its status; only blank fields fill."""
         try:
             data = json.loads(entries)
         except json.JSONDecodeError as e:
@@ -232,10 +224,9 @@ def register_hunt_tools(registry, cfg) -> None:
     @tool
     @_guarded
     def careercoach_import_connections(path: str) -> str:
-        """Import the operator's LinkedIn connections so the coach can find referrals. The operator downloads them
-        from LinkedIn (Settings → Data privacy → Get a copy of your data → Connections; it arrives by email as a
-        .zip) — never scrape LinkedIn. `path` is the Connections.csv or the export .zip (absolute, ~/…, or relative
-        to the role-packet workspace). Re-importing a newer export updates people who changed jobs."""
+        """Import the operator's LinkedIn connections for referrals from their own export (Settings → Data privacy → Get
+        a copy of your data → Connections) — never scrape LinkedIn. `path`: Connections.csv or the export .zip
+        (absolute, ~/…, or workspace-relative)."""
         p = _resolve(path)
         if not p.exists():
             return f"No file at {p}. Download the export from LinkedIn first, then pass its path."
@@ -267,9 +258,8 @@ def register_hunt_tools(registry, cfg) -> None:
     @tool
     @_guarded
     def careercoach_find_referrals(company: str = "") -> str:
-        """Who the operator knows at a company — the referral path, which converts far better than a cold
-        application. With no `company`, checks every watched company and every role in the pipeline that's still
-        being considered. Draft the ask yourself: short, specific about the role, leading with proof of work."""
+        """Who the operator knows at `company` (default: every watched company and considering role) — a referral beats a
+        cold application."""
         try:
             people = contacts.load_contacts()
         except contacts.StoreUnreadable as e:
@@ -303,9 +293,8 @@ def register_hunt_tools(registry, cfg) -> None:
     @_guarded
     def careercoach_log_contact(name: str, company: str = "", note: str = "", next_action: str = "", due: str = "",
                                 title: str = "", url: str = "") -> str:  # fmt: skip
-        """Log a networking touch (message sent, intro asked, call held) and the next step, so follow-ups don't
-        slip. `due` is a YYYY-MM-DD date for `next_action`; due follow-ups appear in the daily digest. Creates
-        the contact if they're new."""
+        """Log a networking touch and the next step; `due` (YYYY-MM-DD) puts the follow-up in the digest. Creates the
+        contact if new."""
         try:
             c = contacts.log_touch(name, company, note=note, next_action=next_action, due=due, title=title, url=url)
         except ValueError:
@@ -318,9 +307,8 @@ def register_hunt_tools(registry, cfg) -> None:
     @tool
     @_guarded
     async def careercoach_digest(days: int = 3) -> str:
-        """The daily job-hunt digest: roles first posted in the last `days` days on watched boards that fit and
-        aren't tracked yet (freshest first — early applications get read), follow-ups due with contacts,
-        applications gone quiet for two weeks, and the pipeline at a glance. Run it each morning (schedule it)."""
+        """Daily digest: untracked fitting roles posted in the last `days` on watched boards, contact follow-ups due,
+        applications quiet for two weeks, and the pipeline at a glance."""
         from datetime import UTC, datetime
 
         sections = []

@@ -62,6 +62,16 @@ behalf. An improvised answer is exactly the failure this loop exists to prevent.
 the opened `file://` page with `browser_pdf` is the only way a file lands there. Keep the path
 `browser_pdf` returns — you upload it in step 6 (or step 5 on Ashby).
 
+`careercoach_render_resume` prints ONLY the operator-approved `resume` profile section plus their
+`name`. It never reads the coaching record (`location`, `contact`, `headlines`, `roles`, `skills`,
+`education`, `do_not_claim`, `stories`, `notes`) — those carry internal coaching annotations that
+must never reach an employer (a 2026-10-05 PDF leaked exactly that). The `resume` body is: optional
+`Headline:` / `Location:` / `Contact:` header lines and a summary before the first `## ` heading,
+then `## ` sections (`### ` role headings and `-` bullets inside). It refuses, writing nothing, when
+the body is empty, has no `Contact:` line, or carries a coach annotation (it quotes the lines) —
+fix the body WITH the operator and save it with `careercoach_update_profile(field="resume", …,
+mode="replace")` only after they approve; it is never silently stripped.
+
 ### 3. Prepare, then read the live form
 - For a Greenhouse URL, call `careercoach_prepare_application(url, company, role)` first — it returns
   a plan from the public schema plus an "Ask the operator about ONLY these" list.
