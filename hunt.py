@@ -182,13 +182,14 @@ def register_hunt_tools(registry, cfg) -> None:
         )  # fmt: skip
         from . import jobsource
 
+        jobs = res.new if only_new else res.matches
+        shown = jobs[: max(1, min(limit, 100))]
         # Feed the inbox so the standalone view (S1c) reflects what manual scans surfaced too — but
         # don't let the daily digest re-raise a role the operator just saw here. Queue only the
         # genuinely new roles (res.new, logged in seen.json, so an evicted row is never re-queued on
-        # the next scan), and mark everything this scan showed (res.matches) as already surfaced so
+        # the next scan), and mark only the displayed slice as already surfaced so
         # peek_inbox / the digest skip them. Best-effort: a corrupt inbox must not lose scan results.
         try:
-            untracked = [j for j in res.matches if not j.get("tracked")]
             wl.add_to_inbox(
                 [
                     {**j, "score": jobsource.best_prescore(j, roles), "reason": wl.match_reason(j, roles)}
@@ -196,10 +197,9 @@ def register_hunt_tools(registry, cfg) -> None:
                     if not j.get("tracked")
                 ]
             )
-            wl.drop_from_inbox([j["id"] for j in untracked])
+            wl.drop_from_inbox([j["id"] for j in shown if not j.get("tracked")])
         except wl.StoreUnreadable as e:
             log.warning("[careercoach] scan results did not reach the inbox: %s", e)
-        jobs = res.new if only_new else res.matches
         head = (
             f"Scanned {res.scanned} board(s), {res.total} open roles → {len(res.matches)} match "
             f"(roles: {roles}; locations: {locations or f['locations'] or 'any'}; "
@@ -209,7 +209,7 @@ def register_hunt_tools(registry, cfg) -> None:
             head += "\nCouldn't read: " + "; ".join(res.errors[:5])
         if not jobs:
             return head + "\nNo matching roles" + (" that are new." if only_new else ".")
-        lines = [scan.format_job(j, i) for i, j in enumerate(jobs[: max(1, min(limit, 100))], 1)]
+        lines = [scan.format_job(j, i) for i, j in enumerate(shown, 1)]
         more = f"\n…and {len(jobs) - len(lines)} more (raise `limit`)." if len(jobs) > len(lines) else ""
         return head + "\n\n" + "\n".join(lines) + more
 

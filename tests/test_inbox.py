@@ -217,3 +217,38 @@ def test_scanned_roles_do_not_repeat_in_the_digest(hunt_tools, mods, monkeypatch
 
     out = asyncio.run(hunt_tools["careercoach_digest"].ainvoke({}))
     assert "background watch" not in out  # the digest never re-raises a role the operator just saw
+
+
+@pytest.mark.parametrize("limit,shown_count", [(None, 40), (0, 1), (2, 2), (101, 100)])
+@pytest.mark.parametrize("only_new", [False, True])
+@pytest.mark.parametrize("has_new", [False, True])
+def test_scan_marks_only_displayed_matches(hunt_tools, mods, monkeypatch, limit, shown_count, only_new, has_new):
+    from types import SimpleNamespace
+
+    wl = mods.watchlist
+    wl.add_company("Example", "ashby", "example")
+    old = [job(f"old-{i}") for i in range(3)]
+    new = [job(f"new-{i}") for i in range(102)] if has_new else []
+    matches = old + new
+    outside = job("outside-scan")
+    wl.add_to_inbox([*old, outside])  # pending background items from before this scan
+
+    async def scan(*args, **kwargs):
+        return SimpleNamespace(matches=matches, new=new, scanned=1, total=len(matches), errors=[])
+
+    monkeypatch.setattr(mods.scan, "scan_watchlist", scan)
+    args = {"roles": "AI Engineer", "only_new": only_new}
+    if limit is not None:
+        args["limit"] = limit
+    out = asyncio.run(hunt_tools["careercoach_scan_boards"].ainvoke(args))
+
+    displayed = (new if only_new else matches)[:shown_count]
+    shown_ids = {j["id"] for j in displayed}
+    all_ids = {j["id"] for j in [*matches, outside]}
+    for j in [*matches, outside]:
+        assert (j["url"] + "\n" in out + "\n") == (j["id"] in shown_ids)
+    saved = wl.inbox_for_view()
+    assert {j["id"] for j in saved if j.get("digested")} == shown_ids
+    assert {j["id"] for j in wl.peek_inbox()} == all_ids - shown_ids
+    assert {j["id"] for j in wl.take_inbox()} == all_ids - shown_ids
+    assert wl.take_inbox() == []
