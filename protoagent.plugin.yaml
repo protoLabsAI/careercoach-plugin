@@ -55,6 +55,7 @@ config:
   watch_enabled: false      # background job-watch: periodically surface new matching roles
   watch_interval_min: 180   # how often the watch scans (minutes; floored at 5)
   watch_min_score: 75       # only surface roles whose quick prescore is >= this
+  followup_days: 10         # an applied role with no movement for this many days is flagged to follow up
 secrets: [jobs_api_key]
 settings:
   - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
@@ -71,6 +72,7 @@ settings:
   - { key: watch_enabled, label: "Background job-watch", type: bool, group: "Career Coach", description: "When on, every Watch interval it scans your watched companies' job boards and the job source for your target roles, and queues postings it hasn't seen before for the daily digest (and lights the rail icon). It never adds roles to your pipeline by itself. Off by default." }
   - { key: watch_interval_min, label: "Watch interval (min)", type: number, group: "Career Coach", description: "How often the background watch scans, in minutes (minimum 5)." }
   - { key: watch_min_score, label: "Watch match threshold", type: number, group: "Career Coach", description: "Only surface postings whose quick keyword prescore is at least this (0-100). The coach still runs the full fit rubric on demand." }
+  - { key: followup_days, label: "Follow-up after (days)", type: number, group: "Career Coach", description: "An applied role with no status change for this many days is flagged on the pipeline board as due a follow-up." }
 
 # Console rail view (ADR 0026) — a "Career Coach" icon opens the dashboard: your
 # pipeline, fit scores, the rubric, and your prep/upskilling at a glance.
