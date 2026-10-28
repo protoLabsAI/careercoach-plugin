@@ -149,7 +149,7 @@ def record_sightings(jobs: list[dict], now: str | None = None, log_name: str = S
 
 INBOX = "watch-inbox.json"
 DISMISSED = "inbox-dismissed.json"
-INBOX_CAP = 200  # oldest drop off; the digest shows the newest
+INBOX_CAP = 200  # trim to this: handled (digested/kept) rows evict first, oldest within each group
 
 
 def match_reason(job: dict, roles: str) -> str:

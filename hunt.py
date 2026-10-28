@@ -182,13 +182,23 @@ def register_hunt_tools(registry, cfg) -> None:
         )  # fmt: skip
         from . import jobsource
 
-        wl.add_to_inbox(
-            [
-                {**j, "score": jobsource.best_prescore(j, roles), "reason": wl.match_reason(j, roles)}
-                for j in res.matches
-                if not j.get("tracked")
-            ]
-        )
+        # Feed the inbox so the standalone view (S1c) reflects what manual scans surfaced too — but
+        # don't let the daily digest re-raise a role the operator just saw here. Queue only the
+        # genuinely new roles (res.new, logged in seen.json, so an evicted row is never re-queued on
+        # the next scan), and mark everything this scan showed (res.matches) as already surfaced so
+        # peek_inbox / the digest skip them. Best-effort: a corrupt inbox must not lose scan results.
+        try:
+            untracked = [j for j in res.matches if not j.get("tracked")]
+            wl.add_to_inbox(
+                [
+                    {**j, "score": jobsource.best_prescore(j, roles), "reason": wl.match_reason(j, roles)}
+                    for j in res.new
+                    if not j.get("tracked")
+                ]
+            )
+            wl.drop_from_inbox([j["id"] for j in untracked])
+        except wl.StoreUnreadable as e:
+            log.warning("[careercoach] scan results did not reach the inbox: %s", e)
         jobs = res.new if only_new else res.matches
         head = (
             f"Scanned {res.scanned} board(s), {res.total} open roles → {len(res.matches)} match "

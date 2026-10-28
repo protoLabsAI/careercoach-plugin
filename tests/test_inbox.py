@@ -144,6 +144,7 @@ def test_scan_feeds_untracked_matches_without_changing_text(hunt_tools, mods, mo
     assert saved[0]["score"] == 100
     assert saved[0]["reason"] == wl.match_reason(jobs[0], "AI Engineer")
     assert saved[0]["snippet"] == jobs[0]["snippet"] and saved[0]["hash"] == jobs[0]["hash"]
+    assert wl.peek_inbox() == []  # surfaced by the scan — the digest must not raise it again
 
 
 def test_digest_prechange_golden_and_no_repeat(hunt_tools, mods, monkeypatch):
@@ -167,3 +168,52 @@ def test_digest_prechange_golden_and_no_repeat(hunt_tools, mods, monkeypatch):
     again = asyncio.run(hunt_tools["careercoach_digest"].ainvoke({}))
     assert "Example" not in again and "background watch" not in again
     assert mods.watchlist.inbox_for_view()[0]["digested"]
+
+
+def test_verifier_counts_only_pending_inbox(plugin, iso, monkeypatch):
+    import importlib
+    import sys
+
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+
+    class VR:  # the host's VerifyResult takes (ok, reason, value) positionally
+        def __init__(self, ok, reason, value):
+            self.ok, self.reason, self.value = ok, reason, value
+
+    monkeypatch.setattr(sys.modules["graph.goals.types"], "VerifyResult", VR)
+    reg = FakeRegistry()
+    plugin._register_watch_verifier(reg)
+    verify = reg.verifiers["careercoach:new_matches"]
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+
+    assert verify(min_score=75).value == "0"  # empty tracker + inbox → nothing to action
+    wl.add_to_inbox([job()])
+    assert verify(min_score=75).value == "1"  # one pending match trips it
+    wl.drop_from_inbox(["one"])  # the digest showed it → no longer pending
+    assert verify(min_score=75).value == "0"  # digested rows must not keep the verifier tripping
+
+
+def test_scanned_roles_do_not_repeat_in_the_digest(hunt_tools, mods, monkeypatch):
+    from types import SimpleNamespace
+
+    wl = mods.watchlist
+    wl.add_company("Example", "ashby", "example")
+    aged = job("aged", posted="2026-10-10T00:00:00+00:00")  # older than the digest's window
+
+    calls = []
+
+    async def scan(*args, **kwargs):
+        calls.append(kwargs.get("max_age_days"))
+        hits = [aged] if len(calls) == 1 else []  # the 30d manual scan sees it; the 3d digest doesn't
+        return SimpleNamespace(matches=hits, new=hits, scanned=1, total=len(hits), errors=[])
+
+    monkeypatch.setattr(mods.scan, "scan_watchlist", scan)
+
+    asyncio.run(hunt_tools["careercoach_scan_boards"].ainvoke({"roles": "AI Engineer"}))
+    assert [j["id"] for j in wl.inbox_for_view()] == ["aged"]  # kept for the standalone view
+    assert wl.peek_inbox() == []  # but already surfaced by the scan
+
+    out = asyncio.run(hunt_tools["careercoach_digest"].ainvoke({}))
+    assert "background watch" not in out  # the digest never re-raises a role the operator just saw

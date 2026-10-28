@@ -2020,7 +2020,7 @@ def _register_watch_verifier(registry) -> None:
             if int(r.get("fit_score", 0)) >= int(min_score) and r.get("status") == "considering"
         ]
         try:
-            queued = len(wl._load(wl.INBOX, []))
+            queued = len(wl.peek_inbox())  # only PENDING matches — digested/kept/dismissed don't trip it
         except wl.StoreUnreadable:
             queued = 0
         n = len(hi) + queued
