@@ -12,6 +12,7 @@ background job-watch — and a load-edit-save without a lock loses one of them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -20,9 +21,23 @@ from pathlib import Path
 from . import profile as _store
 from .companies import company_key, role_key
 
-# Application lifecycle — the status values the coach + dashboard understand.
-STATUSES = ("considering", "applied", "interviewing", "offer", "rejected", "passed")
+# Application lifecycle — the status values the coach + dashboard understand. `preparing` sits
+# between considering and applied (the role is being readied — packet/resume in flight). Statuses
+# are ADDITIVE: the digest and the goal verifier read `considering`/`applied` by name, so an added
+# value never changes their meaning.
+STATUSES = ("considering", "preparing", "applied", "interviewing", "offer", "rejected", "passed")
 ACTIVE = ("applied", "interviewing", "offer")
+
+#: The dashboard's pipeline board — a column label mapped to the status(es) that fall under it.
+#: A mapping (not a rename) so existing rows keep their status and the digest/verifier keep theirs.
+COLUMNS = {
+    "Saved": ["considering"],
+    "Preparing": ["preparing"],
+    "Applied": ["applied"],
+    "Interviewing": ["interviewing"],
+    "Offer": ["offer"],
+    "Closed": ["rejected", "passed"],
+}
 #: Applying to more open roles than this at one company reads as spray-and-pray to its recruiters
 #: (they see every application in one ATS) and trips Ashby / Greenhouse application-limit rules.
 COMPANY_CAP = 3
@@ -42,6 +57,28 @@ def _today() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
+def _row_id(row: dict) -> str:
+    """A stable, deterministic id for a row that predates ids: a short sha1 of its
+    company/role/date, so the SAME row backfills to the SAME id on every load with nothing
+    written. Derived from the normalized keys so cosmetic company/role re-typing keeps the id."""
+    basis = "\x00".join(
+        (company_key(row.get("company", "")), role_key(row.get("role", "")), str(row.get("date") or ""))
+    )
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
+
+
+def _backfill(rows: list[dict]) -> list[dict]:
+    """Give legacy rows the fields newer rows carry, in place, deterministically (so a read alone
+    never needs a write): a stable ``id``, and a one-entry ``history`` derived from the row's
+    status + its ``updated`` (else ``date``)."""
+    for r in rows:
+        if not r.get("id"):
+            r["id"] = _row_id(r)
+        if not r.get("history"):
+            r["history"] = [{"status": r.get("status", ""), "date": r.get("updated") or r.get("date") or ""}]
+    return rows
+
+
 def _read_rows() -> tuple[list[dict], str]:
     """``(rows, error)`` — ``error`` is why an existing file can't be used, else ""."""
     raw, err = _store._read_json(_path())
@@ -49,7 +86,7 @@ def _read_rows() -> tuple[list[dict], str]:
         err = "not a JSON list"
     if err:
         return [], err
-    return list(raw or []), ""
+    return _backfill(list(raw or [])), ""
 
 
 def load_applications_checked(status: str | None = None) -> tuple[list[dict], str]:
@@ -77,37 +114,54 @@ def track_application(
     status: str = "considering",
     notes: str = "",
     source: str = "",
+    posting: dict | None = None,
+    insert_only: bool = False,
 ) -> dict:
     """Insert or update one application. The same posting URL, or the same company + role after
     normalizing ("Arize AI" = "Arize", case and punctuation ignored), is the same application.
-    Returns the stored row. An update preserves prior notes/source when new ones are blank.
+    Returns the stored row. An update preserves prior notes/source when new ones are blank, and
+    appends a ``{status, date}`` history entry whenever the status actually changes. An optional
+    ``posting`` ({title, location, snippet, url, posted}) is stored verbatim on the row.
+    ``insert_only`` returns an existing match unchanged, for inbox promotions that must not
+    overwrite operator updates. Matching and insertion share the applications lock.
     Raises ``StoreUnreadable`` rather than save one row over a pipeline it couldn't read."""
+    today = _today()
     with _store._locked("applications"):
         rows, err = _read_rows()
         if err:
             raise StoreUnreadable(_path(), err)
         r = _find(rows, company, role, source)
         if r is not None:
+            if insert_only:
+                return r
+            if status != r.get("status"):
+                r.setdefault("history", []).append({"status": status, "date": today})
             r.update(
                 # a status-only update ("mark it applied") passes the default 0 — keep the score
                 fit_score=int(fit_score) or int(r.get("fit_score") or 0),
                 status=status,
                 notes=notes or r.get("notes", ""),
                 source=source or r.get("source", ""),
-                updated=_today(),
+                updated=today,
             )
+            if posting:
+                r["posting"] = posting
             _save(rows)
             return r
         row = {
-            "date": _today(),
+            "date": today,
             "company": company,
             "role": role,
             "fit_score": int(fit_score),
             "status": status,
             "notes": notes,
             "source": source,
-            "updated": _today(),
+            "updated": today,
+            "history": [{"status": status, "date": today}],
         }
+        row["id"] = _row_id(row)
+        if posting:
+            row["posting"] = posting
         rows.insert(0, row)
         _save(rows)
         return row
@@ -150,6 +204,50 @@ def active_at_company(company: str, rows: list[dict] | None = None) -> list[dict
     key = company_key(company)
     return [r for r in (load_applications() if rows is None else rows)
             if company_key(r.get("company", "")) == key and r.get("status") in ACTIVE]  # fmt: skip
+
+
+def move(app_id: str, status: str) -> dict:
+    """Move one application (by its stable ``id``) to ``status``: set status + ``updated`` and append
+    a ``{status, date}`` history entry, in one locked, atomic write. Raises ``StoreUnreadable`` on an
+    unreadable file, ``ValueError`` on an unknown status, and ``KeyError`` on an unknown id — each
+    before any write, so a bad move leaves the pipeline untouched."""
+    if status not in STATUSES:
+        raise ValueError(f"unknown status {status!r}; valid: {', '.join(STATUSES)}")
+    today = _today()
+    with _store._locked("applications"):
+        rows, err = _read_rows()
+        if err:
+            raise StoreUnreadable(_path(), err)
+        r = next((x for x in rows if x.get("id") == app_id), None)
+        if r is None:
+            raise KeyError(f"no application with id {app_id!r}")
+        r.setdefault("history", []).append({"status": status, "date": today})
+        r["status"] = status
+        r["updated"] = today
+        _save(rows)
+        return r
+
+
+def _last_history_date(row: dict) -> str:
+    """The date of the row's most recent history entry, falling back to ``updated``/``date`` for a
+    row with no history (a reader may pass a hand-built row)."""
+    hist = row.get("history") or []
+    if hist:
+        return str(hist[-1].get("date") or "")
+    return str(row.get("updated") or row.get("date") or "")
+
+
+def needs_followup(row: dict, days: int, today: str) -> bool:
+    """Whether an applied role is due a nudge: ``status == applied`` and its last history entry is at
+    least ``days`` old as of ``today`` (both ``YYYY-MM-DD``). Pure — no clock, no I/O."""
+    if row.get("status") != "applied":
+        return False
+    try:
+        last = datetime.strptime(_last_history_date(row)[:10], "%Y-%m-%d").date()
+        now = datetime.strptime((today or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return (now - last).days >= int(days)
 
 
 def import_history(entries: list[dict]) -> dict:

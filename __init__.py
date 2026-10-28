@@ -90,7 +90,7 @@ def _register_tracker_tools(registry) -> None:
         source: str = "",
     ) -> str:
         """Record or update a job in the pipeline: company, role, 0-100 fit score, status
-        (considering/applied/interviewing/offer/rejected/passed), notes, and `source` (posting URL)."""
+        (considering/preparing/applied/interviewing/offer/rejected/passed), notes, and `source` (posting URL)."""
         try:
             row = state.track_application(
                 company=company, role=role, fit_score=fit_score, status=status, notes=notes, source=source
@@ -1682,13 +1682,20 @@ def _register_views(registry, cfg) -> None:
     """Serve the dashboard PAGE (public, un-gated — an iframe load can't carry a bearer)
     and its DATA route (gated under /api/plugins/careercoach). Models the view-vs-data
     gating rule and the fleet-proxy-safe fetch (ADR 0026/0042), like the notes plugin."""
-    from fastapi import APIRouter
+    from fastapi import APIRouter, Body
     from fastapi.responses import HTMLResponse, JSONResponse
 
     from . import profile, state
+    from . import watchlist as wl
     from .rubric import DEFAULT_WEIGHTS
 
     data = APIRouter()
+
+    def _followup_days() -> int:
+        try:
+            return int(cfg.get("followup_days", 10) or 10)
+        except (TypeError, ValueError):
+            return 10
 
     @data.get("/state")
     async def _state():
@@ -1712,6 +1719,80 @@ def _register_views(registry, cfg) -> None:
                 "applications": state.load_applications(),
             }
         )
+
+    def _emit_tracked(company: str, role: str, status: str) -> None:
+        try:
+            registry.emit("application_tracked", {"company": company, "role": role, "status": status})
+        except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
+            pass
+
+    @data.get("/jobs")
+    async def _jobs():
+        """The pipeline board: the watch inbox, the tracked applications (each flagged `followup`
+        when an applied role is overdue a nudge), the column mapping, and the follow-up window."""
+        days = _followup_days()
+        today = state._today()
+        try:
+            inbox = wl.inbox_for_view()
+        except wl.StoreUnreadable:
+            inbox = []  # an unreadable inbox reads as empty — the board still renders the pipeline
+        apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
+        return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
+
+    @data.post("/inbox/{item_id:path}/keep")
+    async def _keep(item_id: str):
+        """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its score,
+        reason and posting evidence) and hide it from the inbox. Existing applications are
+        preserved unchanged."""
+        try:
+            item = next((j for j in wl.inbox_for_view() if j.get("id") == item_id), None)
+        except wl.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        if item is None:
+            return JSONResponse({"error": f"no inbox item {item_id!r}"}, status_code=404)
+        company = item.get("company") or ""
+        role = item.get("title") or ""
+        url = item.get("url") or ""
+        posting = {k: item.get(k) for k in ("title", "location", "snippet", "url", "posted")}
+        try:
+            row = state.track_application(
+                company=company,
+                role=role,
+                fit_score=int(item.get("score") or 0),
+                status="considering",
+                notes=item.get("reason") or "",
+                source=url,
+                posting=posting,
+                insert_only=True,
+            )
+            wl.mark_kept(item_id)
+        except (state.StoreUnreadable, wl.StoreUnreadable) as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
+
+    @data.post("/inbox/{item_id:path}/dismiss")
+    async def _dismiss(item_id: str):
+        """Drop a watch-inbox item and remember the decision so it doesn't come back."""
+        try:
+            wl.dismiss([item_id])
+        except wl.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        return JSONResponse({"ok": True})
+
+    @data.post("/applications/{app_id}/move")
+    async def _move(app_id: str, payload: dict = Body(default={})):
+        """Move a tracked application to a new status (body: ``{"status": ...}``). A bad id or status
+        is a 4xx and writes nothing."""
+        status = str((payload or {}).get("status") or "").strip()
+        try:
+            row = state.move(app_id, status)
+        except state.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
 
     registry.register_router(data, prefix="/api/plugins/careercoach")  # GATED
 
