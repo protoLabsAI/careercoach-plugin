@@ -180,6 +180,15 @@ def register_hunt_tools(registry, cfg) -> None:
             rows, roles=roles, exclude=f["exclude"], locations=locations or f["locations"], max_age_days=age,
             tracker_rows=state.load_applications(),
         )  # fmt: skip
+        from . import jobsource
+
+        wl.add_to_inbox(
+            [
+                {**j, "score": jobsource.best_prescore(j, roles), "reason": wl.match_reason(j, roles)}
+                for j in res.matches
+                if not j.get("tracked")
+            ]
+        )
         jobs = res.new if only_new else res.matches
         head = (
             f"Scanned {res.scanned} board(s), {res.total} open roles → {len(res.matches)} match "

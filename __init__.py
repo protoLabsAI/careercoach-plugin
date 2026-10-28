@@ -1976,7 +1976,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         for j in batch:
             score = jobsource.best_prescore(j, roles)
             if score >= min_score:
-                matches.append({**j, "score": score})
+                matches.append({**j, "score": score, "reason": wl.match_reason(j, roles)})
         wl.add_to_inbox(matches)
         wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
     except state.StoreUnreadable as e:
