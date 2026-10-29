@@ -1,7 +1,6 @@
 # The autonomous "apply" pipeline (ADR 0002 — static-DAG workflow). The coach's
 # "do it for me" mode: given a posting, a small crew of this plugin's subagents
-# research the company, score fit against the rubric, and draft a tailored CV +
-# cover letter. Run it:
+# research the company, score fit against the rubric, and build and save an apply kit for the operator. Run it:
 #   run_workflow("apply", {"posting": "<url or pasted text>"})
 # Steps are chained via `depends_on`; each step's output feeds the next through
 # {{steps.<id>.output}} templating. Every step is a configured subagent (the engine
@@ -9,8 +8,8 @@
 # discipline from the job-application-assistant skill via load_skill.
 name: apply
 description: >-
-  Evaluate a job posting and, if it's a fit, draft a tailored CV + cover letter — the
-  Career Coach's end-to-end application pipeline (research → evaluate → write).
+  Evaluate a job posting and, if it's a fit, build and save an apply kit — the
+  Career Coach's end-to-end application pipeline (research → evaluate → kit → handoff).
 version: 1
 inputs:
   - name: posting
@@ -43,15 +42,31 @@ steps:
       COMPANY RESEARCH:
       {{steps.research.output}}
 
-  # 3. Draft the tailored CV + cover letter (honest reframing only; verify company claims).
+  # 3. Build and save the apply kit, then hand off to the operator.
   - id: write
     subagent: application_writer
     depends_on: [evaluate, research]
     prompt: |
-      Using the evaluation and the company research below, draft a tailored CV and a cover
-      letter following the writing-style discipline and the honesty test. Verify every
-      company-specific claim against the research sources. If the verdict was Weak or Poor
-      Fit, say so and stop rather than forcing a draft. Report the verification checklist.
+      Load the apply-form skill and follow its default apply kit flow. Using the evaluation
+      and company research below, build a tailored résumé PDF with careercoach_render_resume
+      → browser_open (the local file:// URL only) → browser_pdf. Use only operator-approved
+      résumé wording and confirmed profile facts; never silently approve a profile update.
+      Write a cover letter ONLY if the posting asks for one, following the writing-style
+      discipline and honesty test. Verify every company-specific claim against research sources.
+      If the verdict was Weak or Poor Fit, say so and stop rather than forcing a draft.
+      Get every form answer from careercoach_get_answers; keep drafts as drafts and ask the
+      operator about new or missing questions. If operator input is unavailable, report the
+      pending questions without inventing answers or claiming the kit is complete.
+      Save the apply kit with careercoach_save_apply_kit: the returned PDF path, known version,
+      requested cover letter and one-off answers as drafts. When no letter is requested, clear
+      any stale letter with cover_letter="" and cover_letter_needed=false. Check save success.
+      Hand off: open the role in the Career Coach view, review drafts, attach the PDF, use the
+      copy buttons to complete the application, then press Mark applied after submitting it.
+      Do not drive the employer's form or mark the role applied. Nothing auto-submits.
+      Report the verification checklist and any blockers.
+
+      POSTING:
+      {{inputs.posting}}
 
       EVALUATION:
       {{steps.evaluate.output}}
@@ -65,8 +80,8 @@ output: |
   ## Fit evaluation
   {{steps.evaluate.output}}
 
-  ## Tailored CV + cover letter
+  ## Apply kit and operator handoff
   {{steps.write.output}}
 
   ---
-  Next: ask your coach to run a **mock interview** (interview-coach), or turn the CV into a file you can attach (the resume skill).
+  Next: open the role in the Career Coach view, use the apply kit copy buttons, attach the PDF, and press Mark applied after submitting the application yourself.
