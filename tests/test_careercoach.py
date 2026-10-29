@@ -60,6 +60,20 @@ def test_dashboard_honors_theme_contract(plugin):
     assert "--pl-color-surface" not in html  # undefined token → hardcoded-dark fallback
 
 
+# ── the dashboard cover-letter branch agrees with the kit's own "missing" logic ──
+def test_dashboard_cover_letter_unset_reads_as_not_written(plugin):
+    """renderKit must only show "Not needed for this posting" on an EXPLICIT needed===false. A
+    fresh kit has cover_letter.needed = None → null in JSON, which JS treats as falsy; a truthy
+    test (`cl.needed`) would route that unset state to the "Not needed" branch, contradicting
+    _kit_missing (needed is not False ⇒ 'cover letter' IS missing). Guard the exact gate so the
+    dashboard can't silently disagree with the kit again."""
+    html = plugin._DASHBOARD_HTML
+    assert "cl.needed === false" in html  # only an explicit false clears the letter
+    assert "} else if (cl.needed) {" not in html  # the truthy gate that mishandled unset (null)
+    # The "Not written yet" copy is the default (else) branch, so an unset kit reads as needing one.
+    assert "Not written yet." in html and "Not needed for this posting." in html
+
+
 # ── the pure fit rubric ───────────────────────────────────────────────────────
 def test_rubric_defaults_and_presets_sum_to_100(plugin):
     rubric = importlib.import_module(plugin.__name__ + ".rubric")
