@@ -31,7 +31,7 @@ capabilities:
     - "api.lever.co"
   # the operator profile + application tracker live under the instance root
   # (<instance_root>/careercoach); role-packet files go to the configured workspace
-  # (packet_root, default ~/CareerCoach).
+  # (packet_root; blank uses this agent's own folder inside its data directory).
   filesystem: scoped
 enabled: false              # author default — operators opt in via plugins.enabled
 
@@ -47,7 +47,7 @@ config:
   location: ""
   target_roles: ""
   render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | docx (real Word file → save_file_artifact) | latex
-  packet_root: ""           # workspace for the gated role-packet flow (Companies/<Co>/Roles/…); blank → ~/CareerCoach
+  packet_root: ""           # workspace for the gated role-packet flow (Companies/<Co>/Roles/…); blank → this agent's own folder inside its data directory
   jobs_api_key: ""
   jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else himalayas) | jsearch | himalayas | hn | remotive
   search_country: ""        # narrow keyless remote-board results to roles open in this country (e.g. "United States")
@@ -66,7 +66,7 @@ settings:
   - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }
   - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain); 'docx' produces a real editable Word file via the cowork docx skill and saves it as a versioned download-artifact (needs cowork + the execute_code plugin, which runs code, + a protoAgent v0.108.0+ host — on the desktop app 0.108.0 is the floor because that is where execute_code gained its managed Python runtime, provisioned on first use; falls back to html otherwise); 'latex' for the classic moderncv .tex export." }
-  - { key: packet_root, label: "Role-packet workspace", type: string, group: "Career Coach", description: "Folder where the gated role-packet flow files a folder per role (Companies/<Company>/Roles/<Role - Req>/) plus an Experience.md you can write your history into (the coach imports it into your profile) and your story bank. Blank defaults to ~/CareerCoach. Point it at wherever you keep your job hunt so you can open and edit the artifacts directly." }
+  - { key: packet_root, label: "Role-packet workspace", type: string, group: "Career Coach", description: "Folder where the gated role-packet flow files a folder per role (Companies/<Company>/Roles/<Role - Req>/) plus an Experience.md you can write your history into (the coach imports it into your profile) and your story bank. Blank uses this agent's own folder (inside its data directory), so agents on one machine never share files. Point it at wherever you keep your job hunt so you can open and edit the artifacts directly." }
   - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A RapidAPI key for JSearch (Google-for-Jobs, which includes LinkedIn and Indeed listings). With it, live job search + the watch use JSearch; without it they use the keyless Himalayas remote-jobs board. Stored in secrets.yaml." }
   - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job API market searches use: 'auto' (JSearch when a key is set, else Himalayas), 'jsearch', 'himalayas', 'hn' (this month's Hacker News Who-is-hiring thread), or 'remotive' (not recommended: its API now returns a fixed feed). Watched companies' own job boards are scanned regardless." }
   - { key: search_country, label: "Search country", type: string, group: "Career Coach", description: "Optional. Narrow keyless remote-board results to roles open to candidates in this country, e.g. 'United States'." }
