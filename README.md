@@ -149,7 +149,8 @@ careercoach-plugin/
 
 ### Optional
 - **Choose where your workspace lives.** `/setup-coach` seeds it for you, but you can point it somewhere
-  specific first via **Settings → Career Coach → Role-packet workspace** (blank defaults to `~/CareerCoach`).
+  specific first via **Settings → Career Coach → Role-packet workspace**. Blank uses this agent's own
+  folder inside its data directory (`<agent data dir>/workspace`), so agents on one machine never share files.
   It lays down fill-in starters — `Resume/Experience.md`, `Agent/story-bank.md`, reviewer + Humanize
   rules, an improvements log — and never clobbers your edits. These are plain markdown you can open and edit
   directly at any time. If you'd rather write your history into `Experience.md` than be interviewed, do
@@ -386,10 +387,17 @@ and on a host without the middleware seam the gate degrades to the browser tools
 
 ## Upgrading
 
+- **0.13.2** — a blank `packet_root` now uses this agent's own folder inside its data directory
+  (`<agent data dir>/workspace`), so agents on one machine never share files. If your agent relied on
+  the old blank setting to read `~/CareerCoach`, set `packet_root: ~/CareerCoach` in
+  **Settings → Career Coach → Role-packet workspace** **BEFORE upgrading** to keep using that folder.
+  Otherwise, your role packets and `Experience.md` stay behind; they are not moved automatically.
+  The plugin logs a one-time warning when it sees a populated `~/CareerCoach` it no longer reads.
 - **0.8.0** — a *relative* `packet_root` setting or `CAREERCOACH_PACKET_DIR` value now resolves under the
   home directory, not the server's working directory. This only matters for source / dev runs: on the
   desktop app the working directory is `/` (read-only), so a relative workspace never worked there. An
-  absolute path, `~/…`, or the blank default (`~/CareerCoach`) behave exactly as before.
+  absolute path or `~/…` behaves exactly as before. For the blank setting, see the 0.13.2 note above:
+  it now uses this agent's own folder inside its data directory.
 
 ## Found while building (filed upstream)
 
