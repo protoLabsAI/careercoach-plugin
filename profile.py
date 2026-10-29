@@ -67,6 +67,7 @@ PLUGIN_ID = "careercoach"
 IDENTITY_FIELDS: dict[str, str] = {
     "name": "Full name",
     "location": "Location",
+    "target_roles": "Target roles (comma-separated)",
     "work_auth": "Work authorization",
     "contact": "Contact (email · phone · LinkedIn · portfolio)",
     "headlines": "Role-type headlines they'd accept",
@@ -75,7 +76,7 @@ IDENTITY_FIELDS: dict[str, str] = {
 # Narrative sections — markdown. Injected as presence only; fetched in full when drafting.
 #
 # ``roles`` / ``education`` / ``skills`` / ``stories`` / ``notes`` are the coach's WORKING RECORD:
-# they carry internal annotations (tenure rulings, "do not claim", "unconfirmed by Josh", …) and
+# they carry internal annotations (tenure rulings, "do not claim", "unconfirmed by the operator", …) and
 # are NEVER printed verbatim. ``resume`` is different — it is the exact, operator-approved text that
 # goes on the résumé, and it is the ONLY section ``resume.py`` renders (see the 2026-10-05 leak:
 # rendering the working record put those annotations in a PDF bound for an employer).
@@ -127,7 +128,7 @@ WRITE_GATE = (
 # Size caps, in characters. ``do_not_claim`` goes in front of the model IN FULL on every call, so
 # it's held to what a list of hard stops needs; identity facts are one line each; the narrative
 # sections are read whole before every draft. A write past a cap is refused with the reason, and
-# ``context_block`` bounds whatever an older version may have stored. (The live jobCoach profile's
+# ``context_block`` bounds whatever an older version may have stored. (An existing profile's
 # largest values: identity 253, do_not_claim 251, roles 4,160.)
 IDENTITY_LIMIT = 500
 FIELD_LIMITS: dict[str, int] = {"do_not_claim": 3_000}

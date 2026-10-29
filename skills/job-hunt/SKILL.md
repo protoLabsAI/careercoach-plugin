@@ -1,10 +1,10 @@
 ---
 name: job-hunt
 description: >-
-  Find fresh roles, manage a company watchlist, review the daily digest, or follow up on leads. Also handles first run: "set me up", "get started", "onboard me", and /setup-coach.
+  Find fresh roles, manage a company watchlist, review the daily digest, or follow up on leads. Also handles first run: "set me up", "get started", "onboard me", "here's my resume", an empty profile, and /setup-coach.
 user_facing: true
 slash: setup-coach
-tools: [careercoach_profile, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track, memory_recall, knowledge_ingest, list_skills, load_skill]
+tools: [careercoach_profile, careercoach_answers, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track, memory_recall, knowledge_ingest, list_skills, load_skill]
 ---
 
 # Job hunt — find fresh roles, go in through people, apply early and few
@@ -31,7 +31,9 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
 
 ## Setting up (once)
 
-- **Target roles / locations / exclusions** live in Settings → Career Coach. Each comma-separated
+- **Target roles / locations / exclusions** can be set in Settings → Career Coach. Blank target
+  roles and locations fall back to the confirmed profile's `target_roles` and `location`.
+  Each comma-separated
   target role is an all-words title match ("Design Engineer" matches "Senior Design Systems Engineer",
   not "Product Designer"). `locations` takes places plus `remote` (= remote and open to the US).
 - **Watchlist:** `careercoach_watchlist(action="add", company="A, B, C")` looks each company up on all
@@ -75,6 +77,43 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
 
 ## First run / set me up
 
+Trigger on **"set me up"**, **"here's my resume"**, or an **empty profile**.
+Aim for the first scan within five minutes. **Ask at most one confirmation question
+before the first scan.** Missing voice samples, work authorization, contacts or API keys
+must not delay scanning. Never invent facts.
+
+1. **Import profile.** Read `careercoach_profile(action="get")` and harvest the pasted
+   resume text, existing artifacts and memory. Extract LinkedIn profile PDF text with
+   `knowledge_ingest`; never scrape LinkedIn. Prepare a field-by-field preview containing
+   every document claim and nothing invented. Leave unsupported fields empty; do not infer
+   metrics, skill levels or work authorization. For their own Experience.md,
+   `careercoach_profile(action="import_experience")` returns a preview and `preview_id`.
+2. **Confirm targets once.** Show the extracted profile and propose `target_roles`
+   (comma-separated) and `location` from the document, clearly labeled as proposals.
+   Ask ONE combined question: "May I save this profile and search these target roles and
+   location, or what should I correct?" Include any missing resume, targets or location
+   in this same question. Wait for confirmation; never treat silence as consent.
+   Save confirmed fields with `careercoach_profile(action="update", field=…, content=…)`,
+   including `field="target_roles"` and `field="location"`. Apply a confirmed import
+   using `apply=true` and its `preview_id`. Preserve every source claim across the
+   appropriate sections; report write refusals, never silently truncate. Unconfirmed
+   proposals stay unsaved; scan only confirmed targets or explicit search terms.
+3. **Seed answers.** Call `careercoach_answers(action="get")`, whose first use invokes
+   `answers.seed_from_profile`. Keep all seeded answers as **drafts**, never confirmed.
+4. **Find roles.** Run `careercoach_find_roles(source="market", provider="himalayas")` with the saved targets
+   and location. Default `jobs_provider: auto` without a key uses **himalayas**; **hn**
+   is also keyless. Use keyless sources only; never ask for an API key.
+   Check `careercoach_watchlist(action="list")` and also run
+   `careercoach_find_roles(source="watched")` if boards exist. Results go to the
+   **inbox** for the view, not the application tracker. Report empty results and errors honestly.
+5. **Open the view.** Point the operator at the **Career Coach** view to review their
+   profile and inbox results. End setup; deeper coaching is optional after the first scan.
+
+### Optional enrichment after the first scan
+
+The existing interview below is available after the first scan. Its additional questions
+must not run before that scan.
+
 The coach can't do its job without knowing who it works for, and it must never invent the
 answer. This skill fills that gap once, and records it as a **profile** that gets injected into
 every future turn. The profile is the single source of truth: every draft, score and interview
@@ -89,7 +128,7 @@ failure this skill exists to prevent. Interrogation is the last resort, not the 
 Before your first message, gather silently. None of this needs permission:
 
 - `careercoach_profile(action="get")` — the completeness picture. Anything under **known** is settled;
-  only **missing** is in play. If it's already complete, skip to step 4.
+  only **missing** is in play. If it's already complete, skip to the enrichment wrap-up.
 - `careercoach_profile(action="import_experience")` — if they keep their own `Resume/Experience.md`, this
   previews what it would add to the profile (the template's hint text and anything already
   recorded are skipped) and ends with a `preview_id`. That's a prior setup worth keeping: show them

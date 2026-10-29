@@ -36,12 +36,23 @@ def _int(value, default: int) -> int:
 
 
 def filters(cfg) -> dict:
-    """The scan filters as configured (the tools' defaults)."""
+    """Settings take precedence; blank search fields use the confirmed profile."""
+    from . import profile
+
+    roles = cfg.get("target_roles", "") or ""
+    locations = cfg.get("locations", "") or ""
+    if not roles.strip() or not locations.strip():
+        saved, error = profile.load_profile_checked()
+        if error:
+            raise profile.StoreUnreadable(profile._path(), error)
+        identity = saved.get("identity", {})
+        roles = roles if roles.strip() else identity.get("target_roles", "")
+        locations = locations if locations.strip() else identity.get("location", "")
     exclude = cfg.get("title_exclude")
     return {
-        "roles": cfg.get("target_roles", "") or "",
+        "roles": roles,
         "exclude": DEFAULT_EXCLUDE if exclude is None else exclude,
-        "locations": cfg.get("locations", "") or "",
+        "locations": locations,
         "max_age_days": _int(cfg.get("max_age_days", 30), 30),
     }
 
