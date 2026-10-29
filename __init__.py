@@ -1157,14 +1157,21 @@ def _register_answers_tools(registry, extended: bool):
 # extended_tools off — the shipped config the crew actually runs in.
 def _register_delegate_read_tool(registry, get_profile, read_profile, get_answers) -> None:
     @tool
-    def careercoach_read_sources(source: str = "profile", doc: str = "experience", field: str = "") -> str:
+    def careercoach_read_sources(
+        source: str = "profile", doc: str = "experience", field: str = "", text: str = ""
+    ) -> str:
         """Read-only view of the verified record a draft must trace to — for grounding before you
         score or write, never to change it. source="profile" (default): one `field` (roles, education,
         skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines) returns
         that section, or with no field the whole `doc` (experience, story-bank, reviewer, humanize,
         improvements) as markdown. source="answers": the operator's standard application answers with
-        CONFIRMED/DRAFT status. Writes nothing — the operator records and confirms through the Career
-        Coach view (careercoach_profile / careercoach_answers). Defaults to the experience profile."""
+        CONFIRMED/DRAFT status. source="check": pass a draft as `text` and get back every hard figure
+        (percentages, money, multipliers, durations, numbers) in it that the operator's profile and
+        story bank do NOT support — "Not found in your profile: …" for an invented value, "Check the
+        direction: …" for one that's real but read the wrong way (a "cut by 70%" that became a "70%
+        rate"), or "No unsupported figures." when the draft is clean. Writes nothing — the operator
+        records and confirms through the Career Coach view (careercoach_profile / careercoach_answers).
+        Defaults to the experience profile."""
         src = (source or "profile").strip().lower()
         if src == "profile":
             if (field or "").strip():
@@ -1172,7 +1179,16 @@ def _register_delegate_read_tool(registry, get_profile, read_profile, get_answer
             return read_profile.invoke({"doc": doc})
         if src == "answers":
             return get_answers.invoke({})
-        return f'Unknown source {source!r} — use "profile" or "answers".'
+        if src == "check":
+            from . import grounding
+
+            # The same profile + story-bank the grounding readers serve — the figures a draft must
+            # trace to. Read-only: this only reports, it never records anything.
+            sources = "\n\n".join(
+                read_profile.invoke({"doc": d}) for d in ("experience", "story-bank")
+            )
+            return grounding.render_flags(grounding.check_draft(text or "", sources))
+        return f'Unknown source {source!r} — use "profile", "answers" or "check".'
 
     registry.register_tool(careercoach_read_sources)
 
