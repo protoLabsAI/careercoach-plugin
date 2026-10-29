@@ -124,6 +124,27 @@ def role_dirname(role: str, req: str = "") -> str:
     return safe_name(f"{role} - {req}" if req else role)
 
 
+def legacy_workspace_notice(configured: str = "") -> str:
+    """Explain the default change without reading or adopting shared workspace contents.
+
+    Unlike the process-wide log, this notice remains available on every affected tool call
+    so each agent's operator can choose whether the old folder belongs to them.
+    """
+    if os.environ.get("CAREERCOACH_PACKET_DIR", "").strip() or (configured or "").strip():
+        return ""
+    legacy = Path.home() / "CareerCoach"
+    if not ((legacy / "Resume" / "Experience.md").is_file() or (legacy / "Companies").is_dir()):
+        return ""
+    return (
+        "careercoach no longer reads ~/CareerCoach by default; set packet_root: ~/CareerCoach "
+        "in Settings → Career Coach to keep using it. "
+        f"Legacy folder: {legacy}. The blank default uses this agent's own workspace. "
+        "Existing Experience.md and role packets in the legacy folder have not been moved or imported. "
+        "Tell the operator about this folder before starting a fresh career record; "
+        "only select it if they confirm it is theirs."
+    )
+
+
 def resolve_root(configured: str = "") -> Path:
     """The workspace root. Precedence: ``CAREERCOACH_PACKET_DIR`` env (tests / override) →
     the resolved ``packet_root`` config → ``profile._dir() / "workspace"``. A relative value is taken relative to
@@ -137,16 +158,10 @@ def resolve_root(configured: str = "") -> Path:
         from . import profile
 
         root = profile._dir() / "workspace"
-        legacy = Path.home() / "CareerCoach"
-        if not _legacy_root_warned and (
-            (legacy / "Resume" / "Experience.md").is_file() or (legacy / "Companies").is_dir()
-        ):
+        notice = legacy_workspace_notice(configured)
+        if not _legacy_root_warned and notice:
             _legacy_root_warned = True
-            log.warning(
-                "careercoach no longer reads ~/CareerCoach by default; set packet_root: ~/CareerCoach "
-                "in Settings → Career Coach to keep using it. Legacy folder: %s",
-                legacy,
-            )
+            log.warning("%s", notice)
     if not root.is_absolute():  # the desktop server's cwd is `/` (read-only): anchor to home
         root = Path.home() / root
     root.mkdir(parents=True, exist_ok=True)

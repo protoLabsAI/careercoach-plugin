@@ -122,3 +122,59 @@ def test_relative_connections_path_uses_packet_resolver(plugin, packet, iso, mon
     )
     out = tools["careercoach_import_connections"].invoke({"path": "Connections.csv"})
     assert out.startswith("Imported 1 connection(s) across 1 companies (1 new, 0 updated).")
+
+
+@pytest.mark.parametrize("marker", ["Resume/Experience.md", "Companies"])
+def test_upgrade_notice_reaches_tools_after_log_warning(plugin, packet, marker):
+    legacy = Path.home() / "CareerCoach"
+    target = legacy / marker
+    if marker == "Companies":
+        target.mkdir(parents=True)
+    else:
+        target.parent.mkdir(parents=True)
+        target.write_text("# Experience\n\n## Roles\n### Engineer — LEGACY ONLY\n", encoding="utf-8")
+    root = packet.resolve_root("")  # The process-wide warning has already fired.
+    tools = _tools(plugin)
+    for name in (
+        "careercoach_import_experience",
+        "careercoach_list_roles",
+        "careercoach_read_profile",
+        "careercoach_init_workspace",
+        "careercoach_init_workspace",  # Already seeded must still explain the upgrade.
+        "careercoach_import_experience",  # Untouched template must also explain it.
+    ):
+        out = tools[name].invoke({})
+        assert "Workspace upgrade notice:" in out
+        assert "set packet_root: ~/CareerCoach in Settings → Career Coach" in out
+        assert str(legacy) in out
+        assert "have not been moved or imported" in out
+        assert "LEGACY ONLY" not in out
+    assert not (root.parent / "profile.json").exists()
+    assert "LEGACY ONLY" not in (root / "Resume" / "Experience.md").read_text()
+
+
+def test_explicit_legacy_opt_in_restores_access(plugin, packet):
+    legacy = Path.home() / "CareerCoach"
+    experience = legacy / "Resume" / "Experience.md"
+    experience.parent.mkdir(parents=True)
+    text = "# Experience\n\n## Roles\n### Engineer — LEGACY ONLY\n"
+    experience.write_text(text, encoding="utf-8")
+    packet.scaffold_role(legacy, "Acme", "Engineer")
+    tools = _tools(plugin, "~/CareerCoach")
+    preview = tools["careercoach_import_experience"].invoke({})
+    assert "Import preview" in preview and "LEGACY ONLY" in preview
+    roles = tools["careercoach_list_roles"].invoke({})
+    assert "Engineer @ Acme" in roles
+    assert "Workspace upgrade notice:" not in preview + roles
+    assert experience.read_text() == text
+
+
+@pytest.mark.parametrize("explicit", ["config", "env", "none"])
+def test_notice_absent_without_legacy_or_with_override(plugin, packet, monkeypatch, iso, explicit):
+    if explicit != "none":
+        (Path.home() / "CareerCoach" / "Companies").mkdir(parents=True)
+    if explicit == "env":
+        monkeypatch.setenv("CAREERCOACH_PACKET_DIR", str(iso / "override"))
+    tools = _tools(plugin, "~/chosen" if explicit == "config" else "")
+    for name in ("careercoach_init_workspace", "careercoach_import_experience", "careercoach_list_roles"):
+        assert "Workspace upgrade notice:" not in tools[name].invoke({})

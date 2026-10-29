@@ -475,6 +475,7 @@ def _import_detail(row: dict) -> str:
 # fill-in templates/. Pure logic lives in packet.py (host-free, tested); these tools are the
 # thin agent surface. The *content* of each artifact is the agent's job (driven by the skill).
 def _register_packet_tools(registry, cfg, extended: bool):
+    from functools import wraps
     from pathlib import Path
 
     from . import packet, profile, resume
@@ -484,7 +485,17 @@ def _register_packet_tools(registry, cfg, extended: bool):
     def _root() -> str:
         return cfg.get("packet_root", "") or ""
 
+    def _with_workspace_notice(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            notice = packet.legacy_workspace_notice(_root())
+            return f"{result}\n\nWorkspace upgrade notice: {notice}" if notice else result
+
+        return wrapped
+
     @tool
+    @_with_workspace_notice
     def careercoach_init_workspace() -> str:
         """Seed the job-search workspace with the fill-in templates (Experience.md, story bank, reviewer rules, humanize,
         improvements log). Only adds missing files, never overwrites. Run once before the first role packet."""
@@ -570,6 +581,7 @@ def _register_packet_tools(registry, cfg, extended: bool):
         return f"Exported the profile → {res['path']} (their own Resume/Experience.md is untouched)."
 
     @tool
+    @_with_workspace_notice
     def careercoach_read_profile(doc: str = "experience") -> str:
         """Read the candidate's record or a workspace reference file — every CV bullet, evidence row and letter claim
         must trace to it. `doc`: experience (the live operator profile as markdown; Resume/Experience.md is never read
@@ -624,6 +636,7 @@ def _register_packet_tools(registry, cfg, extended: bool):
         return res["text"]
 
     @tool
+    @_with_workspace_notice
     def careercoach_import_experience(
         apply: bool = False, preview_id: str = "", mode: str = "append", confirm_removal: bool = False
     ) -> str:
@@ -756,6 +769,7 @@ def _register_packet_tools(registry, cfg, extended: bool):
         return f"Assembled {res['path']}\n  present: {present}\n  missing: {missing}"
 
     @tool
+    @_with_workspace_notice
     def careercoach_list_roles() -> str:
         """List role packets with artifact counts and each role folder's absolute path."""
         rows = packet.list_roles(packet.resolve_root(_root()))
