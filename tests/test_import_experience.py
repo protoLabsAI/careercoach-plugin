@@ -323,7 +323,11 @@ def test_a_value_stored_before_the_caps_is_clipped_in_the_block(profile, iso):
     huge = "- never claim " + "q" * 50_000
     path.write_text(json.dumps({"identity": {"name": "Ada"}, "sections": {"do_not_claim": huge}}), encoding="utf-8")
     block = profile.context_block()
-    assert len(block) < 10_000 and "more characters" in block and "careercoach_get_profile('do_not_claim')" in block
+    assert (
+        len(block) < 10_000
+        and "more characters" in block
+        and "careercoach_profile(action='get', field='do_not_claim')" in block
+    )
 
 
 def test_a_write_past_a_cap_is_refused_with_the_reason(profile, tools, iso):

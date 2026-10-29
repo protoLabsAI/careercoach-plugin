@@ -8,7 +8,7 @@ Read `Agent/experience-reviewer.md` (the candidate's own truth + voice rules) an
 against it. Report a **pass/fail line per artifact**, quoting the specific offending text on a fail:
 
 - **Anchored** — every resume bullet, evidence-map claim, skills entry, and cover-letter fact traces
-  to the operator profile (`careercoach_read_profile("experience")`) or the story bank. No orphan claims.
+  to the operator profile (`careercoach_profile(action="read", doc="experience")`) or the story bank. No orphan claims.
 - **Interview-backtrack** — no line the candidate would have to walk back in an interview.
 - **Company claims sourced** — each is backed by a source in the recruiter brief, or it's cut.
 - **No inflation** — emphasis reframed, scope/level/metrics not upgraded.
@@ -20,11 +20,11 @@ against it. Report a **pass/fail line per artifact**, quoting the specific offen
 - **Consistency** — resume, skills list, and cover letter agree; the same story isn't told two ways.
 - **Rendering** (if a PDF was produced) — resume ~2 pages, cover letter ~1 page, no layout breakage.
 
-If anything fails, fix it (re-write the artifact via `careercoach_write_artifact`) or surface it to the
+If anything fails, fix it (re-write the artifact via `careercoach_role_packet(action="write")`) or surface it to the
 user for a decision — don't assemble over a known failure.
 
 ## 2. Assemble
-Run `careercoach_assemble_packet(company, role, req)`. It concatenates the produced artifacts into
+Run `careercoach_role_packet(action="assemble", company=company, role=role, req=req)`. It concatenates the produced artifacts into
 `role packet.md` and refreshes `orchestration log.md` with a completeness checklist. Read back the
 present/missing summary; if a body artifact is unexpectedly missing, that's a gap to close, not to ship.
 

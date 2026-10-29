@@ -84,17 +84,17 @@ what conflicts with what's already there, and what you couldn't read. Ask them t
 
 The **profile**, never a second store, and never a new markdown file beside the resume.
 
-- **New facts** → `careercoach_update_profile(field, content)`. Appends by default. Fields:
+- **New facts** → `careercoach_profile(action="update", field=field, content=content)`. Appends by default. Fields:
   `roles`, `education`, `skills`, `do_not_claim`, `stories`, `notes`, or an identity field.
 - **Corrections** → the same tool with `mode="replace"`. Read the current value with
-  `careercoach_get_profile(field)` first, edit it, then replace — that is how you fix a
+  `careercoach_profile(action="get", field=field)` first, edit it, then replace — that is how you fix a
   wrong date without losing the rest of the section.
-- **A whole `Resume/Experience.md` the operator keeps** → `careercoach_import_experience`,
+- **A whole `Resume/Experience.md` the operator keeps** → `careercoach_profile(action="import_experience")`,
   which previews the exact lines it would add and hands back a `preview_id`; apply with
   `apply=true` and that id once they confirm. Use this rather than retyping the file
-  through `careercoach_update_profile`.
+  through `careercoach_profile(action="update")`.
 
-After the import, `careercoach_read_profile("experience")` should tell the whole story. If
+After the import, `careercoach_profile(action="read", doc="experience")` should tell the whole story. If
 it doesn't, the import isn't finished — don't move on to building a resume.
 
 ## Then what

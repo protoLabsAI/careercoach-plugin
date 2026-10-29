@@ -44,9 +44,19 @@ def setup(plugin, iso, monkeypatch):
     answers.propose("email", "ada@example.com")
     answers.confirm(["email"])
     answers.propose("phone_number", "DRAFT-PHONE")
-    reg = FakeRegistry({"packet_root": str(iso / "ws")})
-    plugin.register(reg)
-    return ats, formfill, reg.config, {t.name: t for t in reg.tools}, calls
+
+    def register(browser_fill=""):
+        # The browser-fill tools (plan_fill, verify_fill, handoff, request_submit) register only when
+        # browser_fill enables at least one ATS at register() time (S4b), so each test registers with
+        # the browser_fill it needs; blank is the default-off surface. Returns (config, tools-by-name).
+        cfg = {"packet_root": str(iso / "ws")}
+        if browser_fill:
+            cfg["browser_fill"] = browser_fill
+        reg = FakeRegistry(cfg)
+        plugin.register(reg)
+        return reg.config, {t.name: t for t in reg.tools}
+
+    return ats, formfill, calls, register
 
 
 def assert_kit(out):
@@ -58,7 +68,7 @@ def assert_kit(out):
         "careercoach_render_resume",
         "browser_pdf",
         "cover letter only if the posting asks",
-        "careercoach_get_answers",
+        'careercoach_answers(action="get")',  # the default-surface answers tool (S4b), not the legacy name
         "Career Coach view",
         "copy buttons",
         "Never auto-submit",
@@ -69,7 +79,8 @@ def assert_kit(out):
 
 @pytest.mark.parametrize("name", URLS)
 def test_default_prepare_and_plan_handoff_without_session(setup, name):
-    _, formfill, _, tools, calls = setup
+    _, formfill, calls, register = setup
+    _, tools = register()  # browser_fill blank — the default-off surface
     out = asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS[name]}))
     assert_kit(out)
     assert f"off for {name or 'unknown ATS'}" in out
@@ -79,13 +90,19 @@ def test_default_prepare_and_plan_handoff_without_session(setup, name):
         assert "DRAFT-PHONE" not in out
     else:
         assert calls == []
-    assert_kit(tools["careercoach_plan_fill"].invoke({"ats": name, "form_json": "[]", "company": "A", "role": "R"}))
+    # Browser fill off → the fill tools never register (S4b); the apply kit is the only path.
+    assert not {
+        "careercoach_plan_fill",
+        "careercoach_verify_fill",
+        "careercoach_handoff",
+        "careercoach_request_submit",
+    } & set(tools)
     assert not formfill._path().exists()
 
 
 def test_greenhouse_optin_round_trip_and_other_ats_refused(setup):
-    ats, formfill, cfg, tools, _ = setup
-    cfg["browser_fill"] = "greenhouse"
+    ats, formfill, _, register = setup
+    _, tools = register("greenhouse")
     out = asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS["greenhouse"]}))
     assert "Prepared from the Greenhouse public schema" in out
     assert "ada@example.com" in out
@@ -117,8 +134,8 @@ def test_live_form_optin_names_ats_and_builds_session(setup, name):
     plan_fill, and plan_fill with that ats builds a session instead of handing off. This is the
     enabled path the previous attempt broke: the messages said plan_fill with no ats, so the
     (empty ats = off) refusal handed an opted-in operator back to the kit."""
-    ats, formfill, cfg, tools, _ = setup
-    cfg["browser_fill"] = name
+    ats, formfill, _, register = setup
+    _, tools = register(name)
     out = asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS[name]}))
     assert "KIT HANDOFF" not in out
     assert f'careercoach_plan_fill(form_json, company, role, ats="{name}")' in out
@@ -132,19 +149,20 @@ def test_live_form_optin_names_ats_and_builds_session(setup, name):
 
 @pytest.mark.parametrize("result", [(None, "HTTP 404"), ({}, "")])
 def test_schema_failure_still_hands_off(setup, monkeypatch, result):
-    ats, formfill, _, tools, _ = setup
+    ats, formfill, _, register = setup
 
     async def fetch(*args):
         return result
 
     monkeypatch.setattr(ats, "fetch_schema", fetch)
+    _, tools = register()
     assert_kit(asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS["greenhouse"]})))
     assert not formfill._path().exists()
 
 
 def test_embedded_greenhouse_and_unknown_stay_off(setup):
-    _, formfill, cfg, tools, calls = setup
-    cfg["browser_fill"] = "ashby,lever,workable,unknown"
+    _, formfill, calls, register = setup
+    _, tools = register("ashby,lever,workable,unknown")
     for url in ("https://example.com/?gh_jid=123", URLS[""]):
         assert_kit(asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": url})))
     assert calls == []

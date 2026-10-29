@@ -23,7 +23,7 @@ in one version history. See `master-and-tailor.md`, *Eviction*.
 **Always write to an absolute path.** The server runs with its working directory at `/`,
 which is read-only on the desktop app, so a relative save fails (`Read-only file system`)
 and `save_file_artifact` then finds nothing. Write into the variant's role folder — the
-path `careercoach_list_roles` prints for it — or into `<workspace>/Resume/` for the master, and pass that same absolute path to
+path `careercoach_role_packet(action="list")` prints for it — or into `<workspace>/Resume/` for the master, and pass that same absolute path to
 `save_file_artifact`.
 
 ---

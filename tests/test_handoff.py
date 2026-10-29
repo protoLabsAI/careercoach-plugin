@@ -170,12 +170,13 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
     return yaml.safe_load(fm), body
 
 
-def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin, registry):
-    """It parses, carries name + description, and its frontmatter lists the tools the loop turns on —
-    the handoff, the submit gate, and the plan/verify read-back pair the card requires. Every
-    ``careercoach_*`` tool it declares must actually be registered (the silent-no-op failure mode)."""
-    plugin.register(registry)
-    registered = {getattr(t, "name", str(t)) for t in registry.tools}
+def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
+    """Default frontmatter resolves without opt-ins; fill tools stay in the gated beta body."""
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({})
+    plugin.register(reg)
+    registered = {getattr(t, "name", str(t)) for t in reg.tools}
 
     fm, body = _frontmatter(SKILL)
     assert fm["name"] == "apply-form"
@@ -188,7 +189,9 @@ def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin, registry):
         "careercoach_verify_fill",
         "careercoach_plan_fill",
     }
-    assert required <= set(declared), f"apply-form must declare {sorted(required)}"
+    assert not required & set(declared)
+    beta = body.split("## Browser fill (opt-in beta)", 1)[1]
+    assert all(name in beta for name in required)
 
     for name in declared:
         if name.startswith("careercoach_"):

@@ -343,6 +343,8 @@ def hunt_tools(plugin, iso, monkeypatch, net):
             "title_exclude": "intern",
             "locations": "remote, portland",
             "max_age_days": 30,
+            # reach careercoach_scan_boards / import_* / find_referrals by their legacy names (S4b)
+            "extended_tools": True,
         }
     )
     plugin.register(reg)

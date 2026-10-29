@@ -337,14 +337,17 @@ def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
     assert profile.completeness(prof)["filled"] == len(fields)
 
 
-def test_skills_declare_real_tools(plugin, registry):
+def test_skills_declare_real_tools(plugin):
     """Every ``careercoach_*`` tool a skill lists in its frontmatter must actually be registered.
 
     Guards the failure mode this seam was built to fix: a skill instructing the agent to reach for
     something the plugin never exposes, which fails silently at runtime as "the agent just didn't
     do it". Also asserts each skill carries the frontmatter the host indexes on."""
-    plugin.register(registry)
-    registered = {getattr(t, "name", str(t)) for t in registry.tools}
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({})
+    plugin.register(reg)
+    registered = {getattr(t, "name", str(t)) for t in reg.tools}
 
     skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
     assert len(skills) >= 5, "skills should be discovered from skills/*/SKILL.md"
@@ -365,21 +368,41 @@ def test_skills_declare_real_tools(plugin, registry):
 
 # ── register() — host-free (the testkit's record-only stand-ins let every guarded path run) ──
 def test_register_runs_host_free(plugin, registry):
-    plugin.register(registry)  # must not raise with no host present
+    plugin.register(registry)  # must not raise with no host present; default config = lean surface (S4b)
     names = [t.name for t in registry.tools]
-    # 3 tracker/search + the save-apply-kit tool + 12 packet/profile tools + 3 standard-answers tools +
-    # 2 form-fill tools + the prepare-application tool + the submit-gate tool + the handoff tool + the 3
-    # rubric-knob tools (the vendored testkit stands in for graph.sdk's Knobs/make_knob_tools, so the
-    # guarded knob path runs host-free) + 7 hunt tools (watchlist, scan_boards, import_history,
-    # import_connections, find_referrals, log_contact, digest).
-    assert len(names) == 34 and len(set(names)) == 34
-    assert "careercoach_save_apply_kit" in set(names)
+    # The lean default surface: the 12 merged/core-loop tools (11 user-facing + the always-on read-only
+    # careercoach_read_sources the delegate crew grounds on) + the 3 rubric-knob tools (the vendored
+    # testkit stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
+    # Every pre-consolidation name is behind extended_tools, and the browser-fill tools are behind
+    # browser_fill — neither is on in the default config — so they are absent here (see
+    # test_tool_surface.py for both halves).
+    assert len(names) == 15 and len(set(names)) == 15
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
-    assert {"careercoach_get_answers", "careercoach_propose_answer", "careercoach_confirm_answers"} <= set(names)
-    assert {"careercoach_plan_fill", "careercoach_verify_fill"} <= set(names)
-    assert "careercoach_prepare_application" in set(names)
-    assert "careercoach_request_submit" in set(names)
-    assert "careercoach_handoff" in set(names)
+    assert {
+        "careercoach_find_roles",
+        "careercoach_profile",
+        "careercoach_track",
+        "careercoach_answers",
+        "careercoach_role_packet",
+        "careercoach_watchlist",
+        "careercoach_log_contact",
+        "careercoach_digest",
+        "careercoach_render_resume",
+        "careercoach_save_apply_kit",
+        "careercoach_prepare_application",
+        "careercoach_read_sources",
+    } <= set(names)
+    # legacy names and the browser-fill tools do NOT register in the default config
+    assert not {
+        "careercoach_get_answers",
+        "careercoach_scan_boards",
+        "careercoach_get_profile",
+        "careercoach_track_application",
+        "careercoach_plan_fill",
+        "careercoach_verify_fill",
+        "careercoach_request_submit",
+        "careercoach_handoff",
+    } & set(names)
     prefixes = {p for p, _ in registry.routers}
     assert "/api/plugins/careercoach" in prefixes  # gated DATA route
     assert "/plugins/careercoach" in prefixes  # public PAGE

@@ -814,7 +814,7 @@ def context_block(profile: dict | None = None) -> str:
             if len(shown) < len(body):  # stored by an older version, before the cap existed
                 lines.append(
                     f"  … {len(body) - len(shown):,} more characters: read them with "
-                    f"careercoach_get_profile('{k}'), and ask the operator to trim this list."
+                    f"careercoach_profile(action='get', field='{k}'), and ask the operator to trim this list."
                 )
 
     lines += ["", WRITE_GATE, "</operator_profile>"]

@@ -89,7 +89,12 @@ def state(plugin, iso):
 def tools(plugin, iso, monkeypatch, request):
     """The registered agent tools by name, with an isolated store and workspace."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    cfg = {"packet_root": str(iso / "ws")}
+    # The lean default surface (S4b) hides every pre-consolidation tool name behind extended_tools;
+    # the existing behaviour suites reach those tools by their old names, so register the FULL surface
+    # here — extended_tools on makes every legacy wrapper available (same implementations), exercising
+    # the "through the extended legacy names" half of the acceptance. test_tool_surface.py owns the
+    # lean-default and gating assertions.
+    cfg = {"packet_root": str(iso / "ws"), "extended_tools": True}
     # Browser fill is an opt-in beta (default off). Every suite that drives the fill/submit/handoff
     # loop needs it ON, and enabling it everywhere else is harmless, so turn it on by default — only
     # test_fill_optin exercises the default-off and per-ATS opt-in behaviour, and it builds its own

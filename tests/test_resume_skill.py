@@ -55,6 +55,8 @@ EXTERNAL_TOOLS: dict[str, str] = {
 # snake_case words in the skill text that are NOT tools: parameters, config keys, profile
 # fields, a plugin id. Listed so a genuine typo can't hide among them.
 NOT_TOOLS = {
+    "init_workspace",
+    "import_experience",
     "agent_browser",  # the plugin id, named when telling the operator what to enable
     "allowed_domains",
     "artifact_id",
@@ -128,16 +130,19 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
     return yaml.safe_load(fm), body
 
 
-def _registered(plugin, registry) -> set[str]:
-    plugin.register(registry)
-    return {getattr(t, "name", str(t)) for t in registry.tools}
+def _registered(plugin) -> set[str]:
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({})
+    plugin.register(reg)
+    return {getattr(t, "name", str(t)) for t in reg.tools}
 
 
 # ── registration ──────────────────────────────────────────────────────────────────────
-def test_the_skill_is_discoverable_and_declares_the_plugin_tools_it_calls(plugin, registry):
+def test_the_skill_is_discoverable_and_declares_the_plugin_tools_it_calls(plugin):
     """Same contract the other skills are held to: loadable frontmatter, and every
     ``careercoach_*`` tool it declares is actually registered by ``register()``."""
-    registered = _registered(plugin, registry)
+    registered = _registered(plugin)
 
     fm, body = _frontmatter(SKILL_DIR / "SKILL.md")
     assert fm["name"] == "resume"
@@ -147,7 +152,7 @@ def test_the_skill_is_discoverable_and_declares_the_plugin_tools_it_calls(plugin
         if name.startswith("careercoach_"):
             assert name in registered, f"resume declares unknown tool {name!r}"
         assert name in registered or name in EXTERNAL_TOOLS, f"undeclared tool in frontmatter: {name!r}"
-    assert "careercoach_read_profile" in declared, "the profile is the source of truth for facts"
+    assert "careercoach_profile" in declared, "the profile is the source of truth for facts"
 
     # …and the reverse: a declared tool no step actually calls is a hint the agent will
     # act on with nothing telling it how.
@@ -168,11 +173,11 @@ def test_the_router_points_at_every_sub_file_it_names():
 
 
 # ── the composition contract, both directions ─────────────────────────────────────────
-def test_every_tool_the_skill_names_exists_somewhere(plugin, registry):
+def test_every_tool_the_skill_names_exists_somewhere(plugin):
     """A skill that tells the agent to call a tool nobody registers fails silently at runtime
     as 'the agent just didn't do it'. Every tool-shaped word must be known, every call-shaped
     word must be a real tool, and every backticked bare word must be on purpose."""
-    registered = _registered(plugin, registry)
+    registered = _registered(plugin)
     tools = registered | set(EXTERNAL_TOOLS)
 
     for path in _skill_files():
@@ -251,7 +256,7 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     as the record points at nothing after a busy week — so the id is verified, recovery is
     written down, the snapshot is the copy of record, and exports don't burn slots."""
     tailor = _flat((SKILL_DIR / "master-and-tailor.md").read_text(encoding="utf-8"))
-    assert "Eviction" in tailor and "list_artifacts" in tailor and "careercoach_list_roles" in tailor
+    assert "Eviction" in tailor and "list_artifacts" in tailor and 'careercoach_role_packet(action="list")' in tailor
     assert "history" in tailor and "Tell the operator" in tailor
     # every layer that must survive eviction has a home, and recovery reads it back read-only
     export = _flat((SKILL_DIR / "export.md").read_text(encoding="utf-8"))
@@ -270,7 +275,7 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     assert "pass the same `req` it was filed under" in tailor, "one folder per role across both flows"
     packet_flow = _flat((ROOT / "skills/role-packet/SKILL.md").read_text(encoding="utf-8"))
     assert "pass the same `req` it was filed under" in packet_flow, "role-packet must reuse the resume's folder"
-    assert "careercoach_scaffold_role" not in tailor, "recovery must not use a write tool as a lookup"
+    assert 'careercoach_role_packet(action="scaffold"' not in tailor, "recovery must not use a write tool as a lookup"
     assert "Master Resume.html" in tailor, "the approved master's wording needs a copy of record"
     assert "the approved wording is gone" in tailor, "without one, say so — don't claim otherwise"
     assert "Nothing of record ever lives only in the panel" not in tailor
@@ -290,7 +295,7 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
 def test_the_profile_stays_the_source_of_truth():
     """A resume is where fabrication breaks in first. The rule is restated in the skill."""
     body = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-    assert "careercoach_read_profile" in body and "do_not_claim" in body
+    assert 'careercoach_profile(action="read"' in body and "do_not_claim" in body
     assert "/setup-coach" in body, "a thin profile must route to the interview, not to invention"
     imports = (SKILL_DIR / "import.md").read_text(encoding="utf-8")
     assert "must appear in the source text" in imports
@@ -575,7 +580,7 @@ def test_the_resume_skill_never_writes_into_the_operators_profile_sections():
     flows into careercoach_read_profile("experience") and the shareable profile export. A
     whole-section replace from the model is one slip from deleting it. Ids and paths live in
     the resume's own files; the only profile writes here are fact corrections during import."""
-    write_notes = re.compile(r"careercoach_update_profile\(\s*['\"]notes")
+    write_notes = re.compile(r"careercoach_(?:update_profile\(\s*|profile\([^)]*field\s*=\s*)['\"]notes")
     for path in _skill_files():
         text = path.read_text(encoding="utf-8")
         assert not write_notes.search(text), f"{path.name} writes to the operator's notes"
