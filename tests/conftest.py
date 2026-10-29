@@ -90,14 +90,12 @@ def tools(plugin, iso, monkeypatch, request):
     """The registered agent tools by name, with an isolated store and workspace."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
     cfg = {"packet_root": str(iso / "ws")}
-    if request.module.__name__ in {
-        "test_formfill",
-        "test_ats_greenhouse",
-        "test_ats_ashby",
-        "test_ats_workable",
-        "test_submitgate",
-        "test_handoff",
-    }:
+    # Browser fill is an opt-in beta (default off). Every suite that drives the fill/submit/handoff
+    # loop needs it ON, and enabling it everywhere else is harmless, so turn it on by default — only
+    # test_fill_optin exercises the default-off and per-ATS opt-in behaviour, and it builds its own
+    # registry rather than using this fixture. Enabling by exclusion means a new formfill/ATS test
+    # module can't silently inherit "fill off" by being left off a hard-coded allow-list.
+    if request.module.__name__ != "test_fill_optin":
         cfg["browser_fill"] = "greenhouse,lever,ashby,workable"
     reg = FakeRegistry(cfg)
     plugin.register(reg)

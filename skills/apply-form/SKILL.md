@@ -76,8 +76,10 @@ mode="replace")` only after they approve; it is never silently stripped.
 - For a Greenhouse URL, call `careercoach_prepare_application(url, company, role)` first — it returns
   a plan from the public schema plus an "Ask the operator about ONLY these" list.
 - Open the application and `browser_form_read` the live form. Pass that exact JSON array to
-  `careercoach_plan_fill(form_json, company, role, extra_answers, ats)` — set `ats="ashby"` for an
-  `jobs.ashbyhq.com` form. The plan draws values ONLY from confirmed answers plus any one-off
+  `careercoach_plan_fill(form_json, company, role, extra_answers, ats)` — set `ats` to the ATS type
+  you're applying through (`greenhouse`/`lever`/`ashby`/`workable`), which also tells the fill opt-in
+  whether this ATS is enabled; `ats="ashby"` additionally adds the résumé upload. The plan draws values
+  ONLY from confirmed answers plus any one-off
   `extra_answers` the operator gave; it never fuzzy-matches a select answer and never invents one.
 - The live form is the source of truth. The schema prep is a head start, not a substitute for the
   read-back.

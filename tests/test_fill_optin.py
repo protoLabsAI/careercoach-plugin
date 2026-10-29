@@ -89,6 +89,9 @@ def test_greenhouse_optin_round_trip_and_other_ats_refused(setup):
     out = asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS["greenhouse"]}))
     assert "Prepared from the Greenhouse public schema" in out
     assert "ada@example.com" in out
+    # The read-back instruction names the ats, so the agent doesn't call plan_fill with no ats and
+    # trip the (empty ats = off) refusal.
+    assert 'careercoach_plan_fill(form_json, company, role, ats="greenhouse")' in out
     fields = ats.greenhouse_fields(SCHEMA)[:1]
     plan = tools["careercoach_plan_fill"].invoke(
         {"ats": "greenhouse", "form_json": json.dumps(fields), "company": "A", "role": "R"}
@@ -106,6 +109,25 @@ def test_greenhouse_optin_round_trip_and_other_ats_refused(setup):
             tools["careercoach_plan_fill"].invoke({"ats": name, "form_json": "not JSON", "company": "A", "role": "R"})
         )
     assert formfill._path().read_bytes() == before
+
+
+@pytest.mark.parametrize("name", ["lever", "workable", "ashby"])
+def test_live_form_optin_names_ats_and_builds_session(setup, name):
+    """Opting a live-form ATS in makes prepare point at the live-form path naming THAT ats for
+    plan_fill, and plan_fill with that ats builds a session instead of handing off. This is the
+    enabled path the previous attempt broke: the messages said plan_fill with no ats, so the
+    (empty ats = off) refusal handed an opted-in operator back to the kit."""
+    ats, formfill, cfg, tools, _ = setup
+    cfg["browser_fill"] = name
+    out = asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": URLS[name]}))
+    assert "KIT HANDOFF" not in out
+    assert f'careercoach_plan_fill(form_json, company, role, ats="{name}")' in out
+    fields = ats.greenhouse_fields(SCHEMA)[:1]
+    plan = tools["careercoach_plan_fill"].invoke(
+        {"ats": name, "form_json": json.dumps(fields), "company": "A", "role": "R"}
+    )
+    assert "KIT HANDOFF" not in plan and "session_id:" in plan
+    assert formfill._path().exists()
 
 
 @pytest.mark.parametrize("result", [(None, "HTTP 404"), ({}, "")])
