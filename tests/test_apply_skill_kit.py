@@ -141,6 +141,15 @@ def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_
     assert not {t for t in writer.tools if t.startswith("careercoach_")} - registered
     assert "ONLY if the posting asks" in writer.system_prompt
     assert "produce a tailored CV and a cover letter" not in writer.system_prompt
+    for rule in (
+        "profile or story bank",
+        "[fill in: <what>]",
+        "never estimate",
+        "before showing a draft, run careercoach_read_sources(source='check', text=<draft>)",
+        "each flagged figure to the operator as a question or replace it with a placeholder",
+        "never silently include it",
+    ):
+        assert rule in writer.system_prompt
 
 
 def test_all_kit_instructions_generate_parts_before_saving_and_recover_drafts(plugin):

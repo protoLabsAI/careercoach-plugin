@@ -5,6 +5,11 @@
 > LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
 > [writing-style.md](writing-style.md) — read it first.
 
+Every candidate metric must come from the profile or story bank; if missing, write
+`[fill in: <what>]` and never estimate. Before showing a draft, run
+`careercoach_read_sources(source="check", text=<draft>)`; put each flagged figure to the user
+as a question or replace it with a placeholder, never silently include it.
+
 ## Rendering: `render_format`
 
 - **`html`** (default) — one self-contained HTML letter with print CSS, handed to the

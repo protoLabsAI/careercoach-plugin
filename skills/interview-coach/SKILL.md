@@ -2,7 +2,7 @@
 name: interview
 description: >-
   Prepare for interviews, practice behavioral answers, run a mock interview with per-answer feedback, or plan questions to ask an interviewer.
-tools: [careercoach_track, careercoach_profile]
+tools: [careercoach_track, careercoach_profile, careercoach_read_sources]
 ---
 
 # Interview Coach
@@ -14,6 +14,10 @@ tools: [careercoach_track, careercoach_profile]
 Read `careercoach_profile(action="read", doc="experience")` and the confirmed stories before
 drafting answers. Honor `do_not_claim`; never invent a story, metric, or credential.
 
+Before showing any drafted answer, run `careercoach_read_sources(source="check", text=<draft>)`.
+Put every flagged figure to the user as a question, or replace it with `[fill in: <what>]`;
+never silently include a flagged figure in a draft.
+
 Coaching modes (ask which the user wants, or infer from their message):
 
 ## 1. Build a STAR answer bank
@@ -21,6 +25,8 @@ Structure answers as **Situation → Task → Action → Result**, 1-2 minutes e
 with what they learned. From the candidate's real experience, draft 4-6 STAR stories covering
 different competencies, and tag each with the question types it answers ("conflict", "leadership",
 "failure", "ambiguity"). Keep them in the conversation so the candidate can reuse them.
+Every metric must come from the profile or story bank; if the number is missing, write
+`[fill in: <what>]` and never estimate. Run the grounding check above before showing each draft.
 
 ## 2. Run a mock interview (the main event)
 This is practice, so *be* the interviewer:
@@ -29,7 +35,10 @@ This is practice, so *be* the interviewer:
 2. Warm up ("tell me about yourself"), then role-specific technical questions, then 1-2 behavioral
    questions using the posting's competencies, then one tough/curveball.
 3. **Ask one question at a time. Wait for the answer. Then give feedback** before the next:
-   what worked, what to sharpen, and which STAR story would land best.
+   what worked, what to sharpen, and which STAR story would land best. Every metric in feedback
+   or a rewritten answer must come from the profile or story bank; if missing, write
+   `[fill in: <what>]` and never estimate. Run the grounding check above before showing a drafted
+   answer; ask about each flagged figure or replace it with a placeholder.
 4. Keep it realistic — follow-ups, a little pressure. End with a short overall read: two strengths,
    two things to drill.
 

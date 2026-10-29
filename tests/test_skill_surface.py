@@ -197,3 +197,34 @@ def test_the_always_on_write_gate_points_at_the_live_apply_skill():
     body = gate.group(1)
     assert "load_skill" in body, "the gate must still route through load_skill"
     assert "apply, then its writing-style.md" in body, "the gate must name the live apply skill"
+
+
+def test_interview_drafts_require_grounded_metrics_and_a_pre_display_check():
+    metadata, body = _read("interview-coach")
+    assert "careercoach_read_sources" in metadata["tools"]
+    flat = " ".join(body.split())
+    assert 'Before showing any drafted answer, run `careercoach_read_sources(source="check", text=<draft>)`' in flat
+    assert "Put every flagged figure to the user as a question" in flat
+    assert "never silently include a flagged figure" in flat
+    for heading in ("## 1. Build a STAR answer bank", "## 2. Run a mock interview (the main event)"):
+        section = body.split(heading, 1)[1].split("\n## ", 1)[0]
+        for rule in ("profile or story bank", "[fill in: <what>]", "never estimate", "grounding check"):
+            assert rule in section, (heading, rule)
+
+
+def test_cover_letter_checks_metrics_before_showing_a_draft():
+    # The guide carries the grounding check, and its own apply skill must declare the tool so a
+    # host that gates on the frontmatter still exposes it when the draft check runs.
+    metadata, _ = _read("apply-form")
+    assert "careercoach_read_sources" in metadata["tools"]
+    text = (SKILLS / "apply-form/cover-letter-guide.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    for rule in (
+        "profile or story bank",
+        "[fill in: <what>]",
+        "never estimate",
+        'Before showing a draft, run `careercoach_read_sources(source="check", text=<draft>)`',
+        "each flagged figure to the user as a question or replace it with a placeholder",
+        "never silently include it",
+    ):
+        assert rule in flat
