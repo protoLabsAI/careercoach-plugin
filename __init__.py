@@ -2166,7 +2166,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     return null;
   }
   function statusToColumn() {
-    var m = {}, cols = JOBS.columns || {};
+    var m = Object.create(null), cols = JOBS.columns || {};
     Object.keys(cols).forEach(function (col) {
       (cols[col] || []).forEach(function (s) { m[s] = col; });
     });
@@ -2294,22 +2294,27 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var board = document.getElementById('board');
     var cols = JOBS.columns || {};
     var colNames = Object.keys(cols);
-    if (!colNames.length) { board.innerHTML = '<p class="empty">No pipeline columns.</p>'; return; }
     var reverse = statusToColumn();
     var apps = JOBS.applications || [];
     var days = JOBS.followup_days || 0;
-    var buckets = {};
+    var buckets = Object.create(null);
+    var other = [];
     colNames.forEach(function (c) { buckets[c] = []; });
     apps.forEach(function (a) {
       var col = reverse[a.status];
       if (col && buckets[col]) buckets[col].push(a);
+      else other.push(a);
     });
 
     var selOpts = '<option value="">Move to…</option>' +
       colNames.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
 
-    board.innerHTML = colNames.map(function (col) {
-      var cards = buckets[col].map(function (a) {
+    // Unknown/legacy statuses remain visible, without inventing a persisted status or a
+    // move destination. Their cards can still be moved to any configured column.
+    var displayCols = other.length ? colNames.concat([null]) : colNames;
+    board.innerHTML = displayCols.map(function (col) {
+      var rows = col === null ? other : buckets[col];
+      var cards = rows.map(function (a) {
         var n = daysSince(lastMoveDate(a));
         var age = n == null ? '' : '<span>' + n + 'd</span>';
         // The follow-up nudge renders ONLY for an applied card the server flagged `followup`.
@@ -2319,16 +2324,17 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         return '<div class="pcard" draggable="true" data-id="' + esc(a.id) + '">' +
           '<div class="prole">' + esc(a.role) + '</div>' +
           '<div class="pco">' + esc(a.company) + '</div>' +
+          '<span class="pill">' + esc(a.status) + '</span>' +
           '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
           nudge +
           '<select class="movesel" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
         '</div>';
       }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
-      return '<div class="col" data-col="' + esc(col) + '">' +
-        '<h3>' + esc(col) + '<span class="count">' + buckets[col].length + '</span></h3>' +
+      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + '>' +
+        '<h3>' + esc(col === null ? 'Other statuses' : col) + '<span class="count">' + rows.length + '</span></h3>' +
         cards +
       '</div>';
-    }).join('');
+    }).join('') || '<p class="empty">No pipeline columns.</p>';
 
     board.querySelectorAll('.pcard').forEach(function (card) {
       card.addEventListener('dragstart', function (ev) {
@@ -2337,7 +2343,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       });
       card.addEventListener('dragend', function () { DRAG_ID = null; });
     });
-    board.querySelectorAll('.col').forEach(function (colEl) {
+    board.querySelectorAll('.col[data-col]').forEach(function (colEl) {
       colEl.addEventListener('dragover', function (ev) {
         ev.preventDefault();
         if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';

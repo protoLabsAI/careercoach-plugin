@@ -9,9 +9,82 @@ the page and the API can't drift apart. The DATA routes themselves are exercised
 
 from __future__ import annotations
 
+import json
 import re
 
+import pytest
+import quickjs
+
 from _plugin_testkit import FakeRegistry
+
+
+def _render_board(plugin, applications, columns):
+    """Execute the shipped renderer; DOM stub captures markup without a browser/host."""
+    ctx = quickjs.Context()
+    ctx.eval("""
+        var board = {innerHTML: '', querySelectorAll: function () { return []; }};
+        var document = {getElementById: function () { return board; }};
+    """)
+    html = plugin._DASHBOARD_HTML
+    start = html.index("  function esc(s)")
+    end = html.index("  function renderProfile(d)", start)
+    ctx.eval(html[start:end])
+    jobs = {"applications": applications, "columns": columns}
+    ctx.eval("JOBS = " + json.dumps(jobs) + "; renderBoard();")
+    # Rendering must not silently normalize stored statuses.
+    assert json.loads(ctx.eval("JSON.stringify(JOBS)")) == jobs
+    return ctx.eval("board.innerHTML")
+
+
+@pytest.mark.parametrize(
+    "status", ["Applied", "interview", "legacy", "", None, "__proto__", "constructor", "<img src=x>"]
+)
+def test_board_preserves_unknown_status_cards(plugin, state, status):
+    apps = [
+        {"id": "known", "role": "Known role", "status": "applied"},
+        {"id": "unknown", "role": "Legacy role", "status": status},
+        {"id": "missing", "role": "Missing status"},
+    ]
+    html = _render_board(plugin, apps, state.COLUMNS)
+    assert html.count('class="pcard"') == 3
+    assert 'Applied<span class="count">1</span>' in html
+    assert 'Other statuses<span class="count">2</span>' in html
+    for app in apps:
+        assert html.count('data-id="' + app["id"] + '"') == 1
+    fallback = html.split("Other statuses<span", 1)[1]
+    assert fallback.count('draggable="true"') == 2
+    assert fallback.count('class="movesel"') == 2
+    for name in state.COLUMNS:
+        assert '<option value="' + name + '">' in fallback
+    assert 'value="Other statuses"' not in html
+    assert 'data-col="Other statuses"' not in html
+    assert "<img src=x>" not in html
+    if status == "<img src=x>":
+        assert "&lt;img src=x&gt;" in fallback
+
+    # Once moved to a supported status, the same card belongs to that column.
+    apps[1]["status"] = "applied"
+    moved = _render_board(plugin, apps, state.COLUMNS)
+    assert 'Applied<span class="count">2</span>' in moved
+    assert 'Other statuses<span class="count">1</span>' in moved
+
+
+def test_board_keeps_six_columns_when_all_statuses_are_known(plugin, state):
+    apps = [{"id": s, "status": s} for statuses in state.COLUMNS.values() for s in statuses]
+    html = _render_board(plugin, apps, state.COLUMNS)
+    assert html.count('class="col"') == 6
+    assert html.count('class="pcard"') == len(apps)
+    assert "Other statuses" not in html
+    assert 'Closed<span class="count">2</span>' in html
+    assert '<span class="pill">rejected</span>' in html
+    assert '<span class="pill">passed</span>' in html
+
+
+def test_board_keeps_applications_visible_without_column_configuration(plugin):
+    html = _render_board(plugin, [{"id": "legacy", "status": "interview"}], {})
+    assert 'Other statuses<span class="count">1</span>' in html
+    assert 'data-id="legacy"' in html
+    assert "No pipeline columns." in _render_board(plugin, [], {})
 
 
 # ── r1: the plugin-kit + fleet-proxy contract, and the gated calls the page makes ─────
