@@ -272,6 +272,12 @@ def test_save_apply_kit_partial_kits_save_as_draft(tools, st, resume_pdf, use_re
     kit = st.load_applications()[0]["kit"]
     assert kit["status"] == "draft"
     assert kit["missing"] == expected_missing
+    assert ("careercoach_render_resume" in out) == ("résumé (no path)" in expected_missing)
+    assert ("cover_letter_needed=false" in out) == ("cover letter" in expected_missing)
+    assert ("careercoach_answers" in out) == ("answers" in expected_missing)
+    assert ("no_form_questions=true" in out) == ("answers" in expected_missing)
+    if "résumé (no path)" in expected_missing:
+        assert "pass its PDF path" in out
 
 
 def test_save_apply_kit_resume_path_to_a_missing_file_is_a_draft(tools, st, tmp_path):
@@ -291,20 +297,30 @@ def test_save_apply_kit_resume_path_to_a_missing_file_is_a_draft(tools, st, tmp_
     kit = st.load_applications()[0]["kit"]
     assert kit["status"] == "draft"
     assert kit["missing"] == [f"résumé (file not found: {missing})"]
+    assert str(missing) in out
+    assert "no file exists" in out
+    assert "re-render with careercoach_render_resume" in out
+    assert "pass the real PDF path" in out
+    assert "cover_letter_needed" not in out
+    assert "careercoach_answers" not in out
 
 
-def test_cover_letter_needed_false_removes_the_cover_letter_from_missing(tools, st, resume_pdf):
+@pytest.mark.parametrize("letter", [None, "", " \n\t"])
+def test_cover_letter_needed_false_removes_the_cover_letter_from_missing(tools, st, resume_pdf, letter):
     out = tools["careercoach_save_apply_kit"].invoke(
         {
             "company": "Acme",
             "role": "ML Engineer",
             "resume_path": resume_pdf,
             "resume_version": "v1",
+            "cover_letter": letter,
             "cover_letter_needed": False,  # posting asks for no letter
             "answers_json": '{"Q": "A"}',
         }
     )
     assert "Saved the apply kit" in out
+    assert "no cover letter (not requested)" in out
+    assert "(needed)" not in out
     kit = st.load_applications()[0]["kit"]
     assert kit["status"] == "complete" and kit["missing"] == []
 
@@ -322,6 +338,7 @@ def test_no_form_questions_true_removes_answers_from_missing(tools, st, resume_p
         }
     )
     assert "Saved the apply kit" in out
+    assert "no form questions" in out
     kit = st.load_applications()[0]["kit"]
     assert kit["status"] == "complete" and kit["missing"] == []
     assert kit["no_form_questions"] is True
@@ -348,7 +365,31 @@ def test_partial_update_on_a_complete_kit_stays_complete(tools, st, resume_pdf):
     kit = st.load_applications()[0]["kit"]
     assert kit["status"] == "complete" and kit["missing"] == []
     assert kit["resume"] == {"path": resume_pdf, "version": "v2", "built": st._today()}
+    assert "résumé v2, cover letter, 1 draft answer(s)" in out
     assert kit["no_form_questions"] is True  # preserved across the omitting update
+
+
+@pytest.mark.parametrize("letter", ["", "Dear team"])
+def test_complete_reply_preserves_saved_parts_when_only_needed_changes(tools, resume_pdf, letter):
+    save = tools["careercoach_save_apply_kit"]
+    ident = {"company": "Acme", "role": "ML Engineer"}
+    save.invoke(
+        {
+            **ident,
+            "resume_path": resume_pdf,
+            "resume_version": "v1",
+            "cover_letter": letter,
+            "cover_letter_needed": False,
+            "no_form_questions": True,
+        }
+    )
+
+    out = save.invoke({**ident, "cover_letter_needed": False})
+
+    cover = "cover letter" if letter else "no cover letter (not requested)"
+    assert f"résumé v1, {cover}, no form questions" in out
+    assert "Saved the apply kit" in out
+    assert "(needed)" not in out
 
 
 def test_save_apply_kit_accepts_answers_json_as_a_dict(tools, st, resume_pdf):
