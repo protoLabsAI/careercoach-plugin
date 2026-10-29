@@ -48,7 +48,7 @@ def register(registry) -> None:
     The DEFAULT tool surface is lean (S4b): ~12 merged tools around the core loop — find roles →
     evaluate → apply kit → track → interview prep. Each pre-consolidation ("legacy") tool name stays
     reachable behind ``extended_tools`` (default off), registered as a thin wrapper over the SAME
-    implementation, so jobCoach's schedules and prompts that name the old tools keep working. One
+    implementation, so existing schedules and prompts that name the old tools keep working. One
     always-on tool is NOT a legacy wrapper: ``careercoach_read_sources`` — a read-only view the
     delegate crew grounds on (see ``_register_delegate_read_tool``). The browser-fill tools (plan_fill,
     verify_fill, handoff, request_submit) register only when ``browser_fill`` (S3a) enables at least one
@@ -347,6 +347,27 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                 src += f"; {result.provider_label.split(' (')[0]} ignores `location`"
         src += "."
         jobs = result.jobs
+        from . import boards, scan, state, watchlist
+
+        try:
+            index = scan.tracked_index(state.load_applications())
+            matches = [
+                {
+                    **j,
+                    "id": f"{j['source']}:{j['url']}",
+                    "hash": boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", "")),
+                    "score": jobsource.best_prescore(j, query),
+                    "reason": watchlist.match_reason(j, query),
+                }
+                for j in jobs
+                if boards.passes(j, locations=location)
+            ]
+            untracked = [j for j in matches if not scan.annotate(j, index)["tracked"]]
+            watchlist.add_to_inbox(untracked)
+            # Retain displayed results for the view without repeating them in the digest.
+            watchlist.drop_from_inbox([j["id"] for j in untracked])
+        except state.StoreUnreadable as exc:
+            src += f" Results could not reach the inbox: {exc}."
         if not jobs:
             return f"No postings found for {query!r}. Try a broader query or a different location.\n{src}"
         from .boards import age_days
@@ -386,20 +407,31 @@ def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
         only_new: bool = False,
         limit: int = 0,
         remote: bool = False,
+        provider: str = "",
     ) -> str:
         """Find roles to pursue. source="watched" (default) scans the companies on your watchlist's own
         job boards — the freshest source, and it feeds the pipeline inbox; source="market" searches live
-        postings across the job source. `roles`/`query` are the titles or keywords to match (both
+        postings across the job source. Both sources retain results in the view inbox, marked as
+        already shown so the digest does not repeat them. `roles`/`query` are the titles or keywords to match (both
         accepted); `locations` where (places, or "remote"); `max_age_days` 0 = any age; `only_new`
         (watched) shows only roles no earlier scan returned; `remote` (market) remote-only; `limit` caps
-        results. Choose which companies are watched with careercoach_watchlist."""
+        results. `provider` (market) overrides Settings, e.g. "himalayas" or "hn" for keyless search.
+        Choose which companies are watched with careercoach_watchlist."""
         src = (source or "watched").strip().lower()
         if src == "market":
-            q = (query or roles or "").strip()
+            from .hunt import filters
+            from .profile import StoreUnreadable
+
+            try:
+                defaults = filters(registry.config)
+            except StoreUnreadable as exc:
+                return f"Cannot read scan defaults: {exc}"
+            q = (query or roles or defaults["roles"]).strip()
+            locations = locations or defaults["locations"]
             if not q:
                 return "What should I search the market for? Pass a role title or keywords as `query`."
             return await search_jobs.ainvoke(
-                {"query": q, "location": locations, "remote": remote, "limit": limit or 10}
+                {"query": q, "location": locations, "remote": remote, "limit": limit or 10, "source": provider}
             )
         if src in ("watched", ""):
             return await scan_boards.ainvoke(
@@ -2096,6 +2128,13 @@ def _register_profile_middleware(registry) -> None:
                 sig = profile.store_signature()
                 if force or sig != self._sig:
                     self._block = profile.context_block()
+                    if not self._block:
+                        self._block = (
+                            "<operator_profile>\n"
+                            "First run: profile empty — follow skills/job-hunt/SKILL.md's first-run flow; "
+                            "ask at most one confirmation question before the first scan.\n"
+                            "</operator_profile>"
+                        )
                     self._sig = sig
             except Exception as exc:  # noqa: BLE001 — context injection must never break a turn
                 log.debug("[careercoach] profile injection failed: %s", exc)

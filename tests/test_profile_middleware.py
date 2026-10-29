@@ -126,10 +126,10 @@ def test_a_field_recorded_mid_turn_shows_on_the_next_call(mw, profile):
     assert "location: Paris" in second
 
 
-def test_no_profile_no_frame(mw):
+def test_no_profile_gets_first_run_frame(mw):
     model = ScriptedModel()
     _run(mw, model)
-    assert [m.type for m in model.seen[0]] == ["system", "human"]
+    assert "First run:" in _text(model.seen[0][-1])
 
 
 def test_an_unreadable_profile_is_announced_not_silent(mw, profile):
