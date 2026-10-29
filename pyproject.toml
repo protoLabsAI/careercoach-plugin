@@ -1,6 +1,6 @@
 [project]
 name = "careercoach"
-version = "0.11.7"            # keep in lockstep with protoagent.plugin.yaml
+version = "0.12.0"            # keep in lockstep with protoagent.plugin.yaml
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
