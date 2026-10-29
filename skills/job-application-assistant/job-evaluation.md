@@ -79,7 +79,7 @@ most — a high-skills, low-energy job is a trap worth naming out loud.
 - **30-44 Weak Fit** — probably skip unless there's a strategic reason.
 - **<30 Poor Fit** — skip.
 
-After scoring, record the result with `careercoach_track_application` (company, role, fit_score,
+After scoring, record the result with `careercoach_track(action="track")` (company, role, fit_score,
 status `considering`, the posting URL as `source`) so it lands on the dashboard and feeds `/upskill`.
 
 ## Pre-application: should the candidate call first?

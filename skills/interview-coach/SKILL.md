@@ -5,7 +5,7 @@ description: >-
   "run a mock interview", "practice behavioral questions", "how do I answer 'what's your
   weakness'", "what should I ask them". Builds a STAR answer bank, runs realistic mock
   interviews with honest per-answer feedback, and prepares questions to ask the interviewer.
-tools: [careercoach_list_applications, company_researcher]
+tools: [careercoach_track, company_researcher]
 ---
 
 # Interview Coach

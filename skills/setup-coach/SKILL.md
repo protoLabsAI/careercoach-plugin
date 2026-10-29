@@ -6,7 +6,7 @@ description: >-
   "set me up", "get started", "onboard me", or any session where the operator profile is thin.
 user_facing: true
 slash: setup-coach
-tools: [careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_export_experience, careercoach_read_profile, careercoach_init_workspace, memory_recall, knowledge_ingest, list_skills, load_skill]
+tools: [careercoach_profile, memory_recall, knowledge_ingest, list_skills, load_skill]
 ---
 
 # First conversation
@@ -24,15 +24,15 @@ failure this skill exists to prevent. Interrogation is the last resort, not the 
 
 Before your first message, gather silently. None of this needs permission:
 
-- `careercoach_get_profile` — the completeness picture. Anything under **known** is settled;
+- `careercoach_profile(action="get")` — the completeness picture. Anything under **known** is settled;
   only **missing** is in play. If it's already complete, skip to step 4.
-- `careercoach_import_experience()` — if they keep their own `Resume/Experience.md`, this
+- `careercoach_profile(action="import_experience")` — if they keep their own `Resume/Experience.md`, this
   previews what it would add to the profile (the template's hint text and anything already
   recorded are skipped) and ends with a `preview_id`. That's a prior setup worth keeping: show them
   the preview and, once they confirm, call it again with `apply=true` and that `preview_id` —
   rather than asking it all again. If they edit the file later, re-import: only the new lines are
   added. Their file stays theirs, nothing writes over it.
-  `careercoach_read_profile("story-bank")` may hold their STAR stories too.
+  `careercoach_profile(action="read", doc="story-bank")` may hold their STAR stories too.
 - `memory_recall` for the operator's profile, background, abilities and voice.
 - Look at what's around: existing CVs or resumes in the workspace, saved artifacts, notes.
 - If they've ever shared a resume link or file, `knowledge_ingest` it — that handles PDFs and
@@ -55,10 +55,10 @@ serialising them; asking for email, phone, LinkedIn and portfolio in four separa
 behaviour that got a real first run abandoned halfway through. Two or three focused exchanges
 should finish most profiles.
 
-Record each field as it's settled with `careercoach_update_profile(field, content)`. Sections
+Record each field as it's settled with `careercoach_profile(action="update", field=field, content=content)`. Sections
 **append** by default, so record roles (or stories) one at a time as each is settled and every
 one is kept. To **correct** something already recorded, read the section with
-`careercoach_get_profile(field)`, fix it, and write the whole section back with `mode="replace"`
+`careercoach_profile(action="get", field=field)`, fix it, and write the whole section back with `mode="replace"`
 — appending a correction leaves the wrong line beside it. Identity facts hold one value each and
 are set outright: for `contact` or `headlines`, pass the whole line.
 
@@ -97,9 +97,9 @@ not after. Voice rules that arrive after the document is written have already fa
 ## 4. Prove it, then get out of the way
 
 Offer one real piece of work: score a posting they care about, or search their target roles.
-Run `careercoach_export_experience` so they have a portable copy of everything — it writes
+Run `careercoach_profile(action="export_experience")` so they have a portable copy of everything — it writes
 `Resume/Experience (profile export).md` and never touches their own `Resume/Experience.md`. If
-they later edit their own Experience.md, `careercoach_import_experience` brings the changes in
+they later edit their own Experience.md, `careercoach_profile(action="import_experience")` brings the changes in
 (preview, then `apply=true` with the `preview_id`).
 
 Close by telling them where the record lives: the **Career Coach** panel in the console shows

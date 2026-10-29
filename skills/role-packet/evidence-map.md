@@ -3,7 +3,7 @@
 The bridge artifact, and the honesty backbone of the whole packet. Before writing a single resume
 bullet, map **each requirement in the posting** to **the candidate's actual proof**. The resume,
 skills list, and cover letter then draw *only* on what this map supports — so nothing unfounded can
-leak downstream. Build it from the operator profile (`careercoach_read_profile("experience")`),
+leak downstream. Build it from the operator profile (`careercoach_profile(action="read", doc="experience")`),
 `Agent/story-bank.md`, and the recruiter brief.
 
 ## How to build it

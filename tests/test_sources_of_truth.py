@@ -201,12 +201,7 @@ def _skill(name: str) -> tuple[dict, str]:
     return yaml.safe_load(fm), body
 
 
-PROFILE_TOOLS = (
-    "careercoach_get_profile",
-    "careercoach_read_profile",
-    "careercoach_update_profile",
-    "careercoach_import_experience",
-)
+PROFILE_TOOLS = ("careercoach_profile",)
 
 
 def test_profile_skills_declare_the_profile_tools_their_steps_call():

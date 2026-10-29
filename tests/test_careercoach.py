@@ -343,12 +343,9 @@ def test_skills_declare_real_tools(plugin):
     Guards the failure mode this seam was built to fix: a skill instructing the agent to reach for
     something the plugin never exposes, which fails silently at runtime as "the agent just didn't
     do it". Also asserts each skill carries the frontmatter the host indexes on."""
-    # Register the FULL surface — a skill may name any reachable tool, default or legacy or
-    # browser-fill (S4b hides the legacy names behind extended_tools and the fill tools behind
-    # browser_fill), so resolve them all here.
     from _plugin_testkit import FakeRegistry
 
-    reg = FakeRegistry({"extended_tools": True, "browser_fill": "greenhouse,lever,ashby,workable"})
+    reg = FakeRegistry({})
     plugin.register(reg)
     registered = {getattr(t, "name", str(t)) for t in reg.tools}
 

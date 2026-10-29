@@ -171,15 +171,10 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
 
 
 def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
-    """It parses, carries name + description, and its frontmatter lists the tools the loop turns on —
-    the handoff, the submit gate, and the plan/verify read-back pair the card requires. Every
-    ``careercoach_*`` tool it declares must actually be registered (the silent-no-op failure mode).
-
-    The loop tools register only with browser_fill on (S3a) and the apply-kit tools name several
-    legacy tools, so register the full surface — extended_tools + browser_fill — to resolve them."""
+    """Default frontmatter resolves without opt-ins; fill tools stay in the gated beta body."""
     from _plugin_testkit import FakeRegistry
 
-    reg = FakeRegistry({"extended_tools": True, "browser_fill": "greenhouse,lever,ashby,workable"})
+    reg = FakeRegistry({})
     plugin.register(reg)
     registered = {getattr(t, "name", str(t)) for t in reg.tools}
 
@@ -194,7 +189,9 @@ def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
         "careercoach_verify_fill",
         "careercoach_plan_fill",
     }
-    assert required <= set(declared), f"apply-form must declare {sorted(required)}"
+    assert not required & set(declared)
+    beta = body.split("## Browser fill (opt-in beta)", 1)[1]
+    assert all(name in beta for name in required)
 
     for name in declared:
         if name.startswith("careercoach_"):

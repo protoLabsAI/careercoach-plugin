@@ -5,7 +5,7 @@ description: >-
   learn", "where are my skill gaps", "how do I become competitive for X roles", "make me a
   study plan". Aggregates the tracked pipeline (or a single posting) against the profile,
   builds a prioritized gap heatmap, and produces a learning plan with real, web-searched resources.
-tools: [careercoach_list_applications, company_researcher]
+tools: [careercoach_track, company_researcher]
 ---
 
 # Upskill
@@ -14,7 +14,7 @@ tools: [careercoach_list_applications, company_researcher]
 > `upskill/SKILL.md`.
 
 Two modes:
-- **Aggregate** (default) — analyse the whole tracked pipeline (`careercoach_list_applications`).
+- **Aggregate** (default) — analyse the whole tracked pipeline (`careercoach_track(action="list")`).
 - **Targeted** — analyse a single posting the user gives you (fetch it with `fetch_url`).
 
 ## Step 1 — Load

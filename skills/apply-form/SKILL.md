@@ -6,7 +6,7 @@ description: >-
   Hand off to the operator in the Career Coach view to copy answers and Mark applied.
   Browser form filling is an opt-in beta for explicitly enabled ATS types only; submission
   always requires the operator approval card. Nothing auto-submits.
-tools: [careercoach_save_apply_kit, careercoach_update_profile, careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_plan_fill, careercoach_verify_fill, careercoach_handoff, careercoach_request_submit, careercoach_track_application, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
+tools: [careercoach_save_apply_kit, careercoach_profile, careercoach_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_track, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
 ---
 
 # Build an apply kit
@@ -28,7 +28,7 @@ change this default flow; browser automation belongs only to the opt-in beta bel
 ## 2. Build the apply kit
 
 - Tailor the résumé using only confirmed profile facts. Show the exact wording and save the
-  approved résumé with `careercoach_update_profile(field="resume", …, mode="replace")` only
+  approved résumé with `careercoach_profile(action="update", field="resume", content=…, mode="replace")` only
   after the operator approves. Never include internal coaching annotations.
   `careercoach_render_resume(company)` → `browser_open <the returned local file:// url>` →
   `browser_pdf("resume-<company>.pdf")` produces the tailored PDF. Keep the returned PDF path
@@ -36,12 +36,12 @@ change this default flow; browser automation belongs only to the opt-in beta bel
   blocker; do not claim a PDF was built.
 - Write a cover letter ONLY if the posting asks for one. Follow the writing-style discipline
   and honesty test; verify company-specific claims against the research sources.
-- Get every form answer from `careercoach_get_answers`. Keep CONFIRMED and DRAFT answers
+- Get every form answer from `careercoach_answers(action="get")`. Keep CONFIRMED and DRAFT answers
   distinct; drafts stay drafts and must not be presented as approved answers. Ask the operator
   about new or missing questions, and never invent a response or re-ask a confirmed answer.
-  Use `careercoach_propose_answer` for proposed standard answers and
-  `careercoach_confirm_answers` ONLY after the operator explicitly confirms the exact values.
-  Read `careercoach_get_answers` again after confirmation. Nothing is written in the operator's
+  Use `careercoach_answers(action="propose")` for proposed standard answers and
+  `careercoach_answers(action="confirm")` ONLY after the operator explicitly confirms the exact values.
+  Read `careercoach_answers(action="get")` again after confirmation. Nothing is written in the operator's
   name that is not grounded in their confirmed profile or explicit answer.
 
 ## 3. Save the kit
@@ -66,7 +66,8 @@ The agent does not submit or mark the role applied in this default flow. Nothing
 ## Browser fill (opt-in beta)
 
 This section applies ONLY when the posting's ATS is explicitly enabled in the `browser_fill`
-setting, a comma-separated list of ATS types. Blank means off. Check the setting through
+setting, a comma-separated list of ATS types. Blank means off. The browser-fill tools
+are optional: check that they are present in the available tool list before calling them. Check the setting through
 `careercoach_prepare_application`; a kit handoff or refusal means stay with the default flow.
 Pass the posting's actual ATS to `careercoach_plan_fill`; never substitute another ATS to bypass
 its refusal. The support notes and live-form fallbacks below are subject to this opt-in gate.
@@ -112,9 +113,9 @@ Work the steps in order. Each is a real checkpoint; don't chain them silently pa
 operator should see what's happening.
 
 #### 1. Confirm the standard answers
-Call `careercoach_get_answers`. Only CONFIRMED answers ever fill a form. If something is a DRAFT or
-missing, propose it with `careercoach_propose_answer`, show the operator the exact values, and
-confirm with `careercoach_confirm_answers` ONLY on their explicit say-so — never confirm on their
+Call `careercoach_answers(action="get")`. Only CONFIRMED answers ever fill a form. If something is a DRAFT or
+missing, propose it with `careercoach_answers(action="propose")`, show the operator the exact values, and
+confirm with `careercoach_answers(action="confirm")` ONLY on their explicit say-so — never confirm on their
 behalf. An improvised answer is exactly the failure this loop exists to prevent.
 
 #### 2. Render and capture the résumé as a PDF
@@ -130,7 +131,7 @@ must never reach an employer (a 2026-10-05 PDF leaked exactly that). The `resume
 `Headline:` / `Location:` / `Contact:` header lines and a summary before the first `## ` heading,
 then `## ` sections (`### ` role headings and `-` bullets inside). It refuses, writing nothing, when
 the body is empty, has no `Contact:` line, or carries a coach annotation (it quotes the lines) —
-fix the body WITH the operator and save it with `careercoach_update_profile(field="resume", …,
+fix the body WITH the operator and save it with `careercoach_profile(action="update", field="resume", content=…,
 mode="replace")` only after they approve; it is never silently stripped.
 
 #### 3. Prepare, then read the live form
@@ -148,7 +149,7 @@ mode="replace")` only after they approve; it is never silently stripped.
 #### 4. Ask the operator about ONLY the unmapped items
 The plan ends with an explicit list: required fields with no confirmed answer, selects whose answer
 matched no option (with the options), and any answer still only a draft. Ask about THOSE and nothing
-else. Confirm any newly agreed draft with `careercoach_confirm_answers`; pass one-off answers back
+else. Confirm any newly agreed draft with `careercoach_answers(action="confirm")`; pass one-off answers back
 through `careercoach_plan_fill`'s `extra_answers`. Don't re-ask for anything already confirmed.
 
 #### 5. On Ashby, upload the résumé first
@@ -193,8 +194,7 @@ opens the form and is not the submit — don't spend the gate on it.
 
 #### 10. Confirm and track
 After the click, `browser_form_read` (or a snapshot) to confirm you're on the confirmation page, not
-still on the form with a validation error. Then record it with `careercoach_track_application(company,
-role, status="applied", source=<url>)`.
+still on the form with a validation error. Then record it with `careercoach_track(action="track", company=company, role=role, status="applied", source=<url>)`.
 
 ### Anti-fabrication, restated
 Every value that fills a field comes from a CONFIRMED standard answer, an operator-supplied one-off,

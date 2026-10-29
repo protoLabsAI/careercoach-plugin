@@ -8,7 +8,7 @@ description: >-
   exports become downloadable files. For scoring a posting or writing a cover letter see
   job-application-assistant; for the full filed application see role-packet; for the
   first-run interview see setup-coach.
-tools: [careercoach_read_profile, careercoach_get_profile, careercoach_update_profile, careercoach_import_experience, careercoach_write_artifact, careercoach_list_roles, careercoach_init_workspace, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, pin_artifact, show_component, load_skill]
+tools: [careercoach_profile, careercoach_role_packet, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, pin_artifact, show_component, load_skill]
 ---
 
 # Resume — build, parse, export, check
@@ -43,9 +43,9 @@ so the DOCX route is available when you have `execute_code` in your toolset and 
 
 | Step | Tool | Owned by | If it's absent |
 |------|------|----------|----------------|
-| Read the facts | `careercoach_read_profile`, `careercoach_get_profile` | careercoach (this plugin) | always present |
-| Correct the facts | `careercoach_update_profile`, `careercoach_import_experience` | careercoach | always present |
-| File a snapshot / find the workspace | `careercoach_write_artifact`, `careercoach_list_roles`, `careercoach_init_workspace` | careercoach | always present |
+| Read the facts | `careercoach_profile(action="read")`, `careercoach_profile(action="get")` | careercoach (this plugin) | always present |
+| Correct the facts | `careercoach_profile(action="update")`, `careercoach_profile(action="import_experience")` | careercoach | always present |
+| File a snapshot / find the workspace | `careercoach_role_packet(action="write")`, `careercoach_role_packet(action="list")`, `careercoach_profile(action="init_workspace")` | careercoach | always present |
 | Create the resume | `show_artifact(kind="html", …)` | **artifact** (bundled, on by default) | no artifact route at all — say so and fall back to showing the resume as chat markdown, which is a draft, not a deliverable |
 | Read it back / parse a file | `get_artifact`, `list_artifacts` | artifact | as above |
 | Edit it | `update_artifact`, `rewrite_artifact` | artifact | as above |
@@ -165,13 +165,13 @@ keeps the file an ATS reads faithful to the document the operator reviewed.
 The same rule as everywhere else in this plugin, restated because a resume is where it
 breaks first:
 
-- Facts come from `careercoach_read_profile("experience")` and
-  `careercoach_get_profile("skills")`. If the profile is thin, **say so and offer
+- Facts come from `careercoach_profile(action="read", doc="experience")` and
+  `careercoach_profile(action="get", field="skills")`. If the profile is thin, **say so and offer
   `/setup-coach`** — rendering a resume from an empty record is inventing a career.
 - `do_not_claim` is a hard stop, not a preference.
 - Reframe emphasis; never add an employer, title, date, degree or tool the profile
   doesn't hold. A number needs its baseline.
 - Anything the operator tells you mid-flow goes into the profile
-  (`careercoach_update_profile`) **before** it goes into the document.
+  (`careercoach_profile(action="update")`) **before** it goes into the document.
 - When parsing a resume you didn't write, every recorded fact must be traceable to text
   you actually read — see `import.md`.

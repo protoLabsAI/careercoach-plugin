@@ -208,3 +208,61 @@ def test_prompts_aliases_cover_every_capability_with_default_tools(plugin, iso):
     for capability, names in aliases.items():
         assert names, f"{capability} has an empty alias list"
         assert set(names) <= default_names, (capability, set(names) - default_names)
+
+
+def test_agent_instructions_use_available_tools(plugin, iso):
+    """Default instructions must work without either opt-in surface.
+
+    Optional instructions are confined to explicit sections with availability checks;
+    their names must resolve when that section's setting is enabled.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    default = _names(plugin, {})
+    extended = _names(plugin, {"extended_tools": True})
+    fill = _names(plugin, {"browser_fill": "greenhouse"})
+    paths = [root / "SOUL.md", *root.glob("workflows/*.yaml"), *root.glob("skills/**/*.md")]
+    for path in paths:
+        text = path.read_text()
+        optional_names = set()
+        if path == root / "skills/job-hunt/SKILL.md":
+            text, optional = text.split("## Optional extended tools", 1)
+            assert "extended_tools: true" in optional
+            assert "available tool list before calling" in optional
+            optional_names = set(re.findall(r"\bcareercoach_\w+", optional))
+            assert optional_names <= extended
+            assert {
+                "careercoach_import_history",
+                "careercoach_import_connections",
+                "careercoach_find_referrals",
+            } <= optional_names
+            assert 'careercoach_track(action="track"' in text
+            assert "ask who the operator knows" in text
+        elif path == root / "skills/apply-form/SKILL.md":
+            text, optional = text.split("## Browser fill (opt-in beta)", 1)
+            assert "browser_fill" in optional
+            assert "available tool list before calling" in optional
+            optional_names = set(re.findall(r"\bcareercoach_\w+", optional))
+            assert optional_names <= fill
+        names = set(re.findall(r"\bcareercoach_\w+", text))
+        assert names <= default, (path.relative_to(root), names - default)
+
+
+def test_truncated_hard_stops_point_to_default_profile_tool(plugin, profile, iso):
+    import ast
+    import re
+
+    stored = profile.empty_profile()
+    # Simulate an older profile whose hard stops exceed today's injection cap.
+    stored["sections"]["do_not_claim"] = "Never claim invented credentials.\n" * 2000
+    profile.save_profile(stored)
+    block = profile.context_block()
+    call = re.search(r"careercoach_\w+\([^)]*\)", block)
+    assert call, block
+    expression = ast.parse(call.group(), mode="eval").body
+    tool = _tools(plugin, {})[expression.func.id]
+    kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in expression.keywords}
+    assert kwargs == {"action": "get", "field": "do_not_claim"}
+    assert stored["sections"]["do_not_claim"].strip() in tool.invoke(kwargs)

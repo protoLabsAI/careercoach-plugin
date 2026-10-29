@@ -48,18 +48,18 @@ Titles are how `list_artifacts` rows are told apart, so they have to be unique:
 In the conversation that made an artifact you already have its id. In a later one:
 
 - **The master:** `list_artifacts`, by its title.
-- **A variant:** from its snapshot header first. `careercoach_list_roles` prints each role's
+- **A variant:** from its snapshot header first. `careercoach_role_packet(action="list")` prints each role's
   absolute folder path; read `tailored resume.md` there (`save_file_artifact` + `get_artifact`,
   then `delete_artifact` the temporary read) and take the id from its `Source: artifact <id>`
   line. Only if there is no snapshot, fall back to the title in `list_artifacts`.
-- **The workspace:** `careercoach_init_workspace` answers with its absolute path. On a seeded
+- **The workspace:** `careercoach_profile(action="init_workspace")` answers with its absolute path. On a seeded
   workspace it changes nothing; on a fresh one it lays down the fill-in templates, which you'd
   want anyway. The master's copy of record is `<workspace>/Resume/Master Resume.html`.
 
 ## Build the master
 
-1. **Read the facts first.** `careercoach_read_profile("experience")` plus
-   `careercoach_get_profile("skills")` and `("do_not_claim")`. Thin profile → say so and
+1. **Read the facts first.** `careercoach_profile(action="read", doc="experience")` plus
+   `careercoach_profile(action="get", field="skills")` and `careercoach_profile(action="get", field="do_not_claim")`. Thin profile → say so and
    offer `/setup-coach`. Don't build a resume from an empty record.
 2. **Read the discipline.** `job-application-assistant/cv-guide.md` for section order and
    the two-page budget; `writing-style.md` before any bullet.
@@ -124,7 +124,7 @@ So a resume artifact can vanish between conversations. Before editing one:
    out, and rewrite the copy of record with a fresh comment line for the new id, and `pin_artifact(<new id>)` if you have it. With no copy of
    record, the facts can be rebuilt from the profile but **the approved wording is gone**: say
    exactly that, rebuild from the profile, and have the operator approve it again.
-3. **A variant:** the same, from `tailored resume.md` in the folder `careercoach_list_roles`
+3. **A variant:** the same, from `tailored resume.md` in the folder `careercoach_role_packet(action="list")`
    prints for that role. Read it back with `save_file_artifact` + `get_artifact`, rebuild the
    variant in the template its header names, `delete_artifact` the temporary read, and re-file
    the snapshot with the new artifact id.
@@ -156,7 +156,7 @@ minutes gets you a batching note from the plugin, and rightly: every `rewrite_ar
 round-trips the entire document. Work out the whole change, then write it. Targeted
 `update_artifact` calls are exempt and are the right tool for small fixes.
 
-**Re-file the snapshot after every edit** to a variant — `careercoach_write_artifact` with
+**Re-file the snapshot after every edit** to a variant — `careercoach_role_packet(action="write")` with
 the new version in its header — and rewrite the master's copy of record after every approved
 master edit. An edit that exists only in the artifact is an edit the next eviction deletes.
 
@@ -183,15 +183,15 @@ canonical full history; the variant is aimed at one posting and can be cut hard.
 ## The snapshot
 
 ```
-careercoach_write_artifact(company, role, "tailored-resume", content, req)
+careercoach_role_packet(action="write", company=company, role=role, artifact="tailored-resume", content=content, req=req)
 ```
 
 **One folder per role, across both flows.** The folder is named from `role` and `req`, so
 pass the posting's requisition id whenever it has one — exactly as the role-packet flow does.
-If `careercoach_list_roles` already shows a folder for this company and role, reuse it: pass
+If `careercoach_role_packet(action="list")` already shows a folder for this company and role, reuse it: pass
 the same `req` it was filed under (empty if it has none), even if you've since learned the
 req. Otherwise one role ends up with two folders. Filing a snapshot creates the folder if it
-isn't there, so the role then shows in `careercoach_list_roles` as a started packet (for
+isn't there, so the role then shows in `careercoach_role_packet(action="list")` as a started packet (for
 example `1/11 artifacts`) — tell the operator that's where the resume is filed, not that a
 full packet is under way.
 

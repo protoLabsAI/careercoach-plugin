@@ -6,7 +6,7 @@ description: >-
   benefits negotiation, whether to take a job, and career-direction / reflection. Triggers:
   "help me think about my career", "what roles should I target", "should I take this offer",
   "how do I negotiate this salary", "compare these two offers", "how do I position myself".
-tools: [careercoach_list_applications, company_researcher]
+tools: [careercoach_track, company_researcher]
 ---
 
 # Career Strategy Coach

@@ -8,7 +8,7 @@ description: >-
   tailored, honest, verified documents. To build, import, export or ATS-check the resume
   document itself see resume; for interview practice see interview-coach;
   for positioning / offers / negotiation see career-strategy; for skill gaps see upskill.
-tools: [careercoach_track_application, careercoach_list_applications, careercoach_get_profile, careercoach_read_profile, careercoach_update_profile, careercoach_import_experience, company_researcher]
+tools: [careercoach_track, careercoach_profile, company_researcher]
 ---
 
 # Job Application Assistant
@@ -34,7 +34,7 @@ that step (progressive disclosure), don't inline them all up front:
 - Delegate company research to the **`company_researcher`** subagent — it returns a *sourced* brief.
 - Score the posting with the rubric in `job-evaluation.md` (weights come from the live
   `careercoach` knobs; the operator can retune with `careercoach_preset` / `careercoach_tune`).
-- Present the evaluation table + verdict. Record it with `careercoach_track_application`
+- Present the evaluation table + verdict. Record it with `careercoach_track(action="track")`
   (fit score + status `considering`).
 - **Do not silently proceed.** Give a straight recommendation (apply / apply-with-caveats /
   skip) and ask the user whether to draft. If experience match < 50, warn that honest
@@ -42,14 +42,14 @@ that step (progressive disclosure), don't inline them all up front:
 
 ### Step 2 — Tailor the CV (on request)
 - Read `cv-guide.md` and `writing-style.md`.
-- Load the candidate's verified history with `careercoach_read_profile("experience")` — the
+- Load the candidate's verified history with `careercoach_profile(action="read", doc="experience")` — the
   operator profile, the single source of truth (never a workspace `Resume/Experience.md`; that
-  only reaches the profile through `careercoach_import_experience`) — plus
-  `careercoach_get_profile("skills")` and `("stories")` as needed. The `<operator_profile>` block
+  only reaches the profile through `careercoach_profile(action="import_experience")`) — plus
+  `careercoach_profile(action="get", field="skills")` and `careercoach_profile(action="get", field="stories")` as needed. The `<operator_profile>` block
   you already have each turn is only an index; read the full record before drafting from it. If
   it's thin, say so and offer `/setup-coach` — tailoring against an empty profile is just
   inventing a career. Anything new they tell you goes into the profile
-  (`careercoach_update_profile`) before it goes into a draft.
+  (`careercoach_profile(action="update")`) before it goes into a draft.
 - Honour `do_not_claim` from that block as a hard stop, not a preference.
 - Reframe *emphasis* from that history, never fabricate (see the honesty test in
   `writing-style.md`).

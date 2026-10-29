@@ -20,7 +20,7 @@ def _skill():
 def test_default_builds_saves_and_hands_off_without_browser_form_tools():
     metadata, default, _ = _skill()
     assert "apply kit" in metadata["description"]
-    for tool in ("careercoach_render_resume", "browser_pdf", "careercoach_get_answers", "careercoach_save_apply_kit"):
+    for tool in ("careercoach_render_resume", "browser_pdf", "careercoach_answers", "careercoach_save_apply_kit"):
         assert tool in metadata["tools"]
         assert tool in default
     assert default.index("## 1. Evaluate") < default.index("## 2. Build")
@@ -64,7 +64,7 @@ def test_workflow_final_step_saves_apply_kit_and_hands_off():
         "apply kit",
         "careercoach_render_resume",
         "browser_pdf",
-        "careercoach_get_answers",
+        "granted standard-answers read tool",
         "careercoach_save_apply_kit",
         "cover letter ONLY if the posting asks for one",
         "keep drafts as drafts",

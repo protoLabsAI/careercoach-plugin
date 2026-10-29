@@ -56,7 +56,7 @@ steps:
       Write a cover letter ONLY if the posting asks for one, following the writing-style
       discipline and honesty test. Verify every company-specific claim against research sources.
       If the verdict was Weak or Poor Fit, say so and stop rather than forcing a draft.
-      Get every form answer from careercoach_get_answers; keep drafts as drafts and ask the
+      Read every form answer using your granted standard-answers read tool; keep drafts as drafts and ask the
       operator about new or missing questions. If operator input is unavailable, report the
       pending questions without inventing answers or claiming the kit is complete.
       Save the apply kit with careercoach_save_apply_kit: the returned PDF path, known version,
