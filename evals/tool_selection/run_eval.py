@@ -1,11 +1,14 @@
 """Fixed first-tool selection benchmark (never executes selected tools).
 
 Install requirements-dev.txt, then run:
-    python evals/tool_selection/run_eval.py --label before --config extended_tools=true
+    python evals/tool_selection/run_eval.py --label before
     python evals/tool_selection/run_eval.py --label smoke --dry-run
 
 Live runs use EVAL_BASE_URL (a /v1-style base), EVAL_API_KEY and EVAL_MODEL.
-Declare the endpoint host in protoagent.plugin.yaml capabilities.network first.
+EVAL_BASE_URL explicitly selects the endpoint for this standalone developer CLI.
+It is independent of the shipped plugin runtime capabilities.network permissions.
+Use --config KEY=VALUE for existing plugin settings; the current full tool surface
+is registered by default.
 Dry-run picks are synthetic plumbing checks, not model accuracy measurements.
 The testkit's name-only host knob stubs have permissive placeholder schemas;
 results identify these explicitly. All plugin-owned schemas come from registration.
@@ -177,9 +180,8 @@ def endpoint_from_env():
     if not all((base_url, api_key, model)):
         raise ValueError("live runs require EVAL_BASE_URL, EVAL_API_KEY and EVAL_MODEL")
     url = urlsplit(base_url)
-    allowed = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["capabilities"]["network"]
-    if url.scheme not in {"http", "https"} or url.hostname not in allowed:
-        raise ValueError("EVAL_BASE_URL host must be declared in protoagent.plugin.yaml capabilities.network")
+    if url.scheme not in {"http", "https"} or not url.hostname:
+        raise ValueError("EVAL_BASE_URL must be an HTTP(S) URL with a hostname")
     if url.username or url.password or url.query or url.fragment:
         raise ValueError("EVAL_BASE_URL must not contain credentials, a query or a fragment")
     return base_url, api_key, model

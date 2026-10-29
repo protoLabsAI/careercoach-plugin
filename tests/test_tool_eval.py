@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from evals.tool_selection import run_eval as evaluation
 
@@ -86,8 +87,8 @@ def test_collects_actual_schemas_and_passes_config(monkeypatch, iso):
         original_init(self, *args, **kwargs)
 
     monkeypatch.setattr(FakeRegistry, "__init__", capture)
-    tools, placeholders = evaluation.collect_tools({"extended_tools": True})
-    assert received == [{"extended_tools": True}]
+    tools, placeholders = evaluation.collect_tools({"jobs_provider": "himalayas"})
+    assert received == [{"jobs_provider": "himalayas"}]
     functions = {t["function"]["name"]: t["function"] for t in tools}
     assert len(functions) == len(tools)
     assert {"web_search", "fetch_url", "memory_recall", "browser_open"} <= functions.keys()
@@ -135,15 +136,45 @@ def test_endpoint_failures_are_not_scored_as_abstentions():
             evaluation.model_pick(client, "https://example.com/v1", "key", "model", "prompt", [])
 
 
-def test_endpoint_requires_manifest_allowlist(monkeypatch):
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://api.openai.com/v1", "https://unlisted.example/v1", "http://localhost:8000/v1"],
+)
+def test_eval_endpoint_is_independent_of_plugin_manifest(monkeypatch, tmp_path, base_url):
+    manifest = yaml.safe_load((evaluation.ROOT / "protoagent.plugin.yaml").read_text())
+    assert "api.openai.com" not in manifest["capabilities"]["network"]
+    # No manifest exists here: endpoint selection must not read runtime permissions.
+    monkeypatch.setattr(evaluation, "ROOT", tmp_path)
     monkeypatch.setenv("EVAL_API_KEY", "test-secret")
     monkeypatch.setenv("EVAL_MODEL", "test-model")
-    monkeypatch.setenv("EVAL_BASE_URL", "https://api.openai.com/v1")
-    assert evaluation.endpoint_from_env() == ("https://api.openai.com/v1", "test-secret", "test-model")
-    monkeypatch.setenv("EVAL_BASE_URL", "https://unlisted.example/v1")
-    with pytest.raises(ValueError, match="declared"):
+    monkeypatch.setenv("EVAL_BASE_URL", base_url)
+    assert evaluation.endpoint_from_env() == (base_url, "test-secret", "test-model")
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "file:///tmp/model",
+        "https:///v1",
+        "https://user:secret@example.com/v1",
+        "https://example.com/v1?key=secret",
+        "https://example.com/v1#fragment",
+    ],
+)
+def test_eval_endpoint_rejects_invalid_urls(monkeypatch, base_url):
+    monkeypatch.setenv("EVAL_API_KEY", "test-secret")
+    monkeypatch.setenv("EVAL_MODEL", "test-model")
+    monkeypatch.setenv("EVAL_BASE_URL", base_url)
+    with pytest.raises(ValueError, match="EVAL_BASE_URL"):
         evaluation.endpoint_from_env()
-    monkeypatch.delenv("EVAL_API_KEY")
+
+
+@pytest.mark.parametrize("missing", ["EVAL_BASE_URL", "EVAL_API_KEY", "EVAL_MODEL"])
+def test_eval_endpoint_requires_explicit_configuration(monkeypatch, missing):
+    monkeypatch.setenv("EVAL_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("EVAL_API_KEY", "test-secret")
+    monkeypatch.setenv("EVAL_MODEL", "test-model")
+    monkeypatch.delenv(missing)
     with pytest.raises(ValueError, match="require"):
         evaluation.endpoint_from_env()
 
@@ -173,7 +204,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         "--label",
         "offline",
         "--config",
-        "extended_tools=true",
+        "jobs_provider=himalayas",
         "--config",
         "jobs_api_key=do-not-record",
         "--output-dir",

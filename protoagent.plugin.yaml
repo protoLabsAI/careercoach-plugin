@@ -22,7 +22,6 @@ min_protoagent_version: "0.34.0"
 # public application schema) call out directly, so `network` lists exactly those hosts.
 capabilities:
   network:
-    - "api.openai.com"  # standalone tool-selection eval endpoint; not used by plugin tools
     - "jsearch.p.rapidapi.com"
     - "himalayas.app"
     - "hn.algolia.com"
