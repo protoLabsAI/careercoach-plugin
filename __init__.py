@@ -1310,8 +1310,13 @@ def _kit_handoff(ats: str) -> str:
     return (
         f"KIT HANDOFF — browser fill is off for {ats or 'unknown ATS'}. "
         "careercoach_plan_fill is disabled for this ATS. Build the apply kit: "
-        "careercoach_render_resume → browser_pdf for the PDF, a cover letter only if the posting asks, "
-        'and confirmed answers from careercoach_answers(action="get"). Save it with careercoach_save_apply_kit. '
+        "careercoach_render_resume → browser_open (local file:// URL) → browser_pdf; keep the PDF path. "
+        "Then write a cover letter only if the posting asks, then collect confirmed answers from "
+        'careercoach_answers(action="get"). Only THEN call careercoach_save_apply_kit with all three together: '
+        "resume_path=PDF path, cover_letter=letter text, answers_json=question-to-answer object/dict or JSON string. "
+        'If no letter is needed, pass cover_letter="" and cover_letter_needed=false; '
+        "set no_form_questions=true only if there genuinely are no form questions. "
+        "If the reply says DRAFT, fill in the listed missing parts and save again with all three; report blockers. "
         "The operator fills the form from the Career Coach view using copy buttons. "
         "To opt into browser fill (beta), add the ATS type to the browser_fill setting "
         "(greenhouse, lever, ashby, workable). Unknown ATS types cannot be enabled. Never auto-submit."
@@ -2061,10 +2066,14 @@ def _register_subagents(registry) -> None:
             "answers or write the operator's profile — you hold no tool for either; save one-off "
             "answers only as DRAFTS and leave every confirmation and profile change to the operator in "
             "the Career Coach view. When the posting is a URL, fetch its public form questions with "
-            "careercoach_prepare_application (it returns a kit handoff when browser fill is off). Save "
-            "the kit with careercoach_save_apply_kit (the returned PDF path, "
-            "known version, the cover letter only when requested, and one-off answers as drafts); when "
-            'no letter is requested pass cover_letter="" and cover_letter_needed=false. Then hand '
+            "careercoach_prepare_application (it returns a kit handoff when browser fill is off). Only THEN call "
+            "careercoach_save_apply_kit with all three together: resume_path=the returned PDF path, "
+            "cover_letter=letter text, answers_json=a question-to-answer object/dict or JSON string "
+            "(not the answer-bank report). Include resume_version if known; kit answers are stored as drafts. "
+            'When no letter is requested pass cover_letter="" and cover_letter_needed=false. '
+            "Set no_form_questions=true only when there genuinely are no form questions. "
+            "If the reply says DRAFT, fill in the listed missing parts and save again with all three; "
+            "report blockers requiring operator input without claiming completion. Then hand "
             "off: tell the operator to open the role in the Career Coach view, review the drafts, "
             "attach the PDF, fill the form with the copy buttons, and press Mark applied after "
             "submitting it themselves — do not mark the role applied yourself. End with a verification "
@@ -3297,7 +3306,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var text;
     if (kind === 'kit') {
       text = 'Build the apply kit for ' + role + ' at ' + company + ' ' + ref +
-        '. Save it with careercoach_save_apply_kit.';
+        '. Render the résumé with careercoach_render_resume → browser_open (local file:// URL) → browser_pdf; ' +
+        'keep the PDF path. Then write a cover letter if the posting asks for one, then collect answers with ' +
+        'careercoach_answers(action="get"). Only THEN call careercoach_save_apply_kit with all three together: ' +
+        'resume_path=PDF path, cover_letter=letter text, answers_json=question-to-answer object/dict or JSON string. ' +
+        'If no letter is needed, pass cover_letter="" and cover_letter_needed=false; ' +
+        'set no_form_questions=true only if there genuinely are no form questions. ' +
+        'If the reply says DRAFT, fill in the listed missing parts and save again with all three; report blockers.';
     } else if (kind === 'tailor') {
       text = 'Tailor my resume for ' + role + ' at ' + company + ' ' + ref + '.';
     } else {

@@ -52,13 +52,20 @@ change this default flow; browser automation belongs only to the opt-in beta bel
 
 ## 3. Save the kit
 
-Call `careercoach_save_apply_kit(company, role, resume_path=<returned PDF path>,
+Only AFTER rendering the résumé PDF, writing any requested cover letter, and collecting
+answers with `careercoach_answers`, pass all three together to
+`careercoach_save_apply_kit(company, role, resume_path=<returned PDF path>,
 resume_version=<known version>, cover_letter=<text only if requested>,
 cover_letter_needed=<whether the posting asks>, answers_json=<JSON question-to-answer object>)`.
-Omit an unknown version. Standard answers remain in the answer bank; use `answers_json` for
-one-off answers discussed with the operator. This tool stores those as DRAFT even when the
+Omit an unknown version. `cover_letter` is letter text; `answers_json` accepts a question-to-answer
+object/dict or its JSON string, not the answer-bank report. Include the collected form answers,
+including one-off answers discussed with the operator; standard answers remain in the answer bank.
+This tool stores kit answers as DRAFT even when the
 operator supplied them; do not relabel them as confirmed. If no letter is requested, pass
 `cover_letter=""` and `cover_letter_needed=false` to clear any stale letter on this role.
+Pass `no_form_questions=true` only when there genuinely are no form questions.
+If the save reply says DRAFT, fill in the listed missing parts and save again with all three;
+report any blocker without claiming the kit is complete.
 Check that saving succeeded before announcing the handoff. Saving prepares the role; it does
 not mark it applied.
 
