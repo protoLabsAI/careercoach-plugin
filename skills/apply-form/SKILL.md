@@ -2,7 +2,7 @@
 name: apply
 description: >-
   Evaluate a specific posting, draft its CV or cover letter, build a saved apply kit, or work up a full gated role packet. Use for "should I apply", "apply to this job", or "build the role packet".
-tools: [careercoach_role_packet, careercoach_save_apply_kit, careercoach_profile, careercoach_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_track, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
+tools: [careercoach_role_packet, careercoach_save_apply_kit, careercoach_profile, careercoach_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_track, careercoach_read_sources, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
 ---
 
 # Build an apply kit
@@ -41,7 +41,11 @@ change this default flow; browser automation belongs only to the opt-in beta bel
   and its version if known. If rendering refuses or a PDF tool is unavailable, report the
   blocker; do not claim a PDF was built.
 - Write a cover letter ONLY if the posting asks for one. Follow the writing-style discipline
-  and honesty test; verify company-specific claims against the research sources.
+  and honesty test; verify company-specific claims against the research sources. Every metric
+  must come from the profile or story bank; if it's missing, write `[fill in: <what>]` and never
+  estimate. Before showing the draft, run `careercoach_read_sources(source="check", text=<draft>)`
+  and put each flagged figure to the operator as a question or replace it with a placeholder,
+  never silently include it.
 - Get every form answer from `careercoach_answers(action="get")`. Keep CONFIRMED and DRAFT answers
   distinct; drafts stay drafts and must not be presented as approved answers. Ask the operator
   about new or missing questions, and never invent a response or re-ask a confirmed answer.

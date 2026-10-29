@@ -213,6 +213,10 @@ def test_interview_drafts_require_grounded_metrics_and_a_pre_display_check():
 
 
 def test_cover_letter_checks_metrics_before_showing_a_draft():
+    # The guide carries the grounding check, and its own apply skill must declare the tool so a
+    # host that gates on the frontmatter still exposes it when the draft check runs.
+    metadata, _ = _read("apply-form")
+    assert "careercoach_read_sources" in metadata["tools"]
     text = (SKILLS / "apply-form/cover-letter-guide.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
     for rule in (
