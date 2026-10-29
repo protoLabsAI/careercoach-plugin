@@ -2229,8 +2229,7 @@ def _register_views(registry, cfg) -> None:
         apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
         return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
 
-    @data.post("/inbox/{item_id:path}/keep")
-    async def _keep(item_id: str):
+    def _keep_inbox_item(item_id: str):
         """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its score,
         reason and posting evidence) and hide it from the inbox. Existing applications are
         preserved unchanged."""
@@ -2261,14 +2260,35 @@ def _register_views(registry, cfg) -> None:
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
 
-    @data.post("/inbox/{item_id:path}/dismiss")
-    async def _dismiss(item_id: str):
+    def _dismiss_inbox_item(item_id: str):
         """Drop a watch-inbox item and remember the decision so it doesn't come back."""
         try:
             wl.dismiss([item_id])
         except wl.StoreUnreadable as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         return JSONResponse({"ok": True})
+
+    @data.post("/inbox/keep")
+    async def _keep_body(payload: dict = Body(default={})):  # noqa: B008 — FastAPI body declaration
+        item_id = payload.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return JSONResponse({"error": "id must be a non-empty string"}, status_code=400)
+        return _keep_inbox_item(item_id)
+
+    @data.post("/inbox/dismiss")
+    async def _dismiss_body(payload: dict = Body(default={})):  # noqa: B008 — FastAPI body declaration
+        item_id = payload.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return JSONResponse({"error": "id must be a non-empty string"}, status_code=400)
+        return _dismiss_inbox_item(item_id)
+
+    @data.post("/inbox/{item_id:path}/keep")
+    async def _keep(item_id: str):
+        return _keep_inbox_item(item_id)
+
+    @data.post("/inbox/{item_id:path}/dismiss")
+    async def _dismiss(item_id: str):
+        return _dismiss_inbox_item(item_id)
 
     @data.post("/applications/{app_id}/move")
     async def _move(app_id: str, payload: dict = Body(default={})):
@@ -2923,7 +2943,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 
   function inboxAction(id, action, btns) {
     btns.forEach(function (b) { b.disabled = true; });
-    write('/inbox/' + encodeURIComponent(id) + '/' + action, null)
+    write('/inbox/' + action, {id: id})
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         load();

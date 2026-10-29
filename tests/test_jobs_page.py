@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import quote
 
 import pytest
 import quickjs
@@ -113,8 +114,11 @@ def test_page_targets_jobs_keep_dismiss_and_move(plugin):
     html = plugin._DASHBOARD_HTML
     assert "api('/jobs')" in html  # the board + inbox data
     assert "api('/state')" in html  # the profile/rubric disclosure
-    # keep / dismiss are built as /inbox/<id>/<action>
-    assert "'/inbox/' + encodeURIComponent(id) + '/' + action" in html
+    # URL-shaped inbox ids travel in JSON, never in a fleet-proxied path.
+    assert "write('/inbox/' + action, {id: id})" in html
+    assert "'/inbox/' + encodeURIComponent(" not in html
+    assert "headers: { 'Content-Type': 'application/json' }" in html
+    assert "JSON.stringify(body)" in html
     assert "inboxAction(id, 'keep'" in html
     assert "inboxAction(id, 'dismiss'" in html
     # move is /applications/<id>/move with a {status} body
@@ -129,6 +133,11 @@ def test_page_target_routes_exist_on_the_gated_router(plugin):
     paths = {getattr(r, "path", "") for r in router.routes}
     assert "/jobs" in paths
     assert "/state" in paths
+    assert "/inbox/keep" in paths
+    assert "/inbox/dismiss" in paths
+    ordered_paths = [getattr(r, "path", "") for r in router.routes]
+    for action in ("keep", "dismiss"):
+        assert ordered_paths.index(f"/inbox/{action}") < ordered_paths.index("/inbox/{item_id:path}/" + action)
     assert any(p.startswith("/inbox/") and p.endswith("/keep") for p in paths)
     assert any(p.startswith("/inbox/") and p.endswith("/dismiss") for p in paths)
     assert any(p.startswith("/applications/") and p.endswith("/move") for p in paths)
@@ -235,3 +244,65 @@ def test_profile_disclosure_is_collapsed_and_reuses_state_rendering(plugin):
     assert "renderProfile" in html
     assert "context_block" in html  # the "exactly what it's told each turn" block
     assert 'id="profile-ctx"' in html
+
+
+def _dynamic_id_resources(html):
+    # Match concatenated request arguments, including direct kit.apiFetch calls.
+    # Tokens keep encodeURIComponent's parentheses from ending the path match.
+    token = r"""(?:'[^']*'|"[^"]*"|encodeURIComponent\([^)]*\)|[A-Za-z_$][\w.$]*)"""
+    paths = re.findall(rf"\b(?:api|write|apiFetch)\(\s*({token}(?:\s*\+\s*{token})*)", html)
+    # Also catch encoded segments assigned to a path before passing it to a helper.
+    paths += re.findall(r"""['"][^'"]*/['"]\s*\+\s*encodeURIComponent\([^)]*\)""", html)
+    resources = set()
+    for path in paths:
+        # The action is an operation name, not an id. Exempt only this exact path;
+        # adding an id before or after it must still be scanned.
+        if path == "'/inbox/' + action":
+            continue
+        resources.update(
+            re.findall(
+                r""" /([\w-]+)/['"]\s*\+\s*(?:encodeURIComponent\(|[A-Za-z_$])""",
+                path,
+                re.VERBOSE,
+            )
+        )
+    return resources
+
+
+def _assert_fleet_safe_id(item_id):
+    encoded = quote(item_id, safe="-_.!~*'()")
+    assert not re.search(r"%2f|%2e|%5c|%25", encoded, re.IGNORECASE), encoded
+    assert not any(char in item_id for char in ("/", "\\", "%")), item_id
+
+
+def test_dynamic_path_ids_are_fleet_safe(plugin, state, tmp_path, monkeypatch):
+    monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path / "cc"))
+    producers = {
+        "applications": lambda: state.track_application(company="Acme", role="Engineer")["id"],
+    }
+    resources = _dynamic_id_resources(plugin._DASHBOARD_HTML)
+    assert "applications" in resources  # the scan must not silently match nothing
+    assert "inbox" not in resources, "Inbox ids belong in the JSON body"
+    assert not resources - producers.keys(), (
+        f"Add a real id producer for dynamic path resources: {resources - producers.keys()}"
+    )
+    for resource in resources:
+        _assert_fleet_safe_id(producers[resource]())
+
+    with pytest.raises(AssertionError):
+        _assert_fleet_safe_id("himalayas:https://himalayas.app/companies/acme/jobs/123?ref=x&y=1")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "write('/inbox/' + encodeURIComponent(id) + '/' + action, null)",
+        "api('/new_resource/' + id + '/detail')",
+        "write('/new_resource/' + row.id, {})",
+        "kit.apiFetch('/api/plugins/careercoach/new_resource/' + encodeURIComponent(row.id))",
+        "var path = '/new_resource/' + encodeURIComponent(id); api(path)",
+    ],
+)
+def test_dynamic_path_scan_detects_encoded_and_raw_ids(source):
+    expected = "inbox" if "/inbox/" in source else "new_resource"
+    assert _dynamic_id_resources(source) == {expected}
