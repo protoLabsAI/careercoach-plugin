@@ -159,6 +159,51 @@ def test_save_apply_kit_stores_everything_and_moves_saved_to_preparing(tools, st
     assert r["kit"]["answers"] == [{"key": "Why Acme?", "label": "Why Acme?", "value": "Mission", "status": "draft"}]
 
 
+@pytest.mark.parametrize(
+    "update, resume_changes, letter_changes",
+    [
+        ({"resume_version": " v3 "}, {"version": "v3"}, {}),
+        ({"resume_path": " /tmp/new.pdf "}, {"path": "/tmp/new.pdf"}, {}),
+        ({"cover_letter": "Updated letter"}, {}, {"text": "Updated letter"}),
+        ({"cover_letter_needed": True}, {}, {"needed": True}),
+        ({"cover_letter_needed": False}, {}, {"needed": False}),
+        ({"resume_path": ""}, {"path": ""}, {}),
+        ({"resume_version": ""}, {"version": ""}, {}),
+        ({"cover_letter": ""}, {}, {"text": ""}),
+        ({}, {}, {}),
+        (
+            {"resume_path": None, "resume_version": None, "cover_letter": None, "cover_letter_needed": None},
+            {},
+            {},
+        ),
+    ],
+)
+def test_save_apply_kit_partial_updates_preserve_omitted_fields(tools, st, update, resume_changes, letter_changes):
+    save = tools["careercoach_save_apply_kit"]
+    identity = {"company": "Acme", "role": "ML Engineer"}
+    save.invoke(
+        {
+            **identity,
+            "resume_path": "/tmp/acme.pdf",
+            "resume_version": "v2",
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "answers_json": '{"Why Acme?": "Mission"}',
+        }
+    )
+    before = st.load_applications()[0]
+
+    out = save.invoke({**identity, **update})
+
+    assert "Saved the apply kit" in out
+    after = st.load_applications()[0]
+    assert after["kit"]["resume"] == {**before["kit"]["resume"], **resume_changes}
+    assert after["kit"]["cover_letter"] == {**before["kit"]["cover_letter"], **letter_changes}
+    assert after["kit"]["answers"] == before["kit"]["answers"]
+    assert after["history"] == before["history"]
+    assert len(after["kit"]["events"]) == len(before["kit"]["events"]) + 1
+
+
 def test_save_apply_kit_tracks_an_absent_role_as_preparing(tools, st):
     out = tools["careercoach_save_apply_kit"].invoke(
         {"company": "Globex", "role": "Staff Engineer", "resume_path": "/tmp/g.pdf", "resume_version": "v1"}

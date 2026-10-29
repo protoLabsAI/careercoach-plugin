@@ -147,17 +147,18 @@ def _register_apply_kit_tool(registry) -> None:
     def careercoach_save_apply_kit(
         company: str,
         role: str,
-        resume_path: str = "",
-        resume_version: str = "",
-        cover_letter: str = "",
-        cover_letter_needed: bool = False,
+        resume_path: str | None = None,
+        resume_version: str | None = None,
+        cover_letter: str | None = None,
+        cover_letter_needed: bool | None = None,
         answers_json: str = "",
     ) -> str:
         """Save the apply kit for one role — the tailored résumé PDF path/version, a cover letter (when the posting
         asks for one), and one-off form answers — onto its pipeline row, and move a Saved row to `preparing`. The
         operator files the form themselves; nothing is submitted. `answers_json` is an optional JSON object of form
         question -> answer, stored as DRAFT (shown to the operator, never used as a confirmed answer). Tracks the role
-        as `preparing` if it isn't in the pipeline yet."""
+        as `preparing` if it isn't in the pipeline yet. Omitted or null résumé/cover-letter fields preserve saved
+        values; pass an empty string to clear a field or false to clear the cover-letter-needed flag."""
         company_s, role_s = (company or "").strip(), (role or "").strip()
         answers: list[dict] = []
         text = (answers_json or "").strip()
@@ -179,14 +180,18 @@ def _register_apply_kit_tool(registry) -> None:
                 row = state.track_application(company=company_s, role=role_s, status="preparing")
             app_id = row["id"]
             parts: dict = {}
-            if resume_path or resume_version:
-                parts["resume"] = {
-                    "path": (resume_path or "").strip(),
-                    "version": (resume_version or "").strip(),
-                    "built": state._today(),
-                }
-            if cover_letter or cover_letter_needed:
-                parts["cover_letter"] = {"text": cover_letter or "", "needed": bool(cover_letter_needed)}
+            if resume_path is not None or resume_version is not None:
+                parts["resume"] = {"built": state._today()}
+                if resume_path is not None:
+                    parts["resume"]["path"] = resume_path.strip()
+                if resume_version is not None:
+                    parts["resume"]["version"] = resume_version.strip()
+            if cover_letter is not None or cover_letter_needed is not None:
+                parts["cover_letter"] = {}
+                if cover_letter is not None:
+                    parts["cover_letter"]["text"] = cover_letter
+                if cover_letter_needed is not None:
+                    parts["cover_letter"]["needed"] = cover_letter_needed
             if answers:
                 parts["answers"] = answers
             saved = state.set_kit(app_id, **parts)
@@ -206,7 +211,7 @@ def _register_apply_kit_tool(registry) -> None:
             pass
         pieces: list[str] = []
         if parts.get("resume"):
-            v = parts["resume"]["version"]
+            v = parts["resume"].get("version", "")
             pieces.append(f"résumé {v}" if v else "résumé")
         if parts.get("cover_letter"):
             pieces.append("cover letter" if (cover_letter or "").strip() else "cover letter (needed)")
