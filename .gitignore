@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 .venv/
 uv.lock
+
+# Local tool-selection benchmark outputs
+evals/tool_selection/results/
