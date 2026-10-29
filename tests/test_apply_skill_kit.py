@@ -1,11 +1,13 @@
 """Agent-facing apply defaults to a saved kit; browser automation stays opt-in."""
 
+import re
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 BETA_HEADING = "## Browser fill (opt-in beta)"
+TOOL_TOKEN = re.compile(r"\b(?:careercoach|browser)_[a-z_]+\b")
 
 
 def _skill():
@@ -78,3 +80,31 @@ def test_workflow_final_step_saves_apply_kit_and_hands_off():
         assert tool not in prompt
     assert "Apply kit" in workflow["output"]
     assert "Mark applied" in workflow["output"]
+
+
+def test_application_writer_subagent_owns_every_tool_its_step_names(plugin, registry):
+    """The write step runs as the application_writer subagent, so every tool its prompt tells it to
+    call must be in that subagent's own toolset — otherwise run_workflow("apply") cannot build the
+    PDF, read the answer bank or save the kit (the cross-file gap the last review caught)."""
+    plugin.register(registry)
+    writer = next(c for c in registry.subagents if c.name == "application_writer")
+    registered = {t.name for t in registry.tools}
+
+    workflow = yaml.safe_load((ROOT / "workflows/apply.yaml").read_text(encoding="utf-8"))
+    write_step = workflow["steps"][-1]["prompt"]
+    named = set(TOOL_TOKEN.findall(write_step))
+    assert {
+        "careercoach_render_resume",
+        "browser_open",
+        "browser_pdf",
+        "careercoach_get_answers",
+        "careercoach_save_apply_kit",
+    } <= named  # guards the test itself: these are the tools the step relies on
+    missing = named - set(writer.tools)
+    assert not missing, f"application_writer lacks tools its step calls: {sorted(missing)}"
+
+    # Every careercoach_* tool the subagent is granted is one the plugin actually registers,
+    # and the kit-first prompt no longer hard-codes a cover letter for every application.
+    assert not {t for t in writer.tools if t.startswith("careercoach_")} - registered
+    assert "ONLY if the posting asks" in writer.system_prompt
+    assert "produce a tailored CV and a cover letter" not in writer.system_prompt
