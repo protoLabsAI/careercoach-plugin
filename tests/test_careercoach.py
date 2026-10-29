@@ -37,13 +37,12 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.13.1 (PATCH): the bd-vw2k fix — inbox Keep/Dismiss now POST body routes
-    (/inbox/keep and /inbox/dismiss with {id}) so the hub fleet proxy no longer refuses them with
-    "400 ambiguous path encoding" when the agent is opened through the desktop app."""
+    This release is v0.13.2 (PATCH): blank packet roots use the agent's own data directory,
+    and incomplete apply kits are saved as drafts with accurate missing-item replies."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.13.1"
+    assert pyproject == "0.13.2"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
