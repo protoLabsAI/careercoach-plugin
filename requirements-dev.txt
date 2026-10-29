@@ -4,6 +4,8 @@ fastapi>=0.110
 pyyaml>=6
 httpx>=0.27
 pytest>=8
+# Execute the embedded jobs-page renderer in host-free regression tests.
+quickjs>=1.19.4
 # The profile middleware test drives a REAL create_agent, so a host contract change fails a
 # test instead of silently disabling the block. Pinned to protoAgent's uv.lock — bump together.
 langchain==1.4.0

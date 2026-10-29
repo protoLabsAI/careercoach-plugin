@@ -1970,10 +1970,11 @@ def _register_watch_verifier(registry) -> None:
     registry.register_goal_verifier("careercoach:new_matches", _verify)
 
 
-# The dashboard page. Self-contained: loads the DS plugin-kit (CSS + JS) and lets it own the
+# The jobs view (S1c). Self-contained: loads the DS plugin-kit (CSS + JS) and lets it own the
 # `protoagent:init` handshake — it applies the console's LIVE theme (stamps data-theme on :root
 # so the --pl-* tokens follow light/dark) and hands back a slug-aware authed `apiFetch`, which we
-# use for the gated /state route. Base is derived fleet-proxy-safe from the iframe's own path.
+# use for the gated /jobs · keep · dismiss · move routes. Base is derived fleet-proxy-safe from the
+# iframe's own path (ADR 0042). Live refresh subscribes to `careercoach.#` and reloads on an event.
 _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Career Coach</title>
@@ -1985,68 +1986,125 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   document.head.appendChild(link);
 </script>
 <style>
-  :root { --gap: 16px; }
-  body { margin: 0; padding: 28px; background: var(--pl-color-bg, #0a0f14);
+  :root { --gap: 14px; }
+  body { margin: 0; padding: 24px; background: var(--pl-color-bg, #0a0f14);
          color: var(--pl-color-fg, #e6e6e6);
          font-family: var(--pl-font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif); }
   h1 { font-size: 20px; margin: 0 0 2px; color: var(--pl-color-accent, #9b87f2); }
-  .sub { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin: 0 0 22px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); margin-bottom: 24px; }
+  .sub { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin: 0 0 20px; }
   .card { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-          border-radius: 12px; padding: 16px 18px; }
-  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-             color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 10px; font-weight: 600; }
-  .big { font-size: 26px; font-weight: 700; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--pl-color-border, #232b36); }
-  th { color: var(--pl-color-fg-muted, #9aa0aa); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+          border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .card > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 12px; font-weight: 600; }
+  .empty { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 14px; padding: 16px 0; }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
           background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa); }
   .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent, #9b87f2); }
+  code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
+
+  /* Inbox: new roles the watch surfaced, each a keep/dismiss decision. */
+  .inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px;
+                padding: 12px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
+  .inbox-item:first-child { border-top: 0; }
+  .inbox-item .title { font-weight: 600; font-size: 14px; }
+  .inbox-item .co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  .score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; padding: 2px 8px;
+           border-radius: 999px; background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-accent, #9b87f2); }
+  .reason { flex-basis: 100%; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  .inbox-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .plink { color: var(--pl-color-accent, #9b87f2); font-size: 12px; text-decoration: none; }
+  .plink:hover { text-decoration: underline; }
+  button.btn { font: inherit; font-size: 13px; cursor: pointer; padding: 5px 12px; border-radius: 8px;
+               border: 1px solid var(--pl-color-border, #232b36); background: var(--pl-color-bg-subtle, #1b2330);
+               color: var(--pl-color-fg, #e6e6e6); }
+  button.btn.keep { border-color: var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+
+  /* Pipeline board: six columns, cards drag between them (or use the per-card Move-to select). */
+  .board { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: var(--gap);
+           align-items: start; overflow-x: auto; }
+  @media (max-width: 860px) { .board { grid-template-columns: repeat(2, minmax(150px, 1fr)); } }
+  .col { background: var(--pl-color-bg-subtle, #1b2330); border: 1px solid var(--pl-color-border, #232b36);
+         border-radius: 10px; padding: 8px; min-height: 60px; }
+  .col.over { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed; }
+  .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 2px 4px 8px;
+            color: var(--pl-color-fg-muted, #9aa0aa); font-weight: 600; display: flex; justify-content: space-between; }
+  .col h3 .count { background: var(--pl-color-bg-raised, #12181f); border-radius: 999px; padding: 0 7px; }
+  .pcard { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
+           border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
+  .pcard:last-child { margin-bottom: 0; }
+  .pcard .prole { font-weight: 600; font-size: 13px; }
+  .pcard .pco { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; }
+  .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
+                  color: var(--pl-color-fg-muted, #9aa0aa); margin-top: 5px; }
+  .pcard .nudge { margin-top: 6px; font-size: 12px; color: var(--pl-color-accent, #9b87f2);
+                  border: 1px solid var(--pl-color-accent, #9b87f2); border-radius: 6px; padding: 4px 7px; }
+  .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; padding: 4px;
+                    border-radius: 6px; border: 1px solid var(--pl-color-border, #232b36);
+                    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+
+  /* The secondary disclosures: the profile the coach holds, and the fit rubric. Compact, below the board. */
+  details.disc { margin-top: 12px; }
+  details.disc > summary { cursor: pointer; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px;
+                           padding: 6px 0; font-weight: 600; }
   .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
   .row .name { width: 92px; color: var(--pl-color-fg-muted, #9aa0aa); text-transform: capitalize; }
   .track { flex: 1; height: 6px; border-radius: 4px; background: var(--pl-color-border, #232b36); overflow: hidden; }
-  .empty { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 14px; padding: 18px 0; }
-  .coach { margin-top: 24px; padding: 16px 18px; border-radius: 12px;
-           border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; line-height: 1.6; }
-  code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
-  /* Profile panel: wider labels than the rubric rows, and unrecorded fields read as muted
-     rather than absent — a gap you can see is a gap the operator can close. */
+  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent, #9b87f2); }
   #profile .row { align-items: baseline; gap: 12px; }
   #profile .row .name { width: 190px; flex: none; text-transform: none; }
   #profile .row .empty { padding: 0; font-size: 13px; font-style: italic; }
   #profile-ctx { margin: 10px 0 0; padding: 12px; border-radius: 8px; overflow-x: auto;
                  background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa);
                  font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+  .coach { margin-top: 18px; padding: 14px 16px; border-radius: 12px;
+           border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa);
+           font-size: 13px; line-height: 1.6; }
+
+  /* The inline move-failure toast and the rejected/passed chooser — no browser modals (sandboxed iframe). */
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
+           background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-accent, #9b87f2);
+           color: var(--pl-color-fg, #e6e6e6); padding: 10px 16px; border-radius: 10px; font-size: 13px;
+           opacity: 0; pointer-events: none; transition: opacity .15s; max-width: 80%; }
+  #toast.show { opacity: 1; }
+  #chooser { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+             background: rgba(0,0,0,.5); }
+  #chooser .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
+                  border-radius: 12px; padding: 20px; max-width: 320px; }
+  #chooser p { margin: 0 0 14px; font-size: 14px; }
+  #chooser .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 </style></head>
 <body>
   <h1 id="title">Career Coach</h1>
-  <p class="sub" id="sub">Loading your pipeline…</p>
-
-  <div class="grid" id="stats"></div>
+  <p class="sub" id="sub">Loading your jobs…</p>
 
   <div class="card">
-    <h2>What your coach knows about you</h2>
-    <p class="sub" id="profile-cov">Loading…</p>
-    <p class="sub">A read-only view. To change anything, tell your coach in chat.</p>
-    <div id="profile"></div>
-    <details style="margin-top:12px">
-      <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
-        Exactly what it&rsquo;s told each turn
-      </summary>
-      <pre id="profile-ctx"></pre>
-    </details>
+    <h2>New roles from your watch</h2>
+    <div id="inbox"><p class="empty">Loading…</p></div>
   </div>
 
-  <div class="card" style="margin-top:16px">
+  <div class="card">
     <h2>Pipeline</h2>
-    <div id="pipeline"><p class="empty">Loading…</p></div>
+    <div class="board" id="board"><p class="empty">Loading…</p></div>
   </div>
 
-  <div class="card" style="margin-top:16px">
-    <h2>Fit rubric — how a posting is scored</h2>
-    <div id="weights"></div>
+  <div class="card">
+    <details class="disc">
+      <summary>What your coach knows about you</summary>
+      <p class="sub" id="profile-cov" style="margin-top:10px">Loading…</p>
+      <p class="sub">A read-only view. To change anything, tell your coach in chat.</p>
+      <div id="profile"></div>
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
+          Exactly what it&rsquo;s told each turn
+        </summary>
+        <pre id="profile-ctx"></pre>
+      </details>
+    </details>
+    <details class="disc">
+      <summary>Fit rubric — how a posting is scored</summary>
+      <div id="weights" style="margin-top:10px"></div>
+    </details>
   </div>
 
   <div class="coach">
@@ -2056,11 +2114,23 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     CV + cover letter. Tune how strictly it scores with <code>careercoach_preset growth-first</code>.
   </div>
 
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="chooser" role="dialog" aria-modal="true">
+    <div class="box">
+      <p id="chooser-q">Close this role as rejected, or passed on?</p>
+      <div class="choices">
+        <button class="btn keep" id="choose-passed">Mark passed (default)</button>
+        <button class="btn" id="choose-rejected">Mark rejected</button>
+        <button class="btn" id="choose-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
 <script type="module">
   // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme: it stamps
   // data-theme on :root so the --pl-* tokens track the console's light/dark theme (and re-theme
   // live). Import it and let it drive; fall back to a plain fetch if it can't load (older host /
-  // offline) so the panel still renders — just without theme sync.
+  // offline) so the page still renders — just without theme sync.
   var kit;
   try { kit = await import(BASE + '/_ds/plugin-kit.js'); }
   catch (e) { kit = { initPluginView: function (cb) { cb(); },
@@ -2069,12 +2139,241 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function api(path) {
     return kit.apiFetch('/api/plugins/careercoach' + path).then(function (r) { return r.json(); });
   }
+  function write(path, body) {
+    return kit.apiFetch('/api/plugins/careercoach' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body == null ? undefined : JSON.stringify(body)
+    });
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+  var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
+  var DRAG_ID = null;
+
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { t.classList.remove('show'); }, 4000);
+  }
+
+  function findApp(id) {
+    var list = JOBS.applications || [];
+    for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
+    return null;
+  }
+  function statusToColumn() {
+    var m = Object.create(null), cols = JOBS.columns || {};
+    Object.keys(cols).forEach(function (col) {
+      (cols[col] || []).forEach(function (s) { m[s] = col; });
+    });
+    return m;
+  }
+  function isClosedColumn(statuses) {
+    return statuses.indexOf('rejected') !== -1 && statuses.indexOf('passed') !== -1;
+  }
+
+  // Days since the row last moved — its most recent history entry (else updated/date). Computed in
+  // the browser so the card can show "Nd" without the server stamping a clock into every row.
+  function lastMoveDate(a) {
+    var h = a.history || [];
+    if (h.length) return h[h.length - 1].date || '';
+    return a.updated || a.date || '';
+  }
+  function daysSince(dateStr) {
+    if (!dateStr) return null;
+    var then = new Date(String(dateStr).slice(0, 10) + 'T00:00:00Z');
+    if (isNaN(then.getTime())) return null;
+    var ms = Date.now() - then.getTime();
+    return ms < 0 ? 0 : Math.floor(ms / 86400000);
+  }
+
+  // Dropping on Closed (rejected OR passed) asks which, with passed as the default. An inline
+  // chooser, not window.confirm — a sandboxed iframe may block native modals.
+  function askClosedStatus() {
+    return new Promise(function (resolve) {
+      var ov = document.getElementById('chooser');
+      var passed = document.getElementById('choose-passed');
+      var rejected = document.getElementById('choose-rejected');
+      var cancel = document.getElementById('choose-cancel');
+      function done(v) {
+        ov.style.display = 'none';
+        passed.onclick = rejected.onclick = cancel.onclick = null;
+        resolve(v);
+      }
+      passed.onclick = function () { done('passed'); };
+      rejected.onclick = function () { done('rejected'); };
+      cancel.onclick = function () { done(null); };
+      ov.style.display = 'flex';
+      passed.focus();
+    });
+  }
+
+  // Optimistic move: flip the card's status and re-render now; on a non-2xx (or network error)
+  // roll the status back, re-render, and surface an inline toast. On success, reload for the
+  // authoritative row (new date, history, recomputed follow-up).
+  function moveApp(id, status) {
+    var app = findApp(id);
+    if (!app || app.status === status) return;
+    var prev = app.status;
+    app.status = status;
+    renderBoard();
+    write('/applications/' + encodeURIComponent(id) + '/move', { status: status })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        load();
+      })
+      .catch(function () {
+        app.status = prev;
+        renderBoard();
+        toast('Could not move that role — left it where it was.');
+      });
+  }
+  function moveToColumn(id, col) {
+    var app = findApp(id);
+    if (!app) return;
+    var statuses = (JOBS.columns || {})[col] || [];
+    if (!statuses.length || statuses.indexOf(app.status) !== -1) return;  // already there / unknown
+    if (isClosedColumn(statuses)) {
+      askClosedStatus().then(function (s) { if (s) moveApp(id, s); });
+    } else {
+      moveApp(id, statuses[0]);
+    }
+  }
+
+  function inboxAction(id, action, btns) {
+    btns.forEach(function (b) { b.disabled = true; });
+    write('/inbox/' + encodeURIComponent(id) + '/' + action, null)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        load();
+      })
+      .catch(function () {
+        btns.forEach(function (b) { b.disabled = false; });
+        toast('Could not ' + action + ' that role — try again.');
+      });
+  }
+
+  function renderInbox() {
+    var box = document.getElementById('inbox');
+    var items = JOBS.inbox || [];
+    if (!items.length) {
+      box.innerHTML = '<p class="empty">Nothing new — your watch hasn\\'t surfaced any roles to review.</p>';
+      return;
+    }
+    box.innerHTML = items.map(function (it) {
+      var score = Number(it.score || 0);
+      var link = it.url
+        ? '<a class="plink" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>'
+        : '';
+      var reason = it.reason ? '<div class="reason">' + esc(it.reason) + '</div>' : '';
+      return '<div class="inbox-item" data-id="' + esc(it.id) + '">' +
+        '<span class="title">' + esc(it.title) + '</span>' +
+        '<span class="co">' + esc(it.company) + '</span>' +
+        '<span class="score">' + score + '</span>' +
+        '<span class="inbox-actions">' + link +
+          '<button class="btn keep" data-keep>Keep</button>' +
+          '<button class="btn" data-dismiss>Dismiss</button>' +
+        '</span>' + reason +
+      '</div>';
+    }).join('');
+    box.querySelectorAll('.inbox-item').forEach(function (el) {
+      var id = el.getAttribute('data-id');
+      var keep = el.querySelector('[data-keep]');
+      var dismiss = el.querySelector('[data-dismiss]');
+      var btns = [keep, dismiss];
+      keep.addEventListener('click', function () { inboxAction(id, 'keep', btns); });
+      dismiss.addEventListener('click', function () { inboxAction(id, 'dismiss', btns); });
+    });
+  }
+
+  function renderBoard() {
+    var board = document.getElementById('board');
+    var cols = JOBS.columns || {};
+    var colNames = Object.keys(cols);
+    var reverse = statusToColumn();
+    var apps = JOBS.applications || [];
+    var days = JOBS.followup_days || 0;
+    var buckets = Object.create(null);
+    var other = [];
+    colNames.forEach(function (c) { buckets[c] = []; });
+    apps.forEach(function (a) {
+      var col = reverse[a.status];
+      if (col && buckets[col]) buckets[col].push(a);
+      else other.push(a);
+    });
+
+    var selOpts = '<option value="">Move to…</option>' +
+      colNames.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
+
+    // Unknown/legacy statuses remain visible, without inventing a persisted status or a
+    // move destination. Their cards can still be moved to any configured column.
+    var displayCols = other.length ? colNames.concat([null]) : colNames;
+    board.innerHTML = displayCols.map(function (col) {
+      var rows = col === null ? other : buckets[col];
+      var cards = rows.map(function (a) {
+        var n = daysSince(lastMoveDate(a));
+        var age = n == null ? '' : '<span>' + n + 'd</span>';
+        // The follow-up nudge renders ONLY for an applied card the server flagged `followup`.
+        var nudge = a.followup
+          ? '<div class="nudge">No reply in ' + (n == null ? days : n) + ' days — follow up?</div>'
+          : '';
+        return '<div class="pcard" draggable="true" data-id="' + esc(a.id) + '">' +
+          '<div class="prole">' + esc(a.role) + '</div>' +
+          '<div class="pco">' + esc(a.company) + '</div>' +
+          '<span class="pill">' + esc(a.status) + '</span>' +
+          '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
+          nudge +
+          '<select class="movesel" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
+        '</div>';
+      }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
+      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + '>' +
+        '<h3>' + esc(col === null ? 'Other statuses' : col) + '<span class="count">' + rows.length + '</span></h3>' +
+        cards +
+      '</div>';
+    }).join('') || '<p class="empty">No pipeline columns.</p>';
+
+    board.querySelectorAll('.pcard').forEach(function (card) {
+      card.addEventListener('dragstart', function (ev) {
+        DRAG_ID = card.getAttribute('data-id');
+        try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+      });
+      card.addEventListener('dragend', function () { DRAG_ID = null; });
+    });
+    board.querySelectorAll('.col[data-col]').forEach(function (colEl) {
+      colEl.addEventListener('dragover', function (ev) {
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+        colEl.classList.add('over');
+      });
+      colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
+      colEl.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        colEl.classList.remove('over');
+        var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
+        if (id) moveToColumn(id, colEl.getAttribute('data-col'));
+      });
+    });
+    board.querySelectorAll('.movesel').forEach(function (sel) {
+      var card = sel.closest('.pcard');
+      sel.addEventListener('change', function () {
+        var col = sel.value;
+        sel.value = '';
+        if (col) moveToColumn(card.getAttribute('data-id'), col);
+      });
+    });
+  }
 
   // The transparency panel: every field the coach holds, and every one it doesn't. The
   // operator should never have to open a file to see their own record.
   function renderProfile(d) {
+    if (!d) {
+      document.getElementById('profile-cov').textContent = 'Could not load your profile.';
+      return;
+    }
     var prof = d.profile || { identity: {}, sections: {} };
     var cov = d.completeness || { known: [], missing: [], filled: 0, total: 0 };
     var labels = d.field_labels || {};
@@ -2099,59 +2398,56 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       d.context_block || '(nothing injected — no profile recorded yet)';
   }
 
-  function render(d) {
-    var apps = d.applications || [];
-    var st = d.settings || {};
-    var prof = d.profile || { identity: {}, sections: {} };
+  function renderWeights(d) {
+    var w = (d && d.weights) || {};
+    document.getElementById('weights').innerHTML = Object.keys(w).map(function (k) {
+      return '<div class="row"><span class="name">' + esc(k) + '</span>' +
+        '<span class="track"><span class="bar" style="width:' + Number(w[k] || 0) + '%"></span></span>' +
+        '<span class="fit">' + Number(w[k] || 0) + '</span></div>';
+    }).join('');
+  }
+
+  function renderHeader(state) {
+    var st = (state && state.settings) || {};
+    var prof = (state && state.profile) || { identity: {} };
     var name = (prof.identity && prof.identity.name) || st.name || '';
     document.getElementById('title').textContent = name ? ('Career Coach — ' + name) : 'Career Coach';
     document.getElementById('sub').textContent = st.target_roles
       ? ('Targeting: ' + st.target_roles) : 'Set your profile in Settings › Career Coach.';
-
-    renderProfile(d);
-
-    var byStatus = {};
-    apps.forEach(function (a) { byStatus[a.status] = (byStatus[a.status] || 0) + 1; });
-    var interviewing = (byStatus['interviewing'] || 0) + (byStatus['offer'] || 0);
-    var stats = [
-      ['In pipeline', apps.length],
-      ['Applied', byStatus['applied'] || 0],
-      ['Interviewing / offer', interviewing]
-    ];
-    document.getElementById('stats').innerHTML = stats.map(function (s) {
-      return '<div class="card"><h2>' + s[0] + '</h2><div class="big">' + s[1] + '</div></div>';
-    }).join('');
-
-    if (!apps.length) {
-      document.getElementById('pipeline').innerHTML =
-        '<p class="empty">Nothing tracked yet. Paste a posting in chat, or ask your coach where to focus.</p>';
-    } else {
-      var rows = apps.map(function (a) {
-        return '<tr><td>' + esc(a.role) + '</td><td>' + esc(a.company) + '</td>' +
-          '<td class="fit">' + (a.fit_score || 0) + '</td>' +
-          '<td><span class="pill">' + esc(a.status) + '</span></td>' +
-          '<td>' + esc(a.updated || a.date || '') + '</td></tr>';
-      }).join('');
-      document.getElementById('pipeline').innerHTML =
-        '<table><thead><tr><th>Role</th><th>Company</th><th>Fit</th><th>Status</th><th>Updated</th></tr></thead><tbody>' +
-        rows + '</tbody></table>';
-    }
-
-    var w = d.weights || {};
-    document.getElementById('weights').innerHTML = Object.keys(w).map(function (k) {
-      return '<div class="row"><span class="name">' + esc(k) + '</span>' +
-        '<span class="track"><span class="bar" style="width:' + w[k] + '%"></span></span>' +
-        '<span class="fit">' + w[k] + '</span></div>';
-    }).join('');
   }
 
-  function load() { api('/state').then(render).catch(function () {
-    document.getElementById('sub').textContent = 'Could not load pipeline data.'; }); }
+  function load() {
+    // /jobs drives the inbox + board; /state is the profile/rubric disclosure and the header. A
+    // failed /state still renders the jobs view.
+    return api('/jobs').then(function (jobs) {
+      JOBS = jobs || { inbox: [], applications: [], columns: {}, followup_days: 0 };
+      renderInbox();
+      renderBoard();
+      return api('/state').then(function (s) { return s; }, function () { return null; });
+    }).then(function (state) {
+      renderHeader(state);
+      renderProfile(state);
+      renderWeights(state);
+    }).catch(function () {
+      document.getElementById('sub').textContent = 'Could not load your jobs.';
+    });
+  }
+
+  // Live refresh (ADR 0039): ask the console to forward `careercoach.#` events into this iframe,
+  // and reload whenever one arrives. We also reload after each successful write (above).
+  function subscribe() {
+    try { parent.postMessage({ type: 'protoagent:subscribe', patterns: ['careercoach.#'] }, '*'); }
+    catch (e) {}
+  }
+  window.addEventListener('message', function (e) {
+    var d = e && e.data;
+    if (d && d.type === 'protoagent:event') load();
+  });
 
   // initPluginView runs the console handshake (ADR 0026) — applies the theme and captures the
   // bearer — then fires our callback once ready. The timer is a fallback for a host context that
-  // never posts an init, so the panel isn't left blank.
-  kit.initPluginView(load);
-  setTimeout(load, 800);
+  // never posts an init, so the page isn't left blank.
+  kit.initPluginView(function () { subscribe(); load(); });
+  setTimeout(function () { subscribe(); load(); }, 800);
 </script>
 </body></html>"""
