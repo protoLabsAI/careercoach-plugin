@@ -27,16 +27,20 @@ each artifact is the agent's job (driven by the skill). No host imports, so ever
 is unit-testable with nothing but a temp dir — same contract as ``state.py`` / ``rubric.py``.
 
 ``CAREERCOACH_PACKET_DIR`` overrides the root (tests / power users); otherwise the resolved
-``packet_root`` config wins, falling back to ``~/CareerCoach``.
+``packet_root`` config wins, falling back to ``profile._dir() / "workspace"`` in the agent's data dir.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+
+log = logging.getLogger("protoagent.plugins.careercoach")
+_legacy_root_warned = False
 
 # The packet artifacts: slug (what tools accept + validate) → human filename (what's written).
 # Ordering is the natural production order and drives the intake checklist.
@@ -122,11 +126,27 @@ def role_dirname(role: str, req: str = "") -> str:
 
 def resolve_root(configured: str = "") -> Path:
     """The workspace root. Precedence: ``CAREERCOACH_PACKET_DIR`` env (tests / override) →
-    the resolved ``packet_root`` config → ``~/CareerCoach``. A relative value is taken relative to
+    the resolved ``packet_root`` config → ``profile._dir() / "workspace"``. A relative value is taken relative to
     the home directory, never the process's cwd (``/`` on the desktop server). Created on demand."""
+    global _legacy_root_warned
     env = os.environ.get("CAREERCOACH_PACKET_DIR", "").strip()
-    raw = env or (configured or "").strip() or str(Path.home() / "CareerCoach")
-    root = Path(raw).expanduser()
+    raw = env or (configured or "").strip()
+    if raw:
+        root = Path(raw).expanduser()
+    else:
+        from . import profile
+
+        root = profile._dir() / "workspace"
+        legacy = Path.home() / "CareerCoach"
+        if not _legacy_root_warned and (
+            (legacy / "Resume" / "Experience.md").is_file() or (legacy / "Companies").is_dir()
+        ):
+            _legacy_root_warned = True
+            log.warning(
+                "careercoach no longer reads ~/CareerCoach by default; set packet_root: ~/CareerCoach "
+                "in Settings → Career Coach to keep using it. Legacy folder: %s",
+                legacy,
+            )
     if not root.is_absolute():  # the desktop server's cwd is `/` (read-only): anchor to home
         root = Path.home() / root
     root.mkdir(parents=True, exist_ok=True)

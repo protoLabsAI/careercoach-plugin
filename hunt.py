@@ -252,10 +252,11 @@ def register_hunt_tools(registry, cfg, extended: bool):
         return out
 
     def _resolve(path: str) -> Path:
+        from . import packet
+
         p = Path(path).expanduser()
         if not p.is_absolute():
-            root = Path(cfg.get("packet_root", "") or "~/CareerCoach").expanduser()
-            p = root / p
+            p = packet.resolve_root(cfg.get("packet_root", "")) / p
         return p
 
     @tool

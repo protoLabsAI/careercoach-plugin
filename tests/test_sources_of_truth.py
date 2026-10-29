@@ -144,10 +144,10 @@ def test_the_export_says_where_to_change_the_record(profile):
 
 
 def test_a_dev_twin_export_does_not_clobber_the_prod_record(plugin, profile, iso, monkeypatch):
-    """The dev twin shares the default ~/CareerCoach workspace with prod. Its export may replace the
-    shared generated snapshot (regenerable), but never the record prod reads."""
+    """The dev twin's default workspace is in its own data dir. Its generated export must
+    never replace the record prod reads."""
     # extended_tools on so the legacy careercoach_export_experience / read_profile names resolve (S4b)
-    reg = FakeRegistry({"extended_tools": True})  # packet_root "" → ~/CareerCoach (HOME is a temp dir)
+    reg = FakeRegistry({"extended_tools": True})  # packet_root "" → each instance's workspace
     plugin.register(reg)
     t = {x.name: x for x in reg.tools}
 
