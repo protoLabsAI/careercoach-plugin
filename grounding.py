@@ -32,6 +32,7 @@ from typing import NamedTuple
 # "grew … by 70%"; if the source frames it one way and the draft the other (or drops the frame),
 # that's the inversion we flag. Kept as explicit inflected words rather than stems so the match is
 # predictable and never catches an unrelated token (e.g. "lower" must not fire on "lowercase").
+# Ambiguous words (up/down/more/less) alone do not establish a direction in this window.
 _REDUCE = frozenset(
     {
         "reduce", "reduced", "reduces", "reducing", "reduction", "reductions",
@@ -42,7 +43,7 @@ _REDUCE = frozenset(
         "slash", "slashed", "slashes", "slashing",
         "shrink", "shrinks", "shrinking", "shrank", "shrunk",
         "decline", "declined", "declines", "declining",
-        "fell", "fewer", "less", "down",
+        "fell", "fewer",
     }
 )  # fmt: skip
 _INCREASE = frozenset(
@@ -53,7 +54,7 @@ _INCREASE = frozenset(
         "improve", "improved", "improves", "improving", "improvement",
         "boost", "boosted", "boosts", "boosting",
         "rise", "rises", "rising", "rose", "risen",
-        "gain", "gained", "gains", "higher", "more", "up", "doubled", "tripled",
+        "gain", "gained", "gains", "higher", "doubled", "tripled",
     }
 )  # fmt: skip
 _OPPOSITE = {"reduce": "increase", "increase": "reduce"}
@@ -75,12 +76,16 @@ _UNIT_ALT = "|".join(sorted(_UNITS, key=len, reverse=True))
 # bare number), so the digits inside "99.9%" are never also read as the plain number "99.9".
 _FIGURE_RE = re.compile(
     r"""
-      (?P<money>\$\s*\d[\d,]*(?:\.\d+)?\s*(?:million|billion|thousand|[kmb])?)
+      (?<!\w)(?:
+      (?P<money>\$\s*\d[\d,]*(?:\.\d+)?\s*(?:(?:million|billion|thousand|[kmb])\b)?)
     | (?P<percent>(?:~\s*)?\d[\d,]*(?:\.\d+)?\s*(?:%|percent\b))
     | (?P<multiplier>\d+(?:\.\d+)?\s*[x]\b)
-    | (?P<duration>\d[\d,]*(?:\.\d+)?\s*(?:""" + _UNIT_ALT + r""")\b)
+    | (?P<duration>\d[\d,]*(?:\.\d+)?\s*(?:"""
+    + _UNIT_ALT
+    + r""")\b)
     | (?P<range>\d[\d,]*(?:\.\d+)?\s*[-–—]\s*\d[\d,]*(?:\.\d+)?)
     | (?P<number>\d[\d,]*(?:\.\d+)?)
+      )(?!\w)
     """,
     re.VERBOSE | re.IGNORECASE,
 )
@@ -191,6 +196,32 @@ def _is_list_marker(fig: Figure, text: str) -> bool:
     return prefix.strip(" \t-*") == "" and trailer in (".", ")")
 
 
+def supporting_text(sources: str) -> str:
+    """Exclude Markdown guardrail sections and their subheadings from evidence.
+
+    Resume at the next heading of equal or higher level. Forbidden claims cannot
+    establish support for a draft's figures.
+    """
+    kept: list[str] = []
+    excluded_level = None
+    for line in (sources or "").splitlines():
+        heading = re.match(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if heading:
+            level = len(heading.group(1))
+            if excluded_level is not None and level <= excluded_level:
+                excluded_level = None
+            title = heading.group(2).lower()
+            if excluded_level is None and (
+                title.startswith("guardrails")
+                or title == "lines never to claim on their behalf"
+                or title == "do_not_claim"
+            ):
+                excluded_level = level
+        if excluded_level is None:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def check_draft(draft: str, sources: str) -> list[Flag]:
     """Flag figures in ``draft`` that the grounding ``sources`` don't support.
 
@@ -200,7 +231,7 @@ def check_draft(draft: str, sources: str) -> list[Flag]:
     standalone years and list numbering are ignored.
     """
     masked = _PLACEHOLDER_RE.sub(lambda m: " " * (m.end() - m.start()), draft or "")
-    source_figs = extract_figures(sources or "")
+    source_figs = extract_figures(supporting_text(sources))
     by_value: dict[str, list[Figure]] = {}
     for sf in source_figs:
         by_value.setdefault(sf.normalized, []).append(sf)
@@ -225,7 +256,7 @@ def _direction_mismatch(fig: Figure, matches: list[Figure]) -> str | None:
     sources give no single clear direction)."""
     draft_fams = _families(fig.context)
     directional = [m for m in matches if len(_families(m.context)) == 1]
-    if not directional:
+    if len(directional) != len(matches):
         return None
     for m in directional:
         (fam,) = _families(m.context)

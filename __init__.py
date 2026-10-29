@@ -1169,7 +1169,8 @@ def _register_delegate_read_tool(registry, get_profile, read_profile, get_answer
         (percentages, money, multipliers, durations, numbers) in it that the operator's profile and
         story bank do NOT support — "Not found in your profile: …" for an invented value, "Check the
         direction: …" for one that's real but read the wrong way (a "cut by 70%" that became a "70%
-        rate"), or "No unsupported figures." when the draft is clean. Writes nothing — the operator
+        rate"), or "No unsupported figures." when the draft is clean. Guardrail sections are
+        excluded as evidence; blank text requests a draft. Writes nothing — the operator
         records and confirms through the Career Coach view (careercoach_profile / careercoach_answers).
         Defaults to the experience profile."""
         src = (source or "profile").strip().lower()
@@ -1182,10 +1183,13 @@ def _register_delegate_read_tool(registry, get_profile, read_profile, get_answer
         if src == "check":
             from . import grounding
 
+            if not (text or "").strip():
+                return "No draft given. Pass the draft to check as text."
+
             # The same profile + story-bank the grounding readers serve — the figures a draft must
             # trace to. Read-only: this only reports, it never records anything.
             sources = "\n\n".join(
-                read_profile.invoke({"doc": d}) for d in ("experience", "story-bank")
+                grounding.supporting_text(read_profile.invoke({"doc": d})) for d in ("experience", "story-bank")
             )
             return grounding.render_flags(grounding.check_draft(text or "", sources))
         return f'Unknown source {source!r} — use "profile", "answers" or "check".'

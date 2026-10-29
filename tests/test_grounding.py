@@ -102,3 +102,92 @@ def test_read_sources_check_reports_and_writes_nothing(tools, profile, iso):
 def test_read_sources_still_rejects_an_unknown_source(tools):
     # adding "check" must not turn a genuinely unknown source into a silent read
     assert "Unknown source" in tools["careercoach_read_sources"].invoke({"source": "confirm"})
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["Lines never to claim on their behalf", "Guardrails (things NOT to claim)", "do_not_claim"],
+)
+def test_guardrail_sections_are_not_evidence(grounding, heading):
+    sources = (
+        "## Skills\nBuilt 12 services.\n"
+        f"## {heading}\nNever claim 99.9% uptime.\n"
+        "### More restrictions\nNever claim $5M savings.\n"
+        "## Story: delivery\nShipped 8 projects."
+    )
+    assert _kinds(grounding.check_draft("99.9% uptime and $5M savings", sources)) == [
+        ("unsupported", "99.9%"),
+        ("unsupported", "$5m"),
+    ]
+    assert grounding.check_draft("Built 12 services and shipped 8 projects", sources) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Led a team of 6 engineers and set up CI",
+        "Led a team of 6 engineers and wrote down notes",
+        "Led a team of 6 engineers with more responsibilities",
+        "Led a team of 6 engineers with less supervision",
+    ],
+)
+def test_incidental_words_do_not_give_counts_a_direction(grounding, source):
+    assert grounding.check_draft("Led a team of 6 engineers", source) == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_neutral_source_occurrence_suppresses_direction_warning(grounding, reverse):
+    sources = [
+        "Reduced failed runs by 70%.",
+        "The profile also records an independently verified measurement for coverage: 70%. This was measured across all production services.",
+    ]
+    if reverse:
+        sources.reverse()
+    assert grounding.check_draft("Had 70% coverage", "\n\n".join(sources)) == []
+
+
+def test_opposite_direction_still_flags(grounding):
+    assert _kinds(grounding.check_draft("Increased failures by 70%", "Cut failures by 70%")) == [
+        ("context-mismatch", "70%")
+    ]
+
+
+def test_money_suffixes_and_identifiers_have_word_boundaries(grounding):
+    assert [f.normalized for f in grounding.extract_figures("$40 monthly, $5 by Q3; S3 EC2")] == [
+        "$40",
+        "$5",
+    ]
+    assert _kinds(grounding.check_draft("Spent $40 monthly", "Spent $40 million")) == [("unsupported", "$40")]
+
+
+def test_check_excludes_real_profile_and_story_bank_guardrails(tools, profile, iso):
+    profile.update_field("do_not_claim", "Never claim 99.9% uptime", mode="replace")
+    profile.update_field("skills", "Built 12 services", mode="replace")
+    tools["careercoach_write_profile"].invoke(
+        {
+            "doc": "story-bank",
+            "content": (
+                "## Guardrails (things NOT to claim)\nNever claim 45 minutes recovery.\n"
+                "### Detail\nNever claim $5M savings.\n"
+                "## Story: delivery\nShipped 8 projects."
+            ),
+        }
+    )
+    rs = tools["careercoach_read_sources"]
+    before = _snapshot(iso)
+    out = rs.invoke({"source": "check", "text": "99.9% uptime, 45 minutes recovery, $5M savings"})
+    for value in ("99.9%", "45min", "$5m"):
+        assert f"Not found in your profile: {value}" in out
+    assert rs.invoke({"source": "check", "text": "Built 12 services; shipped 8 projects"}) == (
+        "No unsupported figures."
+    )
+    assert _snapshot(iso) == before
+    assert "99.9%" in rs.invoke({"source": "profile", "field": "do_not_claim"})
+
+
+@pytest.mark.parametrize("text", [None, "", "   "])
+def test_check_requires_a_draft(tools, text):
+    args = {"source": "check"}
+    if text is not None:
+        args["text"] = text
+    assert "No draft given" in tools["careercoach_read_sources"].invoke(args)
