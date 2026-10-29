@@ -228,6 +228,133 @@ def move(app_id: str, status: str) -> dict:
         return r
 
 
+# ── the apply kit: what the coach prepared for one application, on the row (S2a) ─
+# The settled default apply path is an APPLY KIT: the coach readies the tailored résumé, a cover
+# letter when the posting asks for one, and every form answer; the operator fills the form. The kit
+# lives on the application row in applications.json (same lock, same atomic write) so the record of
+# what was prepared — and, on mark_applied, what was sent — stays with the application. Additive:
+# a row without a kit reads fine, and the digest/verifier never look at it.
+def _empty_kit() -> dict:
+    """A fresh kit skeleton, so a row's kit always has a predictable shape for the detail view."""
+    return {
+        "resume": {"path": "", "version": "", "built": ""},
+        "cover_letter": {"text": "", "needed": False},
+        "answers": [],  # one-off form answers: [{key, label, value, status: draft|confirmed}]
+        "updated": "",
+        "events": [],  # [{what, date}] — an append-only trail of what the coach prepared, when
+    }
+
+
+def _answer_snapshot(entries) -> list[dict]:
+    """Render kit answers (``[{key, label, value, status}]``) down to the ``{key, value, status}``
+    snapshot ``applied_with`` keeps — the status (draft/confirmed) is carried through verbatim so a
+    draft one-off answer is never recorded as confirmed."""
+    out: list[dict] = []
+    for a in entries or []:
+        if isinstance(a, dict):
+            out.append(
+                {
+                    "key": str(a.get("key", "") or ""),
+                    "value": str(a.get("value", "") or ""),
+                    "status": str(a.get("status", "") or "draft"),
+                }
+            )
+    return out
+
+
+def set_kit(app_id: str, *, event: str = "", **parts) -> dict:
+    """Merge ``parts`` into one application's ``kit`` (by its stable ``id``) and append a kit event,
+    in one locked, atomic write. A dict part (``resume``, ``cover_letter``) merges into the stored
+    sub-dict so a partial update keeps the fields it didn't touch; any other part (``answers``) is
+    set outright. ``event`` names the entry in ``kit['events']`` — defaulted to the parts changed.
+    Raises ``StoreUnreadable`` on an unreadable file and ``KeyError`` on an unknown id, each before
+    any write."""
+    today = _today()
+    with _store._locked("applications"):
+        rows, err = _read_rows()
+        if err:
+            raise StoreUnreadable(_path(), err)
+        r = next((x for x in rows if x.get("id") == app_id), None)
+        if r is None:
+            raise KeyError(f"no application with id {app_id!r}")
+        kit = r.get("kit") or _empty_kit()
+        for key, val in parts.items():
+            cur = kit.get(key)
+            if isinstance(cur, dict) and isinstance(val, dict):
+                cur.update(val)
+            else:
+                kit[key] = val
+        if event:
+            what = event
+        elif parts:
+            what = "prepared " + ", ".join(k.replace("_", " ") for k in parts)
+        else:
+            what = "updated kit"
+        kit["updated"] = today
+        kit.setdefault("events", []).append({"what": what, "date": today})
+        r["kit"] = kit
+        _save(rows)
+        return r
+
+
+def mark_applied(app_id: str, answers_used: list[dict] | None = None) -> dict:
+    """Move one application (by its stable ``id``) to ``applied`` — the same history-appending move
+    ``move()`` makes — and record ``applied_with`` {date, resume_version, answers} as a snapshot of
+    what was sent. The answers snapshot is ``answers_used`` when given, else the kit's one-off
+    answers, else the saved standard answers (``answers.load()``); each entry keeps its draft/
+    confirmed status. Raises ``StoreUnreadable`` on an unreadable file and ``KeyError`` on an unknown
+    id, each before any write."""
+    from . import answers as _answers
+
+    today = _today()
+    with _store._locked("applications"):
+        rows, err = _read_rows()
+        if err:
+            raise StoreUnreadable(_path(), err)
+        r = next((x for x in rows if x.get("id") == app_id), None)
+        if r is None:
+            raise KeyError(f"no application with id {app_id!r}")
+        kit = r.get("kit") or {}
+        if answers_used is not None:
+            snapshot = _answer_snapshot(answers_used)
+        elif kit.get("answers"):
+            snapshot = _answer_snapshot(kit["answers"])
+        else:
+            # Fall back to the saved standard answers, rendered to the same {key, value, status}
+            # shape; a load never raises (an unreadable store reads as empty here).
+            snapshot = [
+                {"key": k, "value": str(e.get("value", "") or ""), "status": str(e.get("status", "") or "draft")}
+                for k, e in _answers.load().items()
+            ]
+        resume_version = str(((kit.get("resume") or {}).get("version")) or "")
+        # move() logic, inlined so it shares this lock (the lock is not re-entrant) and the move +
+        # applied_with land in one atomic write.
+        r.setdefault("history", []).append({"status": "applied", "date": today})
+        r["status"] = "applied"
+        r["updated"] = today
+        r["applied_with"] = {"date": today, "resume_version": resume_version, "answers": snapshot}
+        _save(rows)
+        return r
+
+
+def set_notes(app_id: str, notes: str) -> dict:
+    """Persist ``notes`` on one application (by its stable ``id``) and refresh ``updated``, in one
+    locked, atomic write. No status change, so no history entry. Raises ``StoreUnreadable`` on an
+    unreadable file and ``KeyError`` on an unknown id, each before any write."""
+    today = _today()
+    with _store._locked("applications"):
+        rows, err = _read_rows()
+        if err:
+            raise StoreUnreadable(_path(), err)
+        r = next((x for x in rows if x.get("id") == app_id), None)
+        if r is None:
+            raise KeyError(f"no application with id {app_id!r}")
+        r["notes"] = notes or ""
+        r["updated"] = today
+        _save(rows)
+        return r
+
+
 def _last_history_date(row: dict) -> str:
     """The date of the row's most recent history entry, falling back to ``updated``/``date`` for a
     row with no history (a reader may pass a hand-built row)."""

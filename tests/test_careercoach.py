@@ -366,12 +366,13 @@ def test_skills_declare_real_tools(plugin, registry):
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present
     names = [t.name for t in registry.tools]
-    # 3 tracker/search + 12 packet/profile tools + 3 standard-answers tools + 2 form-fill tools +
-    # the prepare-application tool + the submit-gate tool + the handoff tool + the 3 rubric-knob tools
-    # (the vendored testkit stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path
-    # runs host-free) + 7 hunt tools (watchlist, scan_boards, import_history, import_connections,
-    # find_referrals, log_contact, digest).
-    assert len(names) == 33 and len(set(names)) == 33
+    # 3 tracker/search + the save-apply-kit tool + 12 packet/profile tools + 3 standard-answers tools +
+    # 2 form-fill tools + the prepare-application tool + the submit-gate tool + the handoff tool + the 3
+    # rubric-knob tools (the vendored testkit stands in for graph.sdk's Knobs/make_knob_tools, so the
+    # guarded knob path runs host-free) + 7 hunt tools (watchlist, scan_boards, import_history,
+    # import_connections, find_referrals, log_contact, digest).
+    assert len(names) == 34 and len(set(names)) == 34
+    assert "careercoach_save_apply_kit" in set(names)
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     assert {"careercoach_get_answers", "careercoach_propose_answer", "careercoach_confirm_answers"} <= set(names)
     assert {"careercoach_plan_fill", "careercoach_verify_fill"} <= set(names)
