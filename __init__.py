@@ -3236,10 +3236,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (cl.text) {
       out += '<div class="dsec-actions"><button class="btn copy" type="button" data-copy-cover>' +
         'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
-    } else if (cl.needed) {
-      out += '<p class="empty">Not written yet.</p>';
-    } else {
+    } else if (cl.needed === false) {
+      // Only an explicit "not needed" clears the letter; unset (null) still needs one, matching
+      // the kit's own _kit_missing (needed is not False ⇒ 'cover letter' is missing). A fresh kit
+      // has needed:null, so JS must not treat that as "not needed".
       out += '<p class="empty">Not needed for this posting.</p>';
+    } else {
+      out += '<p class="empty">Not written yet.</p>';
     }
     out += '</div>';
 
