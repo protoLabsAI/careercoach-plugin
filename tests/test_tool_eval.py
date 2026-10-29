@@ -58,9 +58,19 @@ def test_score_aggregates_and_rejects_incomplete_observations():
     assert evaluation.score({}, [], {})["overall"] == {"correct": 0, "total": 0, "accuracy": 0}
 
 
-def test_committed_prompts_match_current_registration(plugin, registry, iso):
-    plugin.register(registry)
-    registered = {tool.name for tool in registry.tools}
+def test_committed_prompts_match_current_registration(plugin, iso):
+    from _plugin_testkit import FakeRegistry
+
+    # The `expect` lists keep the pre-consolidation names so the same corpus scores both surfaces;
+    # they resolve on the EXTENDED surface. The `aliases` name the merged default tools; they resolve
+    # on the lean DEFAULT surface a shipped plugin exposes (S4b).
+    default_reg = FakeRegistry()
+    plugin.register(default_reg)
+    default_names = {tool.name for tool in default_reg.tools}
+    extended_reg = FakeRegistry({"extended_tools": True, "browser_fill": "greenhouse,lever,ashby,workable"})
+    plugin.register(extended_reg)
+    extended_names = {tool.name for tool in extended_reg.tools}
+
     prompts, aliases = evaluation.load_prompts()
     assert 40 <= len(prompts) <= 50
     assert len({p["id"] for p in prompts}) == len(prompts)
@@ -70,7 +80,11 @@ def test_committed_prompts_match_current_registration(plugin, registry, iso):
     for prompt in prompts:
         assert prompt["capability"].strip()
         if prompt["expect"] != "none":
-            assert set(prompt["expect"]) <= registered
+            assert set(prompt["expect"]) <= extended_names
+    # Every capability maps to a non-empty list of real default-surface tools (S4b acceptance).
+    for capability, names in aliases.items():
+        assert names, f"{capability} has an empty alias list"
+        assert set(names) <= default_names, (capability, set(names) - default_names)
     text = evaluation.PROMPTS_PATH.read_text(encoding="utf-8").lower()
     for forbidden in ("Josh", "jobCoach"):
         assert forbidden.lower() not in text
@@ -92,8 +106,9 @@ def test_collects_actual_schemas_and_passes_config(monkeypatch, iso):
     functions = {t["function"]["name"]: t["function"] for t in tools}
     assert len(functions) == len(tools)
     assert {"web_search", "fetch_url", "memory_recall", "browser_open"} <= functions.keys()
-    assert functions["careercoach_update_profile"]["parameters"]["required"] == ["field", "content"]
-    assert functions["careercoach_get_profile"]["description"]
+    # The lean default surface exposes the merged profile façade, not the legacy get/update tools (S4b).
+    assert functions["careercoach_profile"]["parameters"]["properties"]["action"]
+    assert functions["careercoach_profile"]["description"]
     assert set(placeholders) == {"careercoach_knobs", "careercoach_tune", "careercoach_preset"}
     for fn in functions.values():
         assert fn["parameters"]["type"] == "object"

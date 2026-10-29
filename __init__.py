@@ -43,19 +43,33 @@ log = logging.getLogger("protoagent.plugins.careercoach")
 
 
 def register(registry) -> None:
-    """Entry point (ADR 0018) — called once at load with a PluginRegistry."""
-    cfg = registry.config  # this plugin's resolved config + secrets (ADR 0019)
+    """Entry point (ADR 0018) — called once at load with a PluginRegistry.
 
-    _register_tracker_tools(registry)
+    The DEFAULT tool surface is lean (S4b): ~12 merged tools around the core loop — find roles →
+    evaluate → apply kit → track → interview prep. Each pre-consolidation ("legacy") tool name stays
+    reachable behind ``extended_tools`` (default off), registered as a thin wrapper over the SAME
+    implementation, so jobCoach's schedules and prompts that name the old tools keep working. The
+    browser-fill tools (plan_fill, verify_fill, handoff, request_submit) register only when
+    ``browser_fill`` (S3a) enables at least one ATS; the submit-gate middleware is unchanged."""
+    cfg = registry.config  # this plugin's resolved config + secrets (ADR 0019)
+    extended = _as_bool(cfg.get("extended_tools", False))
+    from .ats import any_fill_enabled
+
+    fill_on = any_fill_enabled(cfg.get("browser_fill", "") or "")
+
+    _register_tracker_tools(registry, extended)
     _register_apply_kit_tool(registry)
-    _register_jobsearch_tool(registry, cfg)
-    _register_hunt_tools(registry, cfg)
-    _register_packet_tools(registry, cfg)
-    _register_answers_tools(registry)
-    _register_formfill_tools(registry)
+    search_jobs = _register_jobsearch_tool(registry, cfg, extended)
+    scan_boards = _register_hunt_tools(registry, cfg, extended)
+    _register_find_roles_tool(registry, scan_boards, search_jobs)
+    _register_packet_tools(registry, cfg, extended)
+    _register_answers_tools(registry, extended)
+    if fill_on:  # browser fill is opt-in per ATS (S3a); off → the apply kit is the path
+        _register_formfill_tools(registry)
     _register_prepare_tool(registry)
-    _register_submit_gate(registry)
-    _register_handoff(registry)
+    _register_submit_gate(registry, fill_on)
+    if fill_on:
+        _register_handoff(registry)
     _register_rubric_knobs(registry)
     _register_subagents(registry)
     _register_profile_middleware(registry)
@@ -64,9 +78,11 @@ def register(registry) -> None:
 
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
-        "[careercoach] registered: tracker + job-search + packet/profile + standard-answers + "
-        "form-fill tools, job boards + watchlist + contacts + digest, submit gate, rubric knobs, crew, "
-        "profile injection, dashboard, watch"
+        "[careercoach] registered: lean default surface (find_roles + profile + track + answers + "
+        "role_packet + apply kit + digest + watchlist + log_contact), browser-fill tools %s, legacy "
+        "surface %s, submit gate, rubric knobs, crew, profile injection, dashboard, watch",
+        "on" if fill_on else "off",
+        "on" if extended else "off",
     )
 
 
@@ -78,7 +94,7 @@ def _as_bool(value) -> bool:
 
 
 # ── agent tools: the application tracker ──────────────────────────────────────
-def _register_tracker_tools(registry) -> None:
+def _register_tracker_tools(registry, extended: bool) -> None:
     from . import state
 
     @tool
@@ -130,7 +146,63 @@ def _register_tracker_tools(registry) -> None:
             for r in rows
         )
 
-    registry.register_tools([careercoach_track_application, careercoach_list_applications])
+    @tool
+    def careercoach_track(
+        action: str = "track",
+        company: str = "",
+        role: str = "",
+        fit_score: int = 0,
+        status: str = "",
+        notes: str = "",
+        source: str = "",
+        app_id: str = "",
+    ) -> str:
+        """Manage your application pipeline. action: "track" (record or update a role — company, role,
+        0-100 fit_score, status considering/preparing/applied/interviewing/offer/rejected/passed, notes,
+        source posting URL); "list" (show the pipeline, optional `status` filter); "move" (move an
+        application to `status` — name it by `app_id`, or by `company` + `role`). Defaults to "track"."""
+        act = (action or "track").strip().lower()
+        if act == "track":
+            return careercoach_track_application.invoke(
+                {
+                    "company": company,
+                    "role": role,
+                    "fit_score": fit_score,
+                    "status": status or "considering",
+                    "notes": notes,
+                    "source": source,
+                }
+            )
+        if act == "list":
+            return careercoach_list_applications.invoke({"status": status})
+        if act == "move":
+            aid = (app_id or "").strip()
+            try:
+                if not aid:
+                    row0 = state._find(state.load_applications(), (company or "").strip(), (role or "").strip())
+                    if row0 is None:
+                        return "To move a role, give its app_id (or the company and role) — none matched the pipeline."
+                    aid = row0["id"]
+                row = state.move(aid, (status or "").strip())
+            except state.StoreUnreadable as e:
+                return f"Not moved: {e}"
+            except ValueError as e:
+                return str(e)
+            except KeyError as e:
+                return str(e.args[0]) if e.args else str(e)
+            try:
+                registry.emit(
+                    "application_tracked",
+                    {"company": row.get("company", ""), "role": row.get("role", ""), "status": row.get("status", "")},
+                )
+            except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
+                pass
+            return f"Moved {row.get('role', '')} @ {row.get('company', '')} to {row.get('status', '?')}."
+        return f'Unknown action {action!r} — use "track", "list" or "move".'
+
+    registry.register_tool(careercoach_track)
+    if extended:  # legacy names, reachable behind extended_tools — same implementations
+        registry.register_tools([careercoach_track_application, careercoach_list_applications])
 
 
 # ── agent tool: the apply kit (the default apply path — the coach prepares, the operator files) ─
@@ -229,7 +301,10 @@ def _register_apply_kit_tool(registry) -> None:
 
 
 # ── agent tool: live job search (the real job source, Phase 3) ────────────────
-def _register_jobsearch_tool(registry, cfg) -> None:
+# The default surface reaches this through careercoach_find_roles(source="market"); the standalone
+# name registers behind extended_tools. Either way the returned tool is handed to find_roles so the
+# merged tool reuses this code path as-is.
+def _register_jobsearch_tool(registry, cfg, extended: bool):
     @tool
     async def careercoach_search_jobs(
         query: str, location: str = "", remote: bool = False, limit: int = 10, source: str = ""
@@ -284,13 +359,61 @@ def _register_jobsearch_tool(registry, cfg) -> None:
             + f"\n\n{src}\nWant me to evaluate fit or track any of these?"
         )
 
-    registry.register_tool(careercoach_search_jobs)
+    if extended:  # legacy name behind extended_tools; find_roles(source="market") is the default path
+        registry.register_tool(careercoach_search_jobs)
+    return careercoach_search_jobs
 
 
-def _register_hunt_tools(registry, cfg) -> None:
+# ── agent tool: find roles (the default entry point — watchlist boards or the live market) ─
+# S4b merges careercoach_scan_boards + careercoach_search_jobs behind one lean tool. It REUSES both
+# code paths as-is (dispatching to the tool objects the two registrars built), so no behaviour moves
+# and the S1a inbox feed the board scan writes is kept.
+def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
+    @tool
+    async def careercoach_find_roles(
+        source: str = "watched",
+        query: str = "",
+        roles: str = "",
+        locations: str = "",
+        max_age_days: int = -1,
+        only_new: bool = False,
+        limit: int = 0,
+        remote: bool = False,
+    ) -> str:
+        """Find roles to pursue. source="watched" (default) scans the companies on your watchlist's own
+        job boards — the freshest source, and it feeds the pipeline inbox; source="market" searches live
+        postings across the job source. `roles`/`query` are the titles or keywords to match (both
+        accepted); `locations` where (places, or "remote"); `max_age_days` 0 = any age; `only_new`
+        (watched) shows only roles no earlier scan returned; `remote` (market) remote-only; `limit` caps
+        results. Choose which companies are watched with careercoach_watchlist."""
+        src = (source or "watched").strip().lower()
+        if src == "market":
+            q = (query or roles or "").strip()
+            if not q:
+                return "What should I search the market for? Pass a role title or keywords as `query`."
+            return await search_jobs.ainvoke(
+                {"query": q, "location": locations, "remote": remote, "limit": limit or 10}
+            )
+        if src in ("watched", ""):
+            return await scan_boards.ainvoke(
+                {
+                    "companies": "",
+                    "roles": roles or query,
+                    "locations": locations,
+                    "max_age_days": max_age_days,
+                    "only_new": only_new,
+                    "limit": limit or 40,
+                }
+            )
+        return f'Unknown source {source!r} — use "watched" (your watchlist\'s boards) or "market" (a live search).'
+
+    registry.register_tool(careercoach_find_roles)
+
+
+def _register_hunt_tools(registry, cfg, extended: bool):
     from .hunt import register_hunt_tools
 
-    register_hunt_tools(registry, cfg)
+    return register_hunt_tools(registry, cfg, extended)
 
 
 def _import_detail(row: dict) -> str:
@@ -312,7 +435,7 @@ def _import_detail(row: dict) -> str:
 # write named artifacts into it, assemble the deliverable, and seed the workspace from the
 # fill-in templates/. Pure logic lives in packet.py (host-free, tested); these tools are the
 # thin agent surface. The *content* of each artifact is the agent's job (driven by the skill).
-def _register_packet_tools(registry, cfg) -> None:
+def _register_packet_tools(registry, cfg, extended: bool) -> None:
     from pathlib import Path
 
     from . import packet, profile, resume
@@ -665,22 +788,98 @@ def _register_packet_tools(registry, cfg) -> None:
             "gets there."
         )
 
-    registry.register_tools(
-        [
-            careercoach_init_workspace,
-            careercoach_get_profile,
-            careercoach_update_profile,
-            careercoach_export_experience,
-            careercoach_import_experience,
-            careercoach_read_profile,
-            careercoach_write_profile,
-            careercoach_scaffold_role,
-            careercoach_write_artifact,
-            careercoach_assemble_packet,
-            careercoach_list_roles,
-            careercoach_render_resume,
-        ]
-    )
+    @tool
+    def careercoach_profile(
+        action: str = "get",
+        field: str = "",
+        content: str = "",
+        mode: str = "append",
+        confirm_removal: bool = False,
+        doc: str = "experience",
+        apply: bool = False,
+        preview_id: str = "",
+    ) -> str:
+        """Read and maintain the operator's verified profile — the anti-fabrication anchor every CV,
+        letter and answer traces to. action: "get" (the completeness index, or one `field`: roles,
+        education, skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines);
+        "read" (a `doc`: experience, story-bank, reviewer, humanize, improvements); "update" (record one
+        `field` the operator confirmed — `content`, mode append/replace, confirm_removal to drop a
+        do_not_claim line); "write" (save the story-bank `doc` with the full merged `content`);
+        "import_experience" (import the operator's Resume/Experience.md — call without `apply` for a
+        preview + preview_id, then apply=true with that id); "export_experience" (a markdown snapshot);
+        "init_workspace" (seed the fill-in templates). Read before drafting; never invent. Defaults to
+        "get"."""
+        act = (action or "get").strip().lower()
+        if act == "get":
+            return careercoach_get_profile.invoke({"field": field})
+        if act == "read":
+            return careercoach_read_profile.invoke({"doc": doc})
+        if act == "update":
+            return careercoach_update_profile.invoke(
+                {"field": field, "content": content, "mode": mode, "confirm_removal": confirm_removal}
+            )
+        if act == "write":
+            return careercoach_write_profile.invoke({"doc": doc, "content": content})
+        if act == "import_experience":
+            return careercoach_import_experience.invoke(
+                {"apply": apply, "preview_id": preview_id, "mode": mode, "confirm_removal": confirm_removal}
+            )
+        if act == "export_experience":
+            return careercoach_export_experience.invoke({})
+        if act == "init_workspace":
+            return careercoach_init_workspace.invoke({})
+        return (
+            f"Unknown action {action!r} — use get, read, update, write, import_experience, "
+            "export_experience or init_workspace."
+        )
+
+    @tool
+    def careercoach_role_packet(
+        action: str = "list",
+        company: str = "",
+        role: str = "",
+        req: str = "",
+        raw_jd: str = "",
+        artifact: str = "",
+        content: str = "",
+    ) -> str:
+        """The gated role-packet workspace (a folder per role). action: "scaffold" (start a packet —
+        Companies/<company>/Roles/<role - req>/ with the posting `raw_jd` and a process log); "write"
+        (write one `artifact`: recruiter-brief, hiring-manager-profile, evidence-map, tailored-resume,
+        skills-entry, cover-letter, prompt-transcript — `content` markdown, only after the operator
+        approved that step); "assemble" (build 'role packet.md' from the artifacts and report what's
+        present/missing); "list" (role packets with artifact counts and paths). Defaults to "list"."""
+        act = (action or "list").strip().lower()
+        if act == "scaffold":
+            return careercoach_scaffold_role.invoke({"company": company, "role": role, "req": req, "raw_jd": raw_jd})
+        if act == "write":
+            return careercoach_write_artifact.invoke(
+                {"company": company, "role": role, "artifact": artifact, "content": content, "req": req}
+            )
+        if act == "assemble":
+            return careercoach_assemble_packet.invoke({"company": company, "role": role, "req": req})
+        if act == "list":
+            return careercoach_list_roles.invoke({})
+        return f"Unknown action {action!r} — use scaffold, write, assemble or list."
+
+    # Default surface: the two merged façades + the unchanged résumé renderer.
+    registry.register_tools([careercoach_profile, careercoach_role_packet, careercoach_render_resume])
+    if extended:  # legacy names behind extended_tools — same implementations
+        registry.register_tools(
+            [
+                careercoach_init_workspace,
+                careercoach_get_profile,
+                careercoach_update_profile,
+                careercoach_export_experience,
+                careercoach_import_experience,
+                careercoach_read_profile,
+                careercoach_write_profile,
+                careercoach_scaffold_role,
+                careercoach_write_artifact,
+                careercoach_assemble_packet,
+                careercoach_list_roles,
+            ]
+        )
 
 
 # ── agent tools: saved standard application answers (confirm once, reuse confirmed) ─
@@ -693,7 +892,7 @@ def _unknown_answer_key(key: str) -> str:
     return f"Unknown answer key {key!r}. Valid keys: {', '.join(answers.STANDARD_KEYS)}."
 
 
-def _register_answers_tools(registry) -> None:
+def _register_answers_tools(registry, extended: bool) -> None:
     from . import answers, profile
 
     @tool
@@ -789,7 +988,26 @@ def _register_answers_tools(registry) -> None:
             )
         return "\n".join(out) or "Nothing confirmed."
 
-    registry.register_tools([careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers])
+    @tool
+    def careercoach_answers(action: str = "get", key: str = "", value: str = "", keys: str = "") -> str:
+        """The operator's standard application answers (email, phone, work authorization, sponsorship,
+        LinkedIn, self-ID, pronouns). action: "get" (list each value with CONFIRMED/DRAFT status plus
+        the missing keys; first use seeds drafts from the profile); "propose" (save a DRAFT `value` for
+        one `key`); "confirm" (promote drafts to CONFIRMED — `keys` comma-separated — only after showing
+        the operator the exact values and getting their explicit OK). Only confirmed answers may fill a
+        form. Defaults to "get"."""
+        act = (action or "get").strip().lower()
+        if act == "get":
+            return careercoach_get_answers.invoke({})
+        if act == "propose":
+            return careercoach_propose_answer.invoke({"key": key, "value": value})
+        if act == "confirm":
+            return careercoach_confirm_answers.invoke({"keys": keys})
+        return f"Unknown action {action!r} — use get, propose or confirm."
+
+    registry.register_tool(careercoach_answers)
+    if extended:  # legacy names behind extended_tools — same implementations
+        registry.register_tools([careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers])
 
 
 # ── form filling: a PLAN before, a DIFF after (#4032 phase 3b) ────────────────
@@ -1288,10 +1506,12 @@ def _submit_approval_card(session, session_id: str) -> dict:
     }
 
 
-def _register_submit_gate(registry) -> None:
+def _register_submit_gate(registry, fill_on: bool) -> None:
     """Register ``careercoach_request_submit`` (the operator-approval tool) and the middleware that
-    blocks submit-like browser calls without a live grant. The middleware is the enforcement; the
-    tool is the only path that ever creates a grant."""
+    blocks submit-like browser calls without a live grant. The middleware is the enforcement and is
+    ALWAYS registered (unchanged) — with browser fill off and no request_submit tool there is no way
+    to mint a grant, so it default-denies every submit-like browser call. The approval tool is one of
+    the browser-fill tools, so it registers only when ``browser_fill`` enables at least one ATS."""
     from . import formfill, submitgate
 
     @tool
@@ -1351,8 +1571,9 @@ def _register_submit_gate(registry) -> None:
                 raise
             return f"Could not request submit approval: {e}"
 
-    registry.register_tool(careercoach_request_submit)
-    _register_submit_middleware(registry)
+    if fill_on:  # a browser-fill tool — registers only when browser_fill enables an ATS
+        registry.register_tool(careercoach_request_submit)
+    _register_submit_middleware(registry)  # enforcement is always on (the submit gate is unchanged)
 
 
 def _register_submit_middleware(registry) -> None:

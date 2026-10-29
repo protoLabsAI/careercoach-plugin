@@ -4,16 +4,19 @@
 # tool exists. Decoy host calls are deliberately not accepted for these plugin tasks.
 # URLs and companies are fictional; no tool is ever executed by this benchmark.
 aliases:
-  # TODO(S4b): fill each capability with acceptable NEW-surface tool names.
-  # Keep the old expect lists below so the same corpus scores both surfaces.
-  find: []
-  evaluate: []
-  apply_kit: []
-  track: []
-  interview: []
-  profile: []
-  digest: []
-  coaching: []
+  # S4b: capability -> acceptable NEW default-surface tool names. The `expect` lists below keep the
+  # pre-consolidation names so the same corpus scores both surfaces; these aliases let a pick of the
+  # merged default tool count as correct. Scoring only consults aliases for non-"none" expectations,
+  # so coaching's entry is inert (its prompts expect abstention) — it names the record tool a coach
+  # reads so every capability maps to a real default tool.
+  find: [careercoach_find_roles, careercoach_watchlist]
+  evaluate: [careercoach_profile]
+  apply_kit: [careercoach_profile, careercoach_save_apply_kit, careercoach_role_packet, careercoach_render_resume]
+  track: [careercoach_track]
+  interview: [careercoach_profile]
+  profile: [careercoach_profile]
+  digest: [careercoach_digest]
+  coaching: [careercoach_profile]
 
 prompts:
   - {id: find-01, prompt: "Any new AI engineer roles at my watched companies?", expect: [careercoach_scan_boards], capability: find}

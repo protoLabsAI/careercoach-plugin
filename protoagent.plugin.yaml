@@ -42,6 +42,7 @@ enabled: false              # author default — operators opt in via plugins.en
 config_section: careercoach
 config:
   browser_fill: ""          # opt-in beta: comma list of greenhouse, lever, ashby, workable; blank = off
+  extended_tools: false     # register the full legacy tool surface (every pre-consolidation name) alongside the lean default set; off = lean default only
   full_name: ""
   location: ""
   target_roles: ""
@@ -60,6 +61,7 @@ config:
 secrets: [jobs_api_key]
 settings:
   - { key: browser_fill, label: "Browser fill (beta)", type: string, group: "Career Coach", description: "Opt-in beta: comma-separated ATS types to enable (greenhouse, lever, ashby, workable). Blank disables browser fill for all ATS types; use the apply kit instead. Never auto-submits." }
+  - { key: extended_tools, label: "Extended tools", type: bool, group: "Career Coach", description: "Register the full legacy tool surface — every individual pre-consolidation tool name (careercoach_scan_boards, careercoach_get_profile, careercoach_track_application, the LinkedIn/history importers, …) — alongside the lean default set. Off by default: the default surface is ~12 tools around the core loop (careercoach_find_roles, careercoach_profile, careercoach_track, careercoach_answers, careercoach_role_packet, …). Turn on if your schedules or prompts name the older tools directly." }
   - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
   - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }

@@ -146,7 +146,8 @@ def test_the_export_says_where_to_change_the_record(profile):
 def test_a_dev_twin_export_does_not_clobber_the_prod_record(plugin, profile, iso, monkeypatch):
     """The dev twin shares the default ~/CareerCoach workspace with prod. Its export may replace the
     shared generated snapshot (regenerable), but never the record prod reads."""
-    reg = FakeRegistry({})  # packet_root "" → ~/CareerCoach (HOME is a temp dir)
+    # extended_tools on so the legacy careercoach_export_experience / read_profile names resolve (S4b)
+    reg = FakeRegistry({"extended_tools": True})  # packet_root "" → ~/CareerCoach (HOME is a temp dir)
     plugin.register(reg)
     t = {x.name: x for x in reg.tools}
 
@@ -161,12 +162,18 @@ def test_a_dev_twin_export_does_not_clobber_the_prod_record(plugin, profile, iso
 
 
 # ── the crew and the skills read the same record ──────────────────────────────────────
-def test_drafting_and_scoring_subagents_can_read_the_profile(plugin, registry):
+def test_drafting_and_scoring_subagents_can_read_the_profile(plugin):
     """The host builds subagents without plugin middleware, so the always-on block never reaches
-    them: the ones that write in the operator's name (or score them) need the read tools."""
-    plugin.register(registry)
-    registered = {t.name for t in registry.tools}
-    crew = {c.name: c for c in registry.subagents}
+    them: the ones that write in the operator's name (or score them) need the read tools.
+
+    The crew is granted FINE-GRAINED read-only tools (careercoach_get_profile / read_profile /
+    get_answers) — the merged default façades (careercoach_profile, careercoach_answers) would also
+    expose the write actions, which this autonomous crew must never hold. Those fine-grained names
+    live on the extended surface (S4b), so register with extended_tools on to resolve them."""
+    reg = FakeRegistry({"extended_tools": True})
+    plugin.register(reg)
+    registered = {t.name for t in reg.tools}
+    crew = {c.name: c for c in reg.subagents}
     for name in ("application_writer", "job_evaluator"):
         c = crew[name]
         assert {"careercoach_get_profile", "careercoach_read_profile"} <= set(c.tools), (name, c.tools)

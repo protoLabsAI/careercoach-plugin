@@ -128,16 +128,21 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
     return yaml.safe_load(fm), body
 
 
-def _registered(plugin, registry) -> set[str]:
-    plugin.register(registry)
-    return {getattr(t, "name", str(t)) for t in registry.tools}
+def _registered(plugin) -> set[str]:
+    # A skill may name any reachable tool, including the legacy names hidden behind extended_tools and
+    # the fill tools behind browser_fill (S4b); register the full surface so a declared tool resolves.
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({"extended_tools": True, "browser_fill": "greenhouse,lever,ashby,workable"})
+    plugin.register(reg)
+    return {getattr(t, "name", str(t)) for t in reg.tools}
 
 
 # ── registration ──────────────────────────────────────────────────────────────────────
-def test_the_skill_is_discoverable_and_declares_the_plugin_tools_it_calls(plugin, registry):
+def test_the_skill_is_discoverable_and_declares_the_plugin_tools_it_calls(plugin):
     """Same contract the other skills are held to: loadable frontmatter, and every
     ``careercoach_*`` tool it declares is actually registered by ``register()``."""
-    registered = _registered(plugin, registry)
+    registered = _registered(plugin)
 
     fm, body = _frontmatter(SKILL_DIR / "SKILL.md")
     assert fm["name"] == "resume"
@@ -168,11 +173,11 @@ def test_the_router_points_at_every_sub_file_it_names():
 
 
 # ── the composition contract, both directions ─────────────────────────────────────────
-def test_every_tool_the_skill_names_exists_somewhere(plugin, registry):
+def test_every_tool_the_skill_names_exists_somewhere(plugin):
     """A skill that tells the agent to call a tool nobody registers fails silently at runtime
     as 'the agent just didn't do it'. Every tool-shaped word must be known, every call-shaped
     word must be a real tool, and every backticked bare word must be on purpose."""
-    registered = _registered(plugin, registry)
+    registered = _registered(plugin)
     tools = registered | set(EXTERNAL_TOOLS)
 
     for path in _skill_files():

@@ -82,16 +82,23 @@ def test_workflow_final_step_saves_apply_kit_and_hands_off():
     assert "Mark applied" in workflow["output"]
 
 
-def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_tool(plugin, registry):
+def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_tool(plugin):
     """The apply workflow runs application_writer with NO operator in the loop. Its contract is its
     own system prompt plus the workflow's write step — not the full interactive skill flow, whose
     operator-gated writes (careercoach_update_profile, careercoach_confirm_answers) belong to a live
     chat where the operator approves each one. Skill frontmatter does not grant tools, so the
     delegate must own every tool it is told to call — and must own none that writes the record,
     promotes an answer in the operator's name, or drives/submits a form."""
-    plugin.register(registry)
-    writer = next(c for c in registry.subagents if c.name == "application_writer")
-    registered = {t.name for t in registry.tools}
+    # The writer is granted FINE-GRAINED read/draft tools by their legacy names (careercoach_get_profile
+    # / read_profile / get_answers / track_application) — deliberately NOT the merged façades, which
+    # would also expose write/confirm actions this autonomous crew must never hold. Those names live on
+    # the extended surface (S4b), so register with extended_tools to resolve the grant.
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({"extended_tools": True})
+    plugin.register(reg)
+    writer = next(c for c in reg.subagents if c.name == "application_writer")
+    registered = {t.name for t in reg.tools}
 
     workflow = yaml.safe_load((ROOT / "workflows/apply.yaml").read_text(encoding="utf-8"))
     write_step = workflow["steps"][-1]["prompt"]

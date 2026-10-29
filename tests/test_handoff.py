@@ -170,12 +170,18 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
     return yaml.safe_load(fm), body
 
 
-def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin, registry):
+def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
     """It parses, carries name + description, and its frontmatter lists the tools the loop turns on —
     the handoff, the submit gate, and the plan/verify read-back pair the card requires. Every
-    ``careercoach_*`` tool it declares must actually be registered (the silent-no-op failure mode)."""
-    plugin.register(registry)
-    registered = {getattr(t, "name", str(t)) for t in registry.tools}
+    ``careercoach_*`` tool it declares must actually be registered (the silent-no-op failure mode).
+
+    The loop tools register only with browser_fill on (S3a) and the apply-kit tools name several
+    legacy tools, so register the full surface — extended_tools + browser_fill — to resolve them."""
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({"extended_tools": True, "browser_fill": "greenhouse,lever,ashby,workable"})
+    plugin.register(reg)
+    registered = {getattr(t, "name", str(t)) for t in reg.tools}
 
     fm, body = _frontmatter(SKILL)
     assert fm["name"] == "apply-form"

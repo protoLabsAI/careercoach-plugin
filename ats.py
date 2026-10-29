@@ -76,6 +76,15 @@ def fill_enabled(ats: str, cfg_value: str) -> bool:
     return name in _SUPPORTED_FILL_ATS and name in {part.strip().lower() for part in cfg_value.split(",")}
 
 
+def any_fill_enabled(cfg_value: str) -> bool:
+    """Whether the browser_fill setting enables at least one supported ATS — the gate that decides
+    whether the browser-fill tools (plan_fill, verify_fill, handoff, request_submit) register at all.
+    Blank or all-invalid config stays off."""
+    if not isinstance(cfg_value, str):
+        return False
+    return any(fill_enabled(ats, cfg_value) for ats in _SUPPORTED_FILL_ATS)
+
+
 # ── detect: a job URL → {ats, board, job_id} | None ───────────────────────────────────────
 def detect(url: str) -> dict | None:
     """Recognise a Greenhouse, Lever, Ashby or Workable job URL, or return ``None``.
