@@ -4,7 +4,7 @@ description: >-
   Find fresh roles, manage a company watchlist, review the daily digest, or follow up on leads. Also handles first run: "set me up", "get started", "onboard me", and /setup-coach.
 user_facing: true
 slash: setup-coach
-tools: [careercoach_profile, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track]
+tools: [careercoach_profile, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track, memory_recall, knowledge_ingest, list_skills, load_skill]
 ---
 
 # Job hunt — find fresh roles, go in through people, apply early and few

@@ -29,6 +29,16 @@ BROWSER_TOOLS = {
     "browser_upload",
     "browser_click",
 }
+# Host-core tools the plugin never registers but the host always provides: memory recall,
+# knowledge ingest, and skill discovery/loading. The folded-in first-run (ex setup-coach)
+# flow onboards the operator through these, so job-hunt must declare them in its frontmatter
+# or a host that gates tool access on the declaration hides them from the onboarding turn.
+HOST_TOOLS = {
+    "memory_recall",
+    "knowledge_ingest",
+    "list_skills",
+    "load_skill",
+}
 BETA_HEADING = "## Browser fill (opt-in beta)"
 
 
@@ -56,7 +66,7 @@ def test_frontmatter_tools_resolve_on_default_surface(plugin, iso, directory):
     metadata, _ = _read(directory)
     # Preserve resume's established ADR 0039 composition contract. Its artifact/host
     # dependencies are explicitly owned and tested, not careercoach registrations.
-    external = set(EXTERNAL_TOOLS) if directory == "resume" else BROWSER_TOOLS
+    external = set(EXTERNAL_TOOLS) if directory == "resume" else BROWSER_TOOLS | HOST_TOOLS
     declared = metadata["tools"]
     assert declared and len(declared) == len(set(declared))
     assert set(declared) <= registered | external
@@ -113,11 +123,17 @@ def test_apply_preserves_kit_default_and_verbatim_browser_beta():
 
 
 def test_absorbed_workflows_keep_their_safeguards():
-    _, hunt = _read("job-hunt")
-    assert _read("job-hunt")[0]["slash"] == "setup-coach"
+    hunt_fm, hunt = _read("job-hunt")
+    assert hunt_fm["slash"] == "setup-coach"
     assert "## First run / set me up" in hunt
     for rule in ("Harvest before you ask", "preview_id", "confirm_removal=true", "Only record operator facts after"):
         assert rule in hunt
+    # The absorbed setup-coach onboarding drives the host's memory, knowledge-ingest and skill
+    # tools. Every one its first-run body calls must also be declared in the frontmatter, so a
+    # host that gates tool access on the declaration still exposes them on the onboarding turn.
+    for host_tool in HOST_TOOLS:
+        assert f"`{host_tool}`" in hunt, f"first-run body never calls {host_tool!r}"
+        assert host_tool in hunt_fm["tools"], f"first-run calls {host_tool!r} but it is not declared"
     _, strategy = _read("career-strategy")
     for step in ("hard-skill diff", "synthesis", "Gap heatmap", "Learning plan", "Never fabricate a resource"):
         assert step in strategy
