@@ -193,12 +193,34 @@ def test_compose_text_without_a_url_still_names_the_application(plugin):
 def test_mark_applied_confirms_then_posts_applied(plugin):
     html = plugin._DASHBOARD_HTML
     assert "function markApplied()" in html
-    assert "if (!confirm(" in html  # confirm() gate
+    # gated by an INLINE confirm overlay, never window.confirm: a sandboxed iframe without
+    # allow-modals silently suppresses native modals (returning false), so Mark applied could
+    # never succeed. Mirrors the askClosedStatus chooser.
+    assert "function askConfirm(" in html
+    assert "askConfirm(" in html
+    assert 'id="confirm"' in html and 'id="confirm-ok"' in html and 'id="confirm-cancel"' in html
+    assert "window.confirm(" not in html  # no native modal call anywhere on the page
+    assert "if (!confirm(" not in html  # the old native gate is gone
     assert "'/applications/' + encodeURIComponent(id) + '/applied'" in html
     # the Mark-applied button is wired to markApplied, and a success refreshes the drawer + board
     assert 'id="detail-applied"' in html or "id='detail-applied'" in html
     assert "applied.addEventListener('click', markApplied)" in html
     assert "return openDetail(id);" in html  # panel refreshes after applied
+
+
+def test_mark_applied_inline_confirm_sits_above_the_drawer(plugin):
+    """The confirm overlay must stack above #detail (z-index 40), or a sandboxed-iframe user would
+    see a dimmed-but-unreachable dialog behind the open drawer."""
+    html = plugin._DASHBOARD_HTML
+    assert "#confirm { position: fixed; inset: 0; z-index: 50;" in html
+    assert "#detail { position: fixed; inset: 0; z-index: 40;" in html
+
+
+def test_open_detail_ignores_a_stale_response(plugin):
+    """A late GET for a card the user has closed/clicked past is dropped via the DETAIL_ID guard,
+    so it can't reopen or overwrite the drawer."""
+    html = plugin._DASHBOARD_HTML
+    assert "if (DETAIL_ID !== id) return;" in html
 
 
 # ── editable notes saved via PATCH ───────────────────────────────────────────────────────────

@@ -2246,6 +2246,16 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   #chooser p { margin: 0 0 14px; font-size: 14px; }
   #chooser .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 
+  /* Mark-applied confirmation — an inline overlay (never window.confirm, which a sandboxed iframe
+     without allow-modals silently suppresses, returning false). z-index above #detail (40) so it
+     sits over the open drawer. Mirrors the #chooser box. */
+  #confirm { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+             background: rgba(0,0,0,.5); }
+  #confirm .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
+                  border-radius: 12px; padding: 20px; max-width: 320px; }
+  #confirm p { margin: 0 0 14px; font-size: 14px; }
+  #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+
   /* The job detail drawer (S2b): a right-side overlay; Esc, the ✕ and the backdrop all dismiss it.
      Reuses the same --pl-* tokens as the rest, so it reads correctly in both light and dark. */
   #detail { position: fixed; inset: 0; z-index: 40; display: none; }
@@ -2353,6 +2363,15 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       </div>
     </div>
   </div>
+  <div id="confirm" role="dialog" aria-modal="true">
+    <div class="box">
+      <p id="confirm-q"></p>
+      <div class="choices">
+        <button class="btn keep" id="confirm-ok">Yes (default)</button>
+        <button class="btn" id="confirm-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- The job detail drawer (S2b): opened by clicking a pipeline card; rendered client-side from
        GET /applications/{id}. Esc, the ✕ and the backdrop dismiss it. -->
@@ -2452,6 +2471,28 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       cancel.onclick = function () { done(null); };
       ov.style.display = 'flex';
       passed.focus();
+    });
+  }
+
+  // A yes/no confirmation as an inline overlay above the drawer — never window.confirm, which a
+  // sandboxed iframe (no allow-modals) silently suppresses, returning false. Mirrors
+  // askClosedStatus. Resolves true only on an explicit Yes; Cancel (or re-ask) resolves false.
+  function askConfirm(message) {
+    return new Promise(function (resolve) {
+      var ov = document.getElementById('confirm');
+      var q = document.getElementById('confirm-q');
+      var ok = document.getElementById('confirm-ok');
+      var cancel = document.getElementById('confirm-cancel');
+      q.textContent = message;
+      function done(v) {
+        ov.style.display = 'none';
+        ok.onclick = cancel.onclick = null;
+        resolve(v);
+      }
+      ok.onclick = function () { done(true); };
+      cancel.onclick = function () { done(false); };
+      ov.style.display = 'flex';
+      if (ok.focus) ok.focus();
     });
   }
 
@@ -2813,21 +2854,26 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     toast('Drafted a message for your coach — review and send it in chat.');
   }
 
-  // Mark applied: confirm(), POST /applied, then refresh the drawer and the board (the card moves
-  // to Applied). An unconfirmed dialog, a non-2xx or a network error leaves everything untouched.
+  // Mark applied: an INLINE confirm (never window.confirm — a sandboxed iframe without allow-modals
+  // silently suppresses the native modal, returning false, so the POST could never fire), then
+  // POST /applied and refresh the drawer and the board (the card moves to Applied). A declined
+  // confirm, a non-2xx or a network error leaves everything untouched.
   function markApplied() {
     if (!DETAIL) return;
     var app = DETAIL.application || {};
     var id = app.id;
     if (!id) return;
-    if (!confirm('Mark ' + (app.role || 'this role') + ' @ ' + (app.company || 'this company') + ' as applied?')) return;
-    write('/applications/' + encodeURIComponent(id) + '/applied', {})
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return openDetail(id);
-      })
-      .then(function () { load(); })
-      .catch(function () { toast('Could not mark that applied — try again.'); });
+    askConfirm('Mark ' + (app.role || 'this role') + ' @ ' + (app.company || 'this company') + ' as applied?')
+      .then(function (ok) {
+        if (!ok) return;
+        write('/applications/' + encodeURIComponent(id) + '/applied', {})
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return openDetail(id);
+          })
+          .then(function () { load(); })
+          .catch(function () { toast('Could not mark that applied — try again.'); });
+      });
   }
 
   // Persist the editable notes (PATCH /notes). POST-only `write` can't do PATCH, so call apiFetch.
@@ -2927,7 +2973,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         esc(app.company || 'this company') + '</h4>' + renderContacts(contacts) + '</section>';
     }
 
-    // actions — each drafts a chat message; Mark applied posts /applied behind a confirm()
+    // actions — each drafts a chat message; Mark applied posts /applied behind an inline confirm
     html += '<section id="detail-actions" class="dsec"><h4>Ask your coach</h4>' +
       '<div class="action-btns">' +
         '<button class="btn act" type="button" data-act="kit">Build apply kit</button>' +
@@ -2961,11 +3007,18 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (!id) return Promise.resolve();
     DETAIL_ID = id;
     return api('/applications/' + encodeURIComponent(id)).then(function (d) {
+      // Drop a response the user has moved on from: a slow fetch for a card they've since closed
+      // (Esc/✕ null DETAIL_ID) or clicked past (DETAIL_ID points at a newer id) must not reopen or
+      // overwrite the drawer with stale data.
+      if (DETAIL_ID !== id) return;
       if (!d || d.error) { toast('Could not open that role — try again.'); return; }
       DETAIL = d;
       renderDetail(d);
       showDetail();
-    }, function () { toast('Could not open that role — try again.'); });
+    }, function () {
+      if (DETAIL_ID !== id) return;
+      toast('Could not open that role — try again.');
+    });
   }
 
   function load() {
