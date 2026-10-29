@@ -1,12 +1,8 @@
 ---
-name: career-strategy
+name: strategy
 description: >-
-  Use for the coaching conversations that aren't about a single application — positioning and
-  personal brand, deciding what roles to target, weighing or comparing offers, salary and
-  benefits negotiation, whether to take a job, and career-direction / reflection. Triggers:
-  "help me think about my career", "what roles should I target", "should I take this offer",
-  "how do I negotiate this salary", "compare these two offers", "how do I position myself".
-tools: [careercoach_track, company_researcher]
+  Choose career direction, positioning or target roles; compare offers, rehearse negotiation, or turn skill gaps into a prioritized learning plan. Use for "what should I learn", "which offer", or "how do I position myself".
+tools: [careercoach_track, careercoach_profile]
 ---
 
 # Career Strategy Coach
@@ -20,13 +16,13 @@ conversation), not with what looks good on paper.
 - Distill the candidate's story into a clear, specific value proposition — what they're
   *known for*, not a list of everything they've touched.
 - Draft a LinkedIn headline / summary using the `[specialty] + [what you do for whom]` formula;
-  kill the clichés (see the writing-style discipline in `job-application-assistant/writing-style.md`).
+  kill the clichés (see the writing-style discipline in [writing-style.md](../apply-form/writing-style.md)).
 - Identify the 1-2 role types where their story is strongest, and the keywords that market uses.
 
 ## Target-role strategy
 - Turn "I want a job" into a focused search: role types, seniority, sectors, must-haves, deal-breakers.
 - Name the honest gaps between where they are and where they're aiming, and route real skill gaps
-  to the **upskill** skill for a learning plan.
+  to the skill-gap analysis below for a learning plan.
 - Weigh reach vs. safe targets; a coach names when someone is aiming too low as readily as too high.
 
 ## Offer evaluation (when an offer or a choice appears)
@@ -59,3 +55,58 @@ Surface the thing they might be rationalizing away.
 ## Stance
 Warm, direct, specific. No false reassurance and no doom. The measure of a good session is that the
 person leaves clearer and more confident about their *own* decision — not that they did what the agent said.
+
+## Skill gaps and learning plans
+
+> Two-pass gap analysis adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
+> `upskill/SKILL.md`.
+
+Two modes:
+- **Aggregate** (default) — analyse the whole tracked pipeline (`careercoach_track(action="list")`).
+- **Targeted** — analyse a single posting the user gives you (fetch it with `fetch_url`).
+
+### Step 1 — Load
+Read the confirmed candidate profile with `careercoach_profile(action="read", doc="experience")`. In
+aggregate mode, pull the tracked applications and their `fit_score`s (lower fit = the role exposed
+more gaps → weight it heavier). In targeted mode, fetch and parse the one posting.
+
+### Step 2 — Pass 1: hard-skill diff
+Extract required + preferred technical skills from each source. Build a **frequency map**; in
+aggregate mode weight each skill's contribution by `(100 - fit_score) / 100`. **Diff against the
+profile and be generous** — if the profile shows a skill in any form ("Python" covers "Python
+scripting"), it's not a gap. What remains is the hard-skill gap list, ranked by score.
+
+### Step 3 — Pass 2: synthesis (what the diff misses)
+Reason holistically about gaps a keyword diff can't catch, and tag each:
+- `[domain]` — unfamiliarity with the industry/problem space (cybersecurity, quant finance, climate…)
+- `[soft]` — ways of working, communication, leadership expectations the postings emphasize
+- `[tooling]` — frameworks, cloud, methodologies (MLOps, CI/CD, agile-at-scale) recurring across jobs
+- `[credential]` — a certification multiple postings prefer
+
+Don't duplicate Pass 1; only add what it missed.
+
+### Step 4 — Gap heatmap (show this before the plan)
+Combine both passes into one prioritized table (Critical / High / Medium / Low), and print it:
+
+| Priority | Skill / Area | Type | Gap source |
+|----------|-------------|------|------------|
+| Critical | Kubernetes | Hard | 4/5 jobs, score 3.2 |
+| High | Security domain | Domain | synthesis |
+
+### Step 5 — Learning plan
+For every Critical + High gap (and Mediums if there are fewer than five gaps total):
+1. **WebSearch** for current, well-regarded resources — include the current year in the query.
+2. Pick 2-3 (prefer hands-on labs, official docs for tooling, books for domain). Name + URL + one-line why.
+3. Write a **study direction tailored to the candidate's background** — what to skip, where to start.
+4. Estimate time to working proficiency (be realistic, err high).
+
+Group by theme (Cloud & Infra, MLOps, Domain, Soft skills, Certs), then add a **Suggested study
+order** with dependencies first, critical before high, quick wins early, domain knowledge alongside projects.
+
+### Rules
+1. **Never fabricate a resource.** Only cite real WebSearch results — no invented courses, URLs, or authors.
+2. **Search with the current year** so results stay fresh.
+3. **Be generous with profile matching** — avoid false-positive gaps.
+4. **Show the heatmap before the plan.**
+5. Offer to save the plan as an **artifact** (or a note) the candidate can revisit and track progress against;
+   next time, diff against it to show gaps closed + new gaps.

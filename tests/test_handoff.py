@@ -179,7 +179,7 @@ def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
     registered = {getattr(t, "name", str(t)) for t in reg.tools}
 
     fm, body = _frontmatter(SKILL)
-    assert fm["name"] == "apply-form"
+    assert fm["name"] == "apply"
     assert fm["description"].strip(), "the description is what routes the agent here"
 
     declared = fm["tools"]

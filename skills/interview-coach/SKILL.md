@@ -1,11 +1,8 @@
 ---
-name: interview-coach
+name: interview
 description: >-
-  Use to prepare for or practice interviews — "help me prep for the interview at X",
-  "run a mock interview", "practice behavioral questions", "how do I answer 'what's your
-  weakness'", "what should I ask them". Builds a STAR answer bank, runs realistic mock
-  interviews with honest per-answer feedback, and prepares questions to ask the interviewer.
-tools: [careercoach_track, company_researcher]
+  Prepare for interviews, practice behavioral answers, run a mock interview with per-answer feedback, or plan questions to ask an interviewer.
+tools: [careercoach_track, careercoach_profile]
 ---
 
 # Interview Coach
@@ -13,6 +10,9 @@ tools: [careercoach_track, company_researcher]
 > STAR framework + question banks adapted with credit from Mads Lorentzen's `ai-job-search`
 > (MIT), `07-interview-prep.md`. Reframed around **practice** — the coach's job is reps + feedback,
 > not just a list of tips.
+
+Read `careercoach_profile(action="read", doc="experience")` and the confirmed stories before
+drafting answers. Honor `do_not_claim`; never invent a story, metric, or credential.
 
 Coaching modes (ask which the user wants, or infer from their message):
 
@@ -55,4 +55,4 @@ Coach them to interview the company back — this prevents bad-fit surprises:
   update (invite, rejection, or status) is always right.
 
 Update the tracked application's status (`interviewing`, then `offer`/`rejected`) as things move,
-and hand off to **career-strategy** if an offer comes in.
+and hand off to **strategy** if an offer comes in.

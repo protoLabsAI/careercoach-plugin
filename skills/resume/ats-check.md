@@ -73,7 +73,7 @@ offending text quoted on a fail.
 | 5 | **One date format throughout** | Pick `Mon YYYY - Mon YYYY` or `MM/YYYY - MM/YYYY` and hold it everywhere, including Education |
 | 6 | **No ligature or private-use characters** | `font-variant-ligatures: none` is set, and the source has no U+FB00-FB06 / U+E000-F8FF |
 | 7 | **File under ~1 MB** | From `save_file_artifact`'s `(mime, NN KB)` line |
-| 8 | **Page count** | 2 pages (1 for early career). Judge it against the budget in `job-application-assistant/cv-guide.md` and **confirm with the operator or the printed PDF** — you can't read page count out of extracted text, so don't claim it as verified when it isn't |
+| 8 | **Page count** | 2 pages (1 for early career). Judge it against the budget in [cv-guide.md](../apply-form/cv-guide.md) and **confirm with the operator or the printed PDF** — you can't read page count out of extracted text, so don't claim it as verified when it isn't |
 | 9 | **Real text, not an image** | If extraction returned almost nothing from a PDF, the resume is a picture — a guaranteed ATS zero |
 | 10 | **Standard fonts, no web fonts** | A system stack ending in a generic family; nothing loaded over the network |
 
@@ -104,7 +104,7 @@ generic "keyword score" is noise.
    - **Missing but true** — the profile supports it and the resume just doesn't say it.
      This is the actionable bucket: add it, with evidence.
    - **Missing and not true** — a real gap. **Name it; never add it.** Hand it to the
-     `upskill` skill.
+     `strategy` skill.
 
 Present it:
 

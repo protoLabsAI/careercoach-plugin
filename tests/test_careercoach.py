@@ -362,7 +362,7 @@ def test_skills_declare_real_tools(plugin):
                 assert name in registered, f"{path.parent.name} declares unknown tool {name!r}"
 
     # The onboarding skill is the entry point a fresh archetype lands on — it must be user-facing.
-    setup = yaml.safe_load((ROOT / "skills/setup-coach/SKILL.md").read_text().split("---\n", 2)[1])
+    setup = yaml.safe_load((ROOT / "skills/job-hunt/SKILL.md").read_text().split("---\n", 2)[1])
     assert setup["user_facing"] is True and setup["slash"] == "setup-coach"
 
 

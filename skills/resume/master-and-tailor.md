@@ -61,7 +61,7 @@ In the conversation that made an artifact you already have its id. In a later on
 1. **Read the facts first.** `careercoach_profile(action="read", doc="experience")` plus
    `careercoach_profile(action="get", field="skills")` and `careercoach_profile(action="get", field="do_not_claim")`. Thin profile → say so and
    offer `/setup-coach`. Don't build a resume from an empty record.
-2. **Read the discipline.** `job-application-assistant/cv-guide.md` for section order and
+2. **Read the discipline.** [cv-guide.md](../apply-form/cv-guide.md) for section order and
    the two-page budget; `writing-style.md` before any bullet.
 3. **Pick a template** from the catalogue in `SKILL.md` and fill it. Delete sections the
    profile has nothing for. No placeholders survive into a rendered resume.

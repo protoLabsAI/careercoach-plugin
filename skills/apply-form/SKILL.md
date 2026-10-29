@@ -1,12 +1,8 @@
 ---
-name: apply-form
+name: apply
 description: >-
-  Use when the user wants to apply to a job: evaluate the posting, build and save an apply
-  kit with a tailored résumé PDF, a cover letter only when requested, and confirmed answers.
-  Hand off to the operator in the Career Coach view to copy answers and Mark applied.
-  Browser form filling is an opt-in beta for explicitly enabled ATS types only; submission
-  always requires the operator approval card. Nothing auto-submits.
-tools: [careercoach_save_apply_kit, careercoach_profile, careercoach_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_track, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
+  Evaluate a specific posting, draft its CV or cover letter, build a saved apply kit, or work up a full gated role packet. Use for "should I apply", "apply to this job", or "build the role packet".
+tools: [careercoach_role_packet, careercoach_save_apply_kit, careercoach_profile, careercoach_answers, careercoach_render_resume, careercoach_prepare_application, careercoach_track, browser_open, browser_pdf, browser_form_read, browser_select, browser_fill, browser_upload, browser_click]
 ---
 
 # Build an apply kit
@@ -16,9 +12,19 @@ The agent never opens or drives the employer's browser form in this flow. The lo
 print step below is only PDF generation. Reference external tools by name only — never import
 another plugin (ADR 0039).
 
+For a fit assessment or individual CV/cover letter, follow
+[Research and documents](application-guide.md) and stop at the requested deliverable.
+For an explicitly requested full, filed packet, follow the
+[gated packet flow](packet-flow.md), using `careercoach_role_packet` to file artifacts
+and pausing for approval before every phase.
+Record new operator facts with `careercoach_profile(action="update")` only after the
+operator confirms them; honor `do_not_claim` in every mode.
+Otherwise follow the kit-first steps below. The `apply` workflow remains the autonomous
+research → evaluate → save-kit route. None of these modes authorizes browser submission.
+
 ## 1. Evaluate the posting
 
-Use the job-application-assistant skill to evaluate fit against the operator's confirmed profile
+Use [Research and documents](application-guide.md) to evaluate fit against the operator's confirmed profile
 and rubric, including sourced company research. Show strengths, gaps, and the recommendation.
 If the verdict is Weak or Poor Fit, say so and stop rather than forcing an application.
 Use `careercoach_prepare_application(url, company, role)` for available public questions;

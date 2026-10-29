@@ -3,7 +3,7 @@
 > Content discipline adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
 > `06-cover-letter-templates.md`. Rendering defaults to a **print-correct HTML artifact**;
 > LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
-> `writing-style.md` — read it first.
+> [writing-style.md](writing-style.md) — read it first.
 
 ## Rendering: `render_format`
 
@@ -16,7 +16,7 @@
 - **`docx`** — a real editable **Word letter** to match a docx CV. Build it with cowork's
   **`docx`** skill (`load_skill('docx')`, `python-docx`), save to an **absolute** path, then
   **`save_file_artifact(path, title="<Name> — Cover Letter — <Company>")`** for a versioned,
-  downloadable file. Same requirements + fallback as the CV (`cv-guide.md`): needs cowork +
+  downloadable file. Same requirements + fallback as the CV ([cv-guide.md](cv-guide.md)): needs cowork +
   `execute_code` + a v0.108.0+ host (on desktop the managed Python runtime provisions on first use),
   else fall back to `html`. It's available when you have `execute_code` in your toolset and
   `docx` in your available skills (cowork adds skills, not tools).
@@ -27,7 +27,7 @@
 - **Exactly one page**, signature block included. **Body budget: 250-300 words** (350 overflows).
 - Structure = 3 blocks (opening + body-with-bullets + close); add a 4th only if the others are short.
 
-## Structure (see `writing-style.md` for the full shape)
+## Structure (see [writing-style.md](writing-style.md) for the full shape)
 
 1. **Salutation** — a named person if known ("Dear [First Last],"), else the team
    ("Dear [Company] hiring team,"). Avoid "To whom it may concern".
@@ -38,7 +38,7 @@
 6. **Close** — brief, confident. Then signature.
 
 ## Checklist before finalizing
-- [ ] No em-dashes; no clichés or filler (`writing-style.md`)
+- [ ] No em-dashes; no clichés or filler ([writing-style.md](writing-style.md))
 - [ ] Every claim backed by a specific example
 - [ ] Forward-looking: focuses on the tasks the candidate will solve
 - [ ] The "why this company" section cites *this* company's specifics (verified against sources)

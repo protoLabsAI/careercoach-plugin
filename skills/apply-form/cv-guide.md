@@ -11,7 +11,7 @@
 > check — live in the **`resume`** skill (`load_skill("resume")`). Read this for what goes
 > on the page; read that for how the document is produced.
 
-Follow `writing-style.md` for tone and the honesty test **before** writing any bullet.
+Follow [writing-style.md](writing-style.md) for tone and the honesty test **before** writing any bullet.
 
 **Draft only from the operator profile** — `careercoach_profile(action="read", doc="experience")`, the single
 source of truth — and treat its `do_not_claim` lines as hard stops. A workspace
@@ -37,7 +37,7 @@ the profile with `careercoach_profile(action="import_experience")` first (previe
     PDF" when what exists is an HTML artifact.
 - **`docx`** — a real, editable **Word file** (what many ATS forms and recruiters expect). Build
   it with cowork's **`docx`** skill: `load_skill('docx')`, author the CV with `python-docx`
-  following the content discipline in this guide + `writing-style.md`, save it to an **absolute** path
+  following the content discipline in this guide + [writing-style.md](writing-style.md), save it to an **absolute** path
   (a relative one fails — see `resume/export.md`), then register it with
   **`save_file_artifact(<that same path>, title="<Name> — CV — <Role>")`** so it lands in the
   Artifact panel as a **versioned, downloadable** file with a text preview. Needs the cowork plugin
