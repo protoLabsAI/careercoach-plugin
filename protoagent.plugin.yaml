@@ -41,6 +41,7 @@ enabled: false              # author default — operators opt in via plugins.en
 # WEIGHTS are a separate, agent-tunable Knobs surface (see __init__.py), not settings.
 config_section: careercoach
 config:
+  browser_fill: ""          # opt-in beta: comma list of greenhouse, lever, ashby, workable; blank = off
   full_name: ""
   location: ""
   target_roles: ""
@@ -58,6 +59,7 @@ config:
   followup_days: 10         # an applied role with no movement for this many days is flagged to follow up
 secrets: [jobs_api_key]
 settings:
+  - { key: browser_fill, label: "Browser fill (beta)", type: string, group: "Career Coach", description: "Opt-in beta: comma-separated ATS types to enable (greenhouse, lever, ashby, workable). Blank disables browser fill for all ATS types; use the apply kit instead. Never auto-submits." }
   - { key: full_name, label: "Your name", type: string, group: "Career Coach", description: "Used on generated CVs and cover letters, and to greet you on the dashboard." }
   - { key: location, label: "Location", type: string, group: "Career Coach", description: "City / country and any commute constraints — feeds the location pass/fail gate in job evaluation." }
   - { key: target_roles, label: "Target roles", type: string, group: "Career Coach", description: "The role types you're aiming for (comma-separated), e.g. 'ML engineer, data scientist'. Seeds strategy + search." }

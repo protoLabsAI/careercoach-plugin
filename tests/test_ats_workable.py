@@ -104,7 +104,13 @@ def test_verify_tool_rejects_unchecked_radio(tools, formfill):
     assert "NOT verified" in out
     assert not formfill.load_session(plan["session_id"]).get("verified")
     assert "checked=true" in tools["careercoach_plan_fill"].invoke(
-        {"form_json": json.dumps([field]), "company": "Acme", "role": "Engineer", "extra_answers": '{"auth":"Yes"}'}
+        {
+            "ats": "workable",
+            "form_json": json.dumps([field]),
+            "company": "Acme",
+            "role": "Engineer",
+            "extra_answers": '{"auth":"Yes"}',
+        }
     )
 
 

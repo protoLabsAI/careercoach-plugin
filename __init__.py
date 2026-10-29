@@ -937,17 +937,35 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
     return "\n".join(out)
 
 
+def _kit_handoff(ats: str) -> str:
+    return (
+        f"KIT HANDOFF — browser fill is off for {ats or 'unknown ATS'}. "
+        "careercoach_plan_fill is disabled for this ATS. Build the apply kit: "
+        "careercoach_render_resume → browser_pdf for the PDF, a cover letter only if the posting asks, "
+        "and confirmed answers from careercoach_get_answers. Save it with careercoach_save_apply_kit. "
+        "The operator fills the form from the Career Coach view using copy buttons. "
+        "To opt into browser fill (beta), add the ATS type to the browser_fill setting "
+        "(greenhouse, lever, ashby, workable). Unknown ATS types cannot be enabled. Never auto-submit."
+    )
+
+
 def _register_formfill_tools(registry) -> None:
     from . import answers, formfill
 
     @tool
     def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "", ats: str = "") -> str:
         """Plan a job-form fill from ONLY the operator's confirmed standard answers plus `extra_answers` (JSON object:
-        field label → operator-supplied value). `form_json`: the exact array browser_form_read returned. `ats="ashby"`
-        for jobs.ashbyhq.com (adds a required résumé upload first). Returns a session_id, ordered fill rows, and an
-        "Ask the operator about ONLY these" list. A draft never fills; a select answer is never fuzzy-matched. The
-        full loop: apply-form skill."""
+        field label → operator-supplied value). `form_json`: the exact array browser_form_read returned. `ats` is the
+        ATS type you're applying through (greenhouse/lever/ashby/workable — the one careercoach_prepare_application or
+        ats.detect reported); `ats="ashby"` also adds a required résumé upload first. Returns a session_id, ordered
+        fill rows, and an "Ask the operator about ONLY these" list. A draft never fills; a select answer is never
+        fuzzy-matched. Requires this ATS in the browser_fill beta setting; otherwise returns the apply-kit handoff
+        without creating a session (an empty or unlisted ATS is off). The full loop: apply-form skill."""
         try:
+            from .ats import fill_enabled
+
+            if not fill_enabled(ats, registry.config.get("browser_fill", "")):
+                return _kit_handoff((ats or "").strip().lower())
             fields, err = _parse_form_json(form_json)
             if err:
                 return err
@@ -1023,25 +1041,40 @@ def _register_prepare_tool(registry) -> None:
     async def careercoach_prepare_application(url: str, company: str = "", role: str = "") -> str:
         """Before opening a posting `url`, prepare answers from the ATS's public question schema. Greenhouse
         (job-boards./boards.greenhouse.io/<board>/jobs/<id>): a plan from CONFIRMED answers only plus an "Ask the
-        operator about ONLY these" list. Ashby, Workable, gh_jid careers pages and other URLs: no schema; it returns
-        the live-form path. Preparation only — the live read-back (browser_form_read → careercoach_plan_fill → fill →
+        operator about ONLY these" list. Browser fill defaults off: return an apply-kit handoff, retaining
+        Greenhouse questions and confirmed answers for the kit. Enable an ATS via the browser_fill beta setting
+        to use the live-form path. Preparation only — the live read-back (browser_form_read → careercoach_plan_fill → fill →
         careercoach_verify_fill) is still required before any submit."""
         from . import answers, ats, formfill
 
-        live_path = (
-            "Open the application in the browser and use the live-form path: "
-            "browser_form_read → careercoach_plan_fill → fill → careercoach_verify_fill."
-        )
         try:
             detected = ats.detect(url)
+            ats_name = detected["ats"] if detected else ""
+            enabled = ats.fill_enabled(ats_name, registry.config.get("browser_fill", ""))
+            if enabled:
+                # Opted in: the agent MUST pass this ats to careercoach_plan_fill, which refuses any
+                # ATS not in the browser_fill setting (an empty ats counts as off). Name it in the
+                # live-form path so the fill session can actually start.
+                live_path = (
+                    "Open the application in the browser and use the live-form path: browser_form_read → "
+                    f'careercoach_plan_fill(form_json, company, role, ats="{ats_name}") → fill → '
+                    "careercoach_verify_fill."
+                )
+            else:
+                live_path = _kit_handoff(ats_name)
             if not detected:
                 return f"{url!r} isn't a recognised Greenhouse job URL, so there's no public schema to prepare from. {live_path}"
+            if not enabled and ats_name != "greenhouse":
+                return live_path
+            if ats_name == "lever":
+                return f"This is a Lever job. Open apply_url directly: {detected['apply_url']}. {live_path}"
             if detected.get("ats") == "workable":
                 return (
                     f"This is a Workable job ({detected['company']}/{detected['job_id']}). "
                     f"Open apply_url directly: {detected['apply_url']} instead of clicking Apply on the overview. "
-                    "Use browser_form_read → careercoach_plan_fill → fill → browser_form_read again → "
-                    "careercoach_verify_fill. Read back the checked state of every radio/radio-group; "
+                    'Use browser_form_read → careercoach_plan_fill(form_json, company, role, ats="workable") → '
+                    "fill → browser_form_read again → careercoach_verify_fill. "
+                    "Read back the checked state of every radio/radio-group; "
                     "a successful click is not proof of selection."
                 )
             if detected.get("ats") == "ashby":
@@ -1069,6 +1102,19 @@ def _register_prepare_tool(registry) -> None:
             if not fields:
                 return f"The Greenhouse schema had no fillable questions to prepare from. {live_path}"
 
+            if not enabled:
+                confirmed = answers.confirmed()
+                lines = [live_path, "", "Greenhouse public-schema questions and confirmed answers for the kit:"]
+                for field in fields:
+                    key = formfill.classify(field)
+                    value = confirmed.get(key) if key else None
+                    label = field.get("label") or field.get("name") or "Question"
+                    requirement = "required" if field.get("required") else "optional"
+                    lines.append(
+                        f"  - {label} ({requirement}): {value or 'no confirmed answer; ask the operator if needed'}"
+                    )
+                return "\n".join(lines)
+
             company_s, role_s = (company or "").strip(), (role or "").strip()
             # Fold the posting URL into the session id: prepare lets company/role default to "", so
             # without the URL two different postings with identical questions would share one id and
@@ -1081,7 +1127,8 @@ def _register_prepare_tool(registry) -> None:
             preamble = (
                 f"Prepared from the Greenhouse public schema for {title or 'this role'} "
                 f"(board {board!r}, job {job_id}). This is PREPARATION — resolve the questions below with "
-                "the operator now, but the live read-back is still required before any submit.\n"
+                "the operator now, but the live read-back is still required before any submit: browser_form_read → "
+                'careercoach_plan_fill(form_json, company, role, ats="greenhouse") → fill → careercoach_verify_fill.\n'
             )
             return preamble + "\n" + _render_plan(plan, company or "", role or title)
         except Exception as e:  # noqa: BLE001 — a tool never raises

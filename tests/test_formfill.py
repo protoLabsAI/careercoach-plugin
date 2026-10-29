@@ -421,7 +421,9 @@ def test_plan_tells_the_filler_to_pick_the_forms_decline_option(tools, answers):
     answers.propose("gender", "Decline to self-identify")
     answers.confirm(["gender"])
     form = [field("Gender", "combobox", name="gender", id="gender", required=True)]
-    out = tools["careercoach_plan_fill"].invoke({"form_json": json.dumps(form), "company": "Acme", "role": "SWE"})
+    out = tools["careercoach_plan_fill"].invoke(
+        {"ats": "greenhouse", "form_json": json.dumps(form), "company": "Acme", "role": "SWE"}
+    )
     assert "decline-to-answer option" in out
     assert "accepts any decline wording" in out
 
@@ -807,11 +809,13 @@ def test_formfill_has_no_host_imports():
 def test_malformed_json_gives_a_readable_error(tools):
     import json
 
-    out = tools["careercoach_plan_fill"].invoke({"form_json": "{not valid", "company": "Acme", "role": "SWE"})
+    out = tools["careercoach_plan_fill"].invoke(
+        {"ats": "greenhouse", "form_json": "{not valid", "company": "Acme", "role": "SWE"}
+    )
     assert "could not be parsed" in out and "browser_form_read" in out  # a readable string, not a traceback
 
     out = tools["careercoach_plan_fill"].invoke(
-        {"form_json": "[]", "company": "Acme", "role": "SWE", "extra_answers": "{oops"}
+        {"ats": "greenhouse", "form_json": "[]", "company": "Acme", "role": "SWE", "extra_answers": "{oops"}
     )
     assert "extra_answers could not be parsed" in out
 
@@ -820,7 +824,12 @@ def test_malformed_json_gives_a_readable_error(tools):
 
     # a real session, but garbage read-back JSON → the parse guard, still never a traceback
     plan = tools["careercoach_plan_fill"].invoke(
-        {"form_json": json.dumps([field("Email", "email", name="email", required=True)]), "company": "A", "role": "R"}
+        {
+            "ats": "greenhouse",
+            "form_json": json.dumps([field("Email", "email", name="email", required=True)]),
+            "company": "A",
+            "role": "R",
+        }
     )
     import re
 
@@ -847,7 +856,9 @@ def test_plan_and_verify_tools_round_trip(tools, answers):
         field("Phone country", "select", name="phone_country", required=True, options=COUNTRIES),
         field("Why do you want to work here?", "textarea", name="q1", required=True),
     ]
-    out = tools["careercoach_plan_fill"].invoke({"form_json": json.dumps(form), "company": "Acme", "role": "SWE"})
+    out = tools["careercoach_plan_fill"].invoke(
+        {"ats": "greenhouse", "form_json": json.dumps(form), "company": "Acme", "role": "SWE"}
+    )
     assert "ada@example.com" in out and "United States" in out
     assert "Ask the operator about ONLY these:" in out
     assert "Why do you want to work here?" in out  # required, no confirmed answer → asked about
@@ -1071,7 +1082,9 @@ def test_verify_fill_round_trips_a_dotted_id(tools, answers):
     answers.propose("email", "ada@example.com")
     answers.confirm(["email"])
     form = [field("Email", "email", name="candidate.email", id="input-candidate.email-4", required=True)]
-    out = tools["careercoach_plan_fill"].invoke({"form_json": json.dumps(form), "company": "Tether", "role": "SWE"})
+    out = tools["careercoach_plan_fill"].invoke(
+        {"ats": "greenhouse", "form_json": json.dumps(form), "company": "Tether", "role": "SWE"}
+    )
     assert '[id="input-candidate.email-4"]' in out and "#input-candidate.email-4" not in out
     sid = re.search(r"session_id:\s*(\S+)", out).group(1)
     filled = [dict(form[0], value="ada@example.com")]

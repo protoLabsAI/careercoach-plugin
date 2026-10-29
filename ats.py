@@ -31,7 +31,7 @@ network host: it uses the live-form path only (``browser_form_read`` → ``caree
 ``ats="ashby"``). Only URL detection lives here for Ashby; its plan rules (a required résumé upload
 first, Yes/No button groups → select, read-back after the autofill widget) live in ``formfill``.
 
-Lever / Workday are deliberately deferred until Greenhouse and Ashby work end to end. No ``graph.*``
+Lever is detected from its URL only; Workday remains deferred. No ``graph.*``
 imports, so the pure functions are unit-tested with nothing but a saved fixture, and the fetch is
 exercised by monkeypatching it (no live network in the suite).
 """
@@ -59,9 +59,26 @@ _ASHBY_JOB = re.compile(
 )
 
 
+# Lever job and apply URLs are detected locally; no request to jobs.lever.co is made.
+_LEVER_JOB = re.compile(
+    r"^/([^/]+)/"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+    r"(?:/apply)?/?$"
+)
+_SUPPORTED_FILL_ATS = frozenset({"greenhouse", "lever", "ashby", "workable"})
+
+
+def fill_enabled(ats: str, cfg_value: str) -> bool:
+    """Enable only explicitly listed, supported ATS types; blank or invalid config stays off."""
+    if not isinstance(ats, str) or not isinstance(cfg_value, str):
+        return False
+    name = ats.strip().lower()
+    return name in _SUPPORTED_FILL_ATS and name in {part.strip().lower() for part in cfg_value.split(",")}
+
+
 # ── detect: a job URL → {ats, board, job_id} | None ───────────────────────────────────────
 def detect(url: str) -> dict | None:
-    """Recognise a Greenhouse, Ashby or Workable job URL, or return ``None``.
+    """Recognise a Greenhouse, Lever, Ashby or Workable job URL, or return ``None``.
 
     * Workable's ``apply.workable.com/<company>/j/<id>`` and ``<company>.workable.com/j/<id>``
       (including ``/apply/``) → ``{ats, company, job_id, apply_url}``. The canonical apply URL
@@ -103,6 +120,17 @@ def detect(url: str) -> dict | None:
             "job_id": job_id,
             "apply_url": f"https://apply.workable.com/{company}/j/{job_id}/apply/",
         }
+
+    if host == "jobs.lever.co":
+        m = _LEVER_JOB.fullmatch(path)
+        if m:
+            company, job_id = m.groups()
+            return {
+                "ats": "lever",
+                "company": company,
+                "job_id": job_id,
+                "apply_url": f"https://jobs.lever.co/{company}/{job_id}/apply",
+            }
 
     if host == ASHBY_HOST:
         m = _ASHBY_JOB.match(path)
