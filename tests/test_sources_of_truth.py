@@ -174,9 +174,10 @@ def test_drafting_and_scoring_subagents_can_read_the_profile(plugin, registry):
         assert not {t for t in c.tools if t.startswith("careercoach_")} - registered
     writer = crew["application_writer"]
     assert "careercoach_get_profile('do_not_claim')" in writer.system_prompt
-    assert not {"careercoach_update_profile", "careercoach_write_profile", "careercoach_import_experience"} & set(
-        writer.tools
-    )
+    # The kit builder saves operator-approved résumé wording before rendering its PDF.
+    assert "careercoach_update_profile" in writer.tools
+    assert "never silently change the saved profile" in writer.system_prompt
+    assert not {"careercoach_write_profile", "careercoach_import_experience"} & set(writer.tools)
 
 
 def _skill(name: str) -> tuple[dict, str]:
