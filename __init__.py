@@ -2245,6 +2245,72 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
                   border-radius: 12px; padding: 20px; max-width: 320px; }
   #chooser p { margin: 0 0 14px; font-size: 14px; }
   #chooser .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* Mark-applied confirmation — an inline overlay (never window.confirm, which a sandboxed iframe
+     without allow-modals silently suppresses, returning false). z-index above #detail (40) so it
+     sits over the open drawer. Mirrors the #chooser box. */
+  #confirm { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+             background: rgba(0,0,0,.5); }
+  #confirm .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
+                  border-radius: 12px; padding: 20px; max-width: 320px; }
+  #confirm p { margin: 0 0 14px; font-size: 14px; }
+  #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* The job detail drawer (S2b): a right-side overlay; Esc, the ✕ and the backdrop all dismiss it.
+     Reuses the same --pl-* tokens as the rest, so it reads correctly in both light and dark. */
+  #detail { position: fixed; inset: 0; z-index: 40; display: none; }
+  #detail.open { display: block; }
+  #detail .detail-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+  #detail .detail-panel { position: absolute; top: 0; right: 0; height: 100%; width: min(560px, 100%);
+    box-sizing: border-box; overflow-y: auto; padding: 0 20px 28px;
+    background: var(--pl-color-bg-raised, #12181f); border-left: 1px solid var(--pl-color-border, #232b36);
+    box-shadow: -8px 0 24px rgba(0,0,0,.3); }
+  #detail .detail-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 12px; padding: 18px 0 12px;
+    background: var(--pl-color-bg-raised, #12181f); border-bottom: 1px solid var(--pl-color-border, #232b36); }
+  #detail .detail-role { font-size: 17px; font-weight: 700; }
+  #detail .detail-co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin-top: 2px; }
+  #detail .detail-close { font-size: 16px; line-height: 1; padding: 6px 10px; }
+  #detail .dsec { padding: 14px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
+  #detail .dsec:first-child { border-top: 0; }
+  #detail .dsec > h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 10px; font-weight: 600; }
+  #detail .kit-block { margin-bottom: 14px; }
+  #detail .kit-block:last-child { margin-bottom: 0; }
+  #detail .kit-block h5 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
+  #detail .kv { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; flex-wrap: wrap; }
+  #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .kv a.plink { word-break: break-all; }
+  #detail .snippet, #detail .cover-text, #detail .answer-val { white-space: pre-wrap; line-height: 1.5;
+    font-size: 13px; }
+  #detail .snippet { margin-top: 10px; color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .cover-text { margin-top: 8px; padding: 10px; border-radius: 8px;
+    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .fitline { display: flex; align-items: baseline; gap: 10px; }
+  #detail .fit.big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--pl-color-accent, #9b87f2); }
+  #detail .verdict { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  #detail .notes-ta { width: 100%; min-height: 84px; box-sizing: border-box; resize: vertical; font: inherit;
+    font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pl-color-border, #232b36);
+    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+  #detail .dsec-actions { margin-top: 8px; }
+  #detail .answer { padding: 8px 10px; border-radius: 8px; margin: 8px 0;
+    border: 1px solid var(--pl-color-border, #232b36); }
+  #detail .answer.draft { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed;
+    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .answer-head { display: flex; align-items: center; gap: 8px; }
+  #detail .answer-key { font-weight: 600; font-size: 13px; }
+  #detail .answer-head .copy { margin-left: auto; }
+  #detail .answer-val { margin-top: 5px; }
+  #detail .draft-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
+  #detail .timeline, #detail .contacts { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  #detail .timeline li { display: flex; gap: 10px; padding: 3px 0; }
+  #detail .timeline .tl-date { flex: none; width: 92px; font-variant-numeric: tabular-nums;
+    color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .contacts li { padding: 3px 0; }
+  #detail .action-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  #detail .hint { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; margin: 6px 0 0; }
 </style></head>
 <body>
   <h1 id="title">Career Coach</h1>
@@ -2297,6 +2363,28 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       </div>
     </div>
   </div>
+  <div id="confirm" role="dialog" aria-modal="true">
+    <div class="box">
+      <p id="confirm-q"></p>
+      <div class="choices">
+        <button class="btn keep" id="confirm-ok">Yes (default)</button>
+        <button class="btn" id="confirm-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The job detail drawer (S2b): opened by clicking a pipeline card; rendered client-side from
+       GET /applications/{id}. Esc, the ✕ and the backdrop dismiss it. -->
+  <div id="detail" aria-hidden="true">
+    <div class="detail-backdrop"></div>
+    <aside class="detail-panel" role="dialog" aria-modal="true" aria-label="Job detail">
+      <div class="detail-top">
+        <div id="detail-title"></div>
+        <button class="btn detail-close" id="detail-close" aria-label="Close detail">✕</button>
+      </div>
+      <div id="detail-body"></div>
+    </aside>
+  </div>
 
 <script type="module">
   // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme: it stamps
@@ -2323,6 +2411,8 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 
   var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
   var DRAG_ID = null;
+  var DETAIL = null;      // the last GET /applications/{id} payload while the drawer is open
+  var DETAIL_ID = null;   // the application id the drawer is showing (null when closed)
 
   function toast(msg) {
     var t = document.getElementById('toast');
@@ -2381,6 +2471,28 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       cancel.onclick = function () { done(null); };
       ov.style.display = 'flex';
       passed.focus();
+    });
+  }
+
+  // A yes/no confirmation as an inline overlay above the drawer — never window.confirm, which a
+  // sandboxed iframe (no allow-modals) silently suppresses, returning false. Mirrors
+  // askClosedStatus. Resolves true only on an explicit Yes; Cancel (or re-ask) resolves false.
+  function askConfirm(message) {
+    return new Promise(function (resolve) {
+      var ov = document.getElementById('confirm');
+      var q = document.getElementById('confirm-q');
+      var ok = document.getElementById('confirm-ok');
+      var cancel = document.getElementById('confirm-cancel');
+      q.textContent = message;
+      function done(v) {
+        ov.style.display = 'none';
+        ok.onclick = cancel.onclick = null;
+        resolve(v);
+      }
+      ok.onclick = function () { done(true); };
+      cancel.onclick = function () { done(false); };
+      ov.style.display = 'flex';
+      if (ok.focus) ok.focus();
     });
   }
 
@@ -2514,6 +2626,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
       });
       card.addEventListener('dragend', function () { DRAG_ID = null; });
+      // A plain click (not a drag, and not on the Move-to select) opens the detail drawer.
+      card.addEventListener('click', function (ev) {
+        if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return;
+        openDetail(card.getAttribute('data-id'));
+      });
     });
     board.querySelectorAll('.col[data-col]').forEach(function (colEl) {
       colEl.addEventListener('dragover', function (ev) {
@@ -2588,6 +2705,322 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       ? ('Targeting: ' + st.target_roles) : 'Set your profile in Settings › Career Coach.';
   }
 
+  // >>> s2b pure renderers — self-contained markup builders (depend only on esc), unit-tested.
+  function fitVerdict(score) {
+    var s = Number(score || 0);
+    if (s >= 75) return 'Strong fit';
+    if (s >= 50) return 'Moderate fit';
+    if (s > 0) return 'Poor fit';
+    return 'Not scored yet';
+  }
+
+  // One saved answer -> a row with its OWN copy control. A draft carries a visible badge and
+  // distinct (dashed) styling, and is never presented as confirmed. The value is rendered as text
+  // in .answer-val; the copy handler lifts it from there (so it survives a round-trip through esc).
+  function answerRow(a) {
+    a = a || {};
+    var isDraft = a.status === 'draft';
+    var badge = isDraft ? '<span class="draft-badge">Draft — confirm before using</span>' : '';
+    return '<div class="answer' + (isDraft ? ' draft' : '') + '">' +
+      '<div class="answer-head">' +
+        '<span class="answer-key">' + esc(a.label || a.key || '') + '</span>' + badge +
+        '<button class="btn copy" type="button">Copy</button>' +
+      '</div>' +
+      '<div class="answer-val">' + esc(a.value == null ? '' : a.value) + '</div>' +
+    '</div>';
+  }
+  function renderAnswers(list) {
+    var items = list || [];
+    if (!items.length) return '<p class="empty">No saved answers yet.</p>';
+    return items.map(answerRow).join('');
+  }
+  // The kit's per-application one-off answers plus the saved standard answers, in one list — both
+  // are things the operator copies into a form, and both carry a draft/confirmed status.
+  function kitAnswers(kit, answers) {
+    return ((kit && kit.answers) || []).concat(answers || []);
+  }
+
+  function renderKit(kit, answers) {
+    kit = kit || {};
+    var out = '';
+    var r = kit.resume || {};
+    out += '<div class="kit-block"><h5>Resume</h5>';
+    if (r.path || r.version || r.built) {
+      if (r.version) out += '<div class="kv"><span class="k">Version</span><span>' + esc(r.version) + '</span></div>';
+      if (r.built) out += '<div class="kv"><span class="k">Built</span><span>' + esc(r.built) + '</span></div>';
+      if (r.path) {
+        out += '<div class="kv"><span class="k">File</span><code>' + esc(r.path) + '</code>' +
+          '<button class="btn copy" type="button" data-copy-path>Copy path</button></div>';
+      }
+    } else {
+      out += '<p class="empty">No resume built yet.</p>';
+    }
+    out += '</div>';
+
+    var cl = kit.cover_letter || {};
+    out += '<div class="kit-block"><h5>Cover letter</h5>';
+    if (cl.text) {
+      out += '<div class="dsec-actions"><button class="btn copy" type="button" data-copy-cover>' +
+        'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
+    } else if (cl.needed) {
+      out += '<p class="empty">Not written yet.</p>';
+    } else {
+      out += '<p class="empty">Not needed for this posting.</p>';
+    }
+    out += '</div>';
+
+    out += '<div class="kit-block"><h5>Answers</h5>' + renderAnswers(kitAnswers(kit, answers)) + '</div>';
+    return out;
+  }
+
+  function renderTimeline(timeline) {
+    var items = timeline || [];
+    if (!items.length) return '<p class="empty">No activity yet.</p>';
+    return '<ol class="timeline">' + items.map(function (e) {
+      e = e || {};
+      var what = e.kind === 'kit' ? esc(e.what || 'updated kit') : ('Status → ' + esc(e.status || ''));
+      return '<li><span class="tl-date">' + esc(e.date || '') + '</span><span class="tl-what">' + what + '</span></li>';
+    }).join('') + '</ol>';
+  }
+
+  function renderContacts(contacts) {
+    return '<ul class="contacts">' + (contacts || []).map(function (c) {
+      c = c || {};
+      var title = c.title ? ' · ' + esc(c.title) : '';
+      var link = c.url
+        ? ' <a class="plink" href="' + esc(c.url) + '" target="_blank" rel="noopener">profile</a>' : '';
+      return '<li>' + esc(c.name || '') + title + link + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  // The chat-compose text for an action button. Names the action and attaches the role, company,
+  // posting URL and application id (acceptance r3). Kept well under 4 KB — it only DRAFTS a message
+  // into the composer (protoagent:chat:compose); the operator reviews and sends it.
+  function composeText(kind, app) {
+    app = app || {};
+    var role = app.role || 'this role';
+    var company = app.company || 'the company';
+    var url = app.source || (app.posting && app.posting.url) || '';
+    var id = app.id || '';
+    var ref = '(' + (url ? url + ', ' : '') + 'application ' + id + ')';
+    var text;
+    if (kind === 'kit') {
+      text = 'Build the apply kit for ' + role + ' at ' + company + ' ' + ref +
+        '. Save it with careercoach_save_apply_kit.';
+    } else if (kind === 'tailor') {
+      text = 'Tailor my resume for ' + role + ' at ' + company + ' ' + ref + '.';
+    } else {
+      text = 'Prep me for the interview for ' + role + ' at ' + company + ' ' + ref + '.';
+    }
+    return text.slice(0, 4000);  // stay under the 4 KB compose cap
+  }
+  // <<< s2b pure renderers
+
+  // Copy to the clipboard: navigator.clipboard.writeText, with a textarea + execCommand fallback
+  // for an older/insecure context. Flashes the button to confirm.
+  function copyFallback(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text == null ? '' : String(text);
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) {}
+  }
+  function copyText(text, btn) {
+    function flash() {
+      if (!btn) return;
+      var old = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text == null ? '' : String(text))
+          .then(flash, function () { copyFallback(text); flash(); });
+        return;
+      }
+    } catch (e) {}
+    copyFallback(text); flash();
+  }
+
+  // Draft a message for the coach (never auto-send) — the three action buttons.
+  function composeAction(kind) {
+    if (!DETAIL) return;
+    var text = composeText(kind, DETAIL.application || {});
+    try { parent.postMessage({ type: 'protoagent:chat:compose', text: text }, '*'); } catch (e) {}
+    toast('Drafted a message for your coach — review and send it in chat.');
+  }
+
+  // Mark applied: an INLINE confirm (never window.confirm — a sandboxed iframe without allow-modals
+  // silently suppresses the native modal, returning false, so the POST could never fire), then
+  // POST /applied and refresh the drawer and the board (the card moves to Applied). A declined
+  // confirm, a non-2xx or a network error leaves everything untouched.
+  function markApplied() {
+    if (!DETAIL) return;
+    var app = DETAIL.application || {};
+    var id = app.id;
+    if (!id) return;
+    askConfirm('Mark ' + (app.role || 'this role') + ' @ ' + (app.company || 'this company') + ' as applied?')
+      .then(function (ok) {
+        if (!ok) return;
+        write('/applications/' + encodeURIComponent(id) + '/applied', {})
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return openDetail(id);
+          })
+          .then(function () { load(); })
+          .catch(function () { toast('Could not mark that applied — try again.'); });
+      });
+  }
+
+  // Persist the editable notes (PATCH /notes). POST-only `write` can't do PATCH, so call apiFetch.
+  function saveNotes() {
+    if (!DETAIL) return;
+    var app = DETAIL.application || {};
+    var ta = document.getElementById('detail-notes-text');
+    if (!app.id || !ta) return;
+    var notes = ta.value;
+    kit.apiFetch('/api/plugins/careercoach/applications/' + encodeURIComponent(app.id) + '/notes', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: notes })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      app.notes = notes;
+      toast('Notes saved.');
+      load();
+    }).catch(function () { toast('Could not save your notes — try again.'); });
+  }
+
+  function wireDetail() {
+    var body = document.getElementById('detail-body');
+    var cp = body.querySelector('[data-copy-path]');
+    if (cp) cp.addEventListener('click', function () {
+      copyText(((DETAIL.kit && DETAIL.kit.resume) || {}).path || '', cp);
+    });
+    var cc = body.querySelector('[data-copy-cover]');
+    if (cc) cc.addEventListener('click', function () {
+      copyText(((DETAIL.kit && DETAIL.kit.cover_letter) || {}).text || '', cc);
+    });
+    body.querySelectorAll('.answer').forEach(function (el) {
+      var btn = el.querySelector('.copy');
+      var val = el.querySelector('.answer-val');
+      if (btn && val) btn.addEventListener('click', function () { copyText(val.textContent, btn); });
+    });
+    body.querySelectorAll('.act').forEach(function (b) {
+      b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); });
+    });
+    var applied = document.getElementById('detail-applied');
+    if (applied) applied.addEventListener('click', markApplied);
+    var save = document.getElementById('detail-notes-save');
+    if (save) save.addEventListener('click', saveNotes);
+  }
+
+  function renderDetail(d) {
+    var app = (d && d.application) || {};
+    var kitData = (d && d.kit) || {};
+    var posting = app.posting || {};
+    var title = posting.title || app.role || '';
+    var url = app.source || posting.url || '';
+    document.getElementById('detail-title').innerHTML =
+      '<div class="detail-role">' + esc(app.role || title || 'This role') + '</div>' +
+      '<div class="detail-co">' + esc(app.company || '') +
+        (app.status ? ' · <span class="pill">' + esc(app.status) + '</span>' : '') + '</div>';
+
+    var html = '';
+    // posting
+    html += '<section id="detail-posting" class="dsec"><h4>Posting</h4>';
+    html += '<div class="kv"><span class="k">Role</span><span>' + esc(title) + '</span></div>';
+    html += '<div class="kv"><span class="k">Company</span><span>' + esc(app.company || '') + '</span></div>';
+    if (posting.location) {
+      html += '<div class="kv"><span class="k">Location</span><span>' + esc(posting.location) + '</span></div>';
+    }
+    if (url) {
+      html += '<div class="kv"><span class="k">Link</span>' +
+        '<a class="plink" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + '</a></div>';
+    }
+    if (posting.snippet) html += '<div class="snippet">' + esc(posting.snippet) + '</div>';
+    html += '</section>';
+
+    // fit
+    html += '<section id="detail-fit" class="dsec"><h4>Fit</h4>' +
+      '<div class="fitline"><span class="fit big">' + Number(app.fit_score || 0) + '</span>' +
+      '<span class="verdict">' + esc(fitVerdict(app.fit_score)) + '</span></div></section>';
+
+    // notes (editable, saved via PATCH — holds the fit reason + anything the operator adds)
+    html += '<section id="detail-notes" class="dsec"><h4>Notes</h4>' +
+      '<textarea id="detail-notes-text" class="notes-ta" ' +
+      'placeholder="Your notes on this role — the fit reason, next steps, anything.">' +
+      esc(app.notes || '') + '</textarea>' +
+      '<div class="dsec-actions"><button class="btn" type="button" id="detail-notes-save">Save notes</button></div>' +
+      '</section>';
+
+    // apply kit
+    html += '<section id="detail-kit" class="dsec"><h4>Apply kit</h4>' +
+      renderKit(kitData, (d && d.answers) || []) + '</section>';
+
+    // timeline
+    html += '<section id="detail-timeline" class="dsec"><h4>Timeline</h4>' +
+      renderTimeline(d && d.timeline) + '</section>';
+
+    // contacts — the whole section is hidden when the list is empty
+    var contacts = (d && d.contacts) || [];
+    if (contacts.length) {
+      html += '<section id="detail-contacts" class="dsec"><h4>Contacts at ' +
+        esc(app.company || 'this company') + '</h4>' + renderContacts(contacts) + '</section>';
+    }
+
+    // actions — each drafts a chat message; Mark applied posts /applied behind an inline confirm
+    html += '<section id="detail-actions" class="dsec"><h4>Ask your coach</h4>' +
+      '<div class="action-btns">' +
+        '<button class="btn act" type="button" data-act="kit">Build apply kit</button>' +
+        '<button class="btn act" type="button" data-act="tailor">Tailor resume</button>' +
+        '<button class="btn act" type="button" data-act="prep">Prep me for this interview</button>' +
+      '</div>' +
+      '<div class="action-btns"><button class="btn keep" type="button" id="detail-applied">Mark applied</button></div>' +
+      '<p class="hint">The buttons above draft a message for your coach — you review and send it. ' +
+      'Nothing is sent automatically.</p></section>';
+
+    document.getElementById('detail-body').innerHTML = html;
+    wireDetail();
+  }
+
+  function showDetail() {
+    var el = document.getElementById('detail');
+    el.classList.add('open');
+    el.setAttribute('aria-hidden', 'false');
+    var close = document.getElementById('detail-close');
+    if (close && close.focus) close.focus();
+  }
+  function closeDetail() {
+    var el = document.getElementById('detail');
+    el.classList.remove('open');
+    el.setAttribute('aria-hidden', 'true');
+    DETAIL = null; DETAIL_ID = null;
+  }
+  // Fetch one application through the gated apiFetch and render the drawer. A bad id / error toasts
+  // and leaves the drawer closed.
+  function openDetail(id) {
+    if (!id) return Promise.resolve();
+    DETAIL_ID = id;
+    return api('/applications/' + encodeURIComponent(id)).then(function (d) {
+      // Drop a response the user has moved on from: a slow fetch for a card they've since closed
+      // (Esc/✕ null DETAIL_ID) or clicked past (DETAIL_ID points at a newer id) must not reopen or
+      // overwrite the drawer with stale data.
+      if (DETAIL_ID !== id) return;
+      if (!d || d.error) { toast('Could not open that role — try again.'); return; }
+      DETAIL = d;
+      renderDetail(d);
+      showDetail();
+    }, function () {
+      if (DETAIL_ID !== id) return;
+      toast('Could not open that role — try again.');
+    });
+  }
+
   function load() {
     // /jobs drives the inbox + board; /state is the profile/rubric disclosure and the header. A
     // failed /state still renders the jobs view.
@@ -2615,6 +3048,17 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var d = e && e.data;
     if (d && d.type === 'protoagent:event') load();
   });
+
+  // The detail drawer dismisses on the ✕, the backdrop, and Esc.
+  (function () {
+    var close = document.getElementById('detail-close');
+    if (close) close.addEventListener('click', closeDetail);
+    var backdrop = document.querySelector('#detail .detail-backdrop');
+    if (backdrop) backdrop.addEventListener('click', closeDetail);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' || e.keyCode === 27) closeDetail();
+    });
+  })();
 
   // initPluginView runs the console handshake (ADR 0026) — applies the theme and captures the
   // bearer — then fires our callback once ready. The timer is a fallback for a host context that
