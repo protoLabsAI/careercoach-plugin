@@ -1680,7 +1680,12 @@ def _register_subagents(registry) -> None:
             "company-specific claim against the research brief's sources before including it. Read "
             "every form answer with careercoach_get_answers: keep CONFIRMED and DRAFT answers distinct, "
             "leave drafts as drafts, and report new or missing questions for the operator rather than "
-            "inventing answers. Save the kit with careercoach_save_apply_kit (the returned PDF path, "
+            "inventing answers. A workflow run has NO operator in the loop, so you never confirm "
+            "answers or write the operator's profile — you hold no tool for either; save one-off "
+            "answers only as DRAFTS and leave every confirmation and profile change to the operator in "
+            "the Career Coach view. When the posting is a URL, fetch its public form questions with "
+            "careercoach_prepare_application (it returns a kit handoff when browser fill is off). Save "
+            "the kit with careercoach_save_apply_kit (the returned PDF path, "
             "known version, the cover letter only when requested, and one-off answers as drafts); when "
             'no letter is requested pass cover_letter="" and cover_letter_needed=false. Then hand '
             "off: tell the operator to open the role in the Career Coach view, review the drafts, "
@@ -1689,14 +1694,15 @@ def _register_subagents(registry) -> None:
             "checklist (factual accuracy against the profile, do_not_claim respected, company claims "
             "verified, style, and whether the kit saved)."
         ),
+        # No operator gates a workflow run, so this autonomous drafter is granted only read-only,
+        # draft-only, résumé-render and kit-save tools: never careercoach_update_profile /
+        # careercoach_confirm_answers (gate-less writes in the operator's name) nor any
+        # form-driving/submit tool. The operator confirms and files later in the Career Coach view.
         tools=[
             "load_skill",
             "list_skills",
             *PROFILE_READ_TOOLS,
-            "careercoach_update_profile",
             "careercoach_get_answers",
-            "careercoach_propose_answer",
-            "careercoach_confirm_answers",
             "careercoach_prepare_application",
             "careercoach_render_resume",
             "careercoach_save_apply_kit",

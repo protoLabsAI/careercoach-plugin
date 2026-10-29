@@ -174,10 +174,18 @@ def test_drafting_and_scoring_subagents_can_read_the_profile(plugin, registry):
         assert not {t for t in c.tools if t.startswith("careercoach_")} - registered
     writer = crew["application_writer"]
     assert "careercoach_get_profile('do_not_claim')" in writer.system_prompt
-    # The kit builder saves operator-approved résumé wording before rendering its PDF.
-    assert "careercoach_update_profile" in writer.tools
     assert "never silently change the saved profile" in writer.system_prompt
-    assert not {"careercoach_write_profile", "careercoach_import_experience"} & set(writer.tools)
+    # A workflow run has no operator to gate a write, so the autonomous drafter owns NONE of the
+    # tools that change the record or promote an answer in the operator's name: it renders the
+    # already-approved résumé and saves a DRAFT kit. careercoach_update_profile is unguarded
+    # (confirm_removal only shields do_not_claim), so handing it to this crew would let a hands-off
+    # run_workflow("apply") write unconfirmed claims into the single source of truth.
+    assert not {
+        "careercoach_update_profile",
+        "careercoach_write_profile",
+        "careercoach_import_experience",
+        "careercoach_confirm_answers",
+    } & set(writer.tools)
 
 
 def _skill(name: str) -> tuple[dict, str]:

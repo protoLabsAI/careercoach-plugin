@@ -82,30 +82,49 @@ def test_workflow_final_step_saves_apply_kit_and_hands_off():
     assert "Mark applied" in workflow["output"]
 
 
-def test_application_writer_subagent_owns_every_tool_its_default_flow_names(plugin, registry):
-    """Skill frontmatter does not grant tools: the registered delegate must own them."""
+def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_tool(plugin, registry):
+    """The apply workflow runs application_writer with NO operator in the loop. Its contract is its
+    own system prompt plus the workflow's write step — not the full interactive skill flow, whose
+    operator-gated writes (careercoach_update_profile, careercoach_confirm_answers) belong to a live
+    chat where the operator approves each one. Skill frontmatter does not grant tools, so the
+    delegate must own every tool it is told to call — and must own none that writes the record,
+    promotes an answer in the operator's name, or drives/submits a form."""
     plugin.register(registry)
     writer = next(c for c in registry.subagents if c.name == "application_writer")
     registered = {t.name for t in registry.tools}
 
     workflow = yaml.safe_load((ROOT / "workflows/apply.yaml").read_text(encoding="utf-8"))
     write_step = workflow["steps"][-1]["prompt"]
-    _, default, _ = _skill()
-    named = set(TOOL_TOKEN.findall(write_step + default + writer.system_prompt))
+    named = set(TOOL_TOKEN.findall(write_step + writer.system_prompt))
     assert {
         "careercoach_render_resume",
         "browser_open",
         "browser_pdf",
         "careercoach_get_answers",
         "careercoach_save_apply_kit",
-        "careercoach_update_profile",
-        "careercoach_propose_answer",
-        "careercoach_confirm_answers",
         "careercoach_prepare_application",
-    } <= named  # guards the test itself: these are the tools the step relies on
+    } <= named  # guards the test itself: the tools the autonomous contract relies on
     missing = named - set(writer.tools)
-    assert not missing, f"application_writer lacks tools its default flow calls: {sorted(missing)}"
-    assert not {"browser_fill", "browser_click", "careercoach_request_submit"} & set(writer.tools)
+    assert not missing, f"application_writer lacks tools its autonomous contract calls: {sorted(missing)}"
+
+    # No operator gates a workflow run, so the drafter owns NO tool that writes the record,
+    # confirms an answer in the operator's name, or drives/submits the employer's form.
+    forbidden = {
+        "careercoach_update_profile",
+        "careercoach_write_profile",
+        "careercoach_import_experience",
+        "careercoach_confirm_answers",
+        "careercoach_plan_fill",
+        "careercoach_verify_fill",
+        "careercoach_handoff",
+        "careercoach_request_submit",
+        "browser_fill",
+        "browser_click",
+        "browser_form_read",
+        "browser_upload",
+        "browser_select",
+    }
+    assert not forbidden & set(writer.tools), sorted(forbidden & set(writer.tools))
 
     # Every careercoach_* tool the subagent is granted is one the plugin actually registers,
     # and the kit-first prompt no longer hard-codes a cover letter for every application.

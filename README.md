@@ -71,11 +71,11 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 8 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply-form` is the end-to-end ATS-form loop |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 8 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply-form` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
 | **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
 | **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
-| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → write` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
+| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → build & save apply kit` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
 | **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_get_profile` / `careercoach_update_profile` / `careercoach_import_experience` / `careercoach_export_experience` (the operator profile) / `careercoach_read_profile` / `careercoach_write_profile` (the story bank) |
 | **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, delivered on every model call as an ephemeral context frame (`wrap_model_call`, the host's ADR 0108 D2 contract) |
@@ -112,7 +112,7 @@ careercoach-plugin/
 │  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter
 │  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
 │  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
-│  ├─ apply-form/                  # the end-to-end ATS-form loop: plan → fill → verify → handoff → gated submit
+│  ├─ apply-form/                  # default: build & save an apply kit for the operator to file; opt-in beta: plan → fill → verify → handoff → gated submit
 │  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest
 │  ├─ interview-coach/             # STAR bank + mock interviews with feedback
 │  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
@@ -287,7 +287,7 @@ careercoach-plugin/
 - **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
   design; the `apply` workflow is the opt-in "do it for me" path.
 - **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`
-  *workflow* runs research → evaluate → write autonomously (fast), while the `role-packet` *skill*
+  *workflow* runs research → evaluate → build-and-save-an-apply-kit autonomously (fast), while the `role-packet` *skill*
   drives the same work with a **human-approval gate before every phase** and files the result as
   editable artifacts. A static-DAG workflow can't pause between steps, so the gated flow is a
   skill (which stops and asks) plus tested scaffolding tools (`packet.py`) for the file mechanics —
@@ -312,8 +312,18 @@ careercoach-plugin/
 
 ### Applying through ATS forms
 
-When you ask the coach to actually **fill out and submit** an application, it runs one deterministic
-loop (the `apply-form` skill is the doctrine; the pieces this plugin owns are tested, host-free):
+By default the coach **builds an apply kit and hands it to the operator** — it never drives the
+employer's form. It tailors the résumé and renders it to a PDF (`careercoach_render_resume` →
+`browser_open` → `browser_pdf`), writes a cover letter only when the posting asks, gathers every
+form answer (confirmed answers plus drafts for anything new), saves it all with
+`careercoach_save_apply_kit`, and tells the operator to open the role in the **Career Coach view**,
+copy the answers into the form with the copy buttons, attach the PDF, and press **Mark applied**
+after submitting it themselves. Nothing auto-submits.
+
+**Browser fill (opt-in beta).** Only when an ATS is enabled in the `browser_fill` setting (a
+comma-separated list of ATS types; blank = off) does the coach fill the live form itself, running
+one deterministic loop (the `apply-form` skill is the doctrine; the pieces this plugin owns are
+tested, host-free):
 
 1. **Confirm the standard answers.** Only values the operator has CONFIRMED
    (`careercoach_get_answers` / `careercoach_confirm_answers`) ever fill a form — a draft never does.

@@ -50,7 +50,9 @@ steps:
       Load the apply-form skill and follow its default apply kit flow. Using the evaluation
       and company research below, build a tailored résumé PDF with careercoach_render_resume
       → browser_open (the local file:// URL only) → browser_pdf. Use only operator-approved
-      résumé wording and confirmed profile facts; never silently approve a profile update.
+      résumé wording and confirmed profile facts. This run has no operator in the loop, so you
+      never confirm an answer or change the saved profile — leave both to the operator in the
+      Career Coach view.
       Write a cover letter ONLY if the posting asks for one, following the writing-style
       discipline and honesty test. Verify every company-specific claim against research sources.
       If the verdict was Weak or Poor Fit, say so and stop rather than forcing a draft.
