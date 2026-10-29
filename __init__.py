@@ -30,6 +30,7 @@ the core register anyway).
 from __future__ import annotations
 
 import hashlib
+import json as _json
 import logging
 
 from langchain_core.tools import tool
@@ -217,9 +218,49 @@ def _register_tracker_tools(registry, extended: bool) -> None:
 # the posting asks for one, and every form answer; the operator fills the form themselves. Nothing
 # auto-submits. The kit lives on the application row (state.set_kit) so what was prepared stays with
 # the application. One-off answers are stored as DRAFT and never copied into a confirmed field.
-def _register_apply_kit_tool(registry) -> None:
-    import json as _json
+def _parse_kit_answers(src: str | dict | None) -> tuple[list[dict], str | None]:
+    """Parse a one-off-answers source into kit DRAFT entries. ``src`` is a JSON object STRING, an
+    object/dict passed through directly, or empty/None. Returns ``(entries, error)``: on a non-empty
+    result, ``entries`` are ``[{key, label, value, status: "draft"}]``; on bad input, ``error`` is a
+    ready-to-return refusal and the caller writes nothing. Accepting a dict (not only a string) is
+    why S5c's answers were dropped — a model that passed an object got an empty kit."""
+    if src is None:
+        return [], None
+    if isinstance(src, str):
+        text = src.strip()
+        if not text:
+            return [], None
+        try:
+            data = _json.loads(text)
+        except ValueError as e:
+            return (
+                [],
+                f'Apply kit not saved: answers_json isn\'t valid JSON ({e}). Pass an object like {{"Why us?": "..."}}.',
+            )
+    elif isinstance(src, dict):
+        data = src
+    else:
+        return [], "Apply kit not saved: answers_json must be a JSON object mapping a form question to an answer."
+    if not isinstance(data, dict):
+        return [], "Apply kit not saved: answers_json must be a JSON object mapping a form question to an answer."
+    entries = [
+        {"key": str(k), "label": str(k), "value": "" if v is None else str(v), "status": "draft"}
+        for k, v in data.items()
+    ]
+    return entries, None
 
+
+def _join_plain(items: list[str]) -> str:
+    """Join a short list into plain prose: ``a``; ``a and b``; ``a, b and c``."""
+    items = [i for i in items if i]
+    if not items:
+        return "nothing"
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _register_apply_kit_tool(registry) -> None:
     from . import state
 
     @tool
@@ -230,28 +271,37 @@ def _register_apply_kit_tool(registry) -> None:
         resume_version: str | None = None,
         cover_letter: str | None = None,
         cover_letter_needed: bool | None = None,
-        answers_json: str = "",
+        answers_json: str | dict | None = "",
+        no_form_questions: bool | None = None,
+        answers: str | dict | None = None,
     ) -> str:
-        """Save the apply kit for one role — the tailored résumé PDF path/version, a cover letter (when the posting
-        asks for one), and one-off form answers — onto its pipeline row, and move a Saved row to `preparing`. The
-        operator files the form themselves; nothing is submitted. `answers_json` is an optional JSON object of form
-        question -> answer, stored as DRAFT (shown to the operator, never used as a confirmed answer). Tracks the role
-        as `preparing` if it isn't in the pipeline yet. Omitted or null résumé/cover-letter fields preserve saved
-        values; pass an empty string to clear a field or false to clear the cover-letter-needed flag."""
+        """Save the apply kit for one role onto its pipeline row and move a Saved row to `preparing`. Call this LAST,
+        once all three parts exist — in order: (1) render the tailored résumé with careercoach_render_resume and keep
+        the PDF path it returns; (2) write the cover letter if the posting asks for one; (3) collect the form answers
+        with careercoach_answers — THEN call this with all three. The operator files the form themselves; nothing is
+        submitted.
+
+        Arg shapes: `resume_path` is the filesystem path to the rendered résumé PDF and `resume_version` its label;
+        `cover_letter` is the letter TEXT (pass `cover_letter_needed=false` when the posting asks for no letter);
+        `answers_json` is a JSON object (or a dict) mapping each form question to its answer, e.g. {"Why us?": "..."},
+        stored as DRAFT (shown to the operator, never used as a confirmed answer) — `answers` is an accepted alias for
+        it; set `no_form_questions=true` when the posting has no form questions. Tracks the role as `preparing` if it
+        isn't in the pipeline yet. Omitted or null résumé/cover-letter fields preserve saved values; pass an empty
+        string to clear a field or false to clear the cover-letter-needed flag.
+
+        The saved kit is validated: a complete kit (résumé PDF that exists on disk, a cover letter or
+        cover_letter_needed=false, and at least one answer or no_form_questions=true) is reported saved; a partial or
+        empty kit is saved as a DRAFT that names what is still missing and how to finish it — it is never an error."""
         company_s, role_s = (company or "").strip(), (role or "").strip()
-        answers: list[dict] = []
-        text = (answers_json or "").strip()
-        if text:
-            try:
-                data = _json.loads(text)
-            except ValueError as e:
-                return f'Apply kit not saved: answers_json isn\'t valid JSON ({e}). Pass an object like {{"Why us?": "..."}}.'
-            if not isinstance(data, dict):
-                return "Apply kit not saved: answers_json must be a JSON object mapping a form question to an answer."
-            answers = [
-                {"key": str(k), "label": str(k), "value": "" if v is None else str(v), "status": "draft"}
-                for k, v in data.items()
-            ]
+        # `answers_json` is the documented name; `answers` is an accepted alias (a model that names the
+        # tool's one-off answers "answers" shouldn't silently drop them). Prefer whichever is non-empty,
+        # answers_json first. Both accept a JSON string OR an object/dict passed through directly.
+        src = answers_json
+        if (src is None or (isinstance(src, str) and not src.strip())) and answers is not None:
+            src = answers
+        answer_entries, answers_err = _parse_kit_answers(src)
+        if answers_err:
+            return answers_err
         try:
             row = state._find(state.load_applications(), company_s, role_s)
             if row is None:
@@ -271,8 +321,10 @@ def _register_apply_kit_tool(registry) -> None:
                     parts["cover_letter"]["text"] = cover_letter
                 if cover_letter_needed is not None:
                     parts["cover_letter"]["needed"] = cover_letter_needed
-            if answers:
-                parts["answers"] = answers
+            if answer_entries:
+                parts["answers"] = answer_entries
+            if no_form_questions is not None:  # omitted → preserved; set → stored on the kit
+                parts["no_form_questions"] = no_form_questions
             saved = state.set_kit(app_id, **parts)
             # a Saved (considering) row is now being readied → move it to preparing with a history entry
             if saved.get("status") == "considering":
@@ -288,20 +340,29 @@ def _register_apply_kit_tool(registry) -> None:
             )
         except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
             pass
-        pieces: list[str] = []
-        if parts.get("resume"):
-            v = parts["resume"].get("version", "")
-            pieces.append(f"résumé {v}" if v else "résumé")
-        if parts.get("cover_letter"):
-            pieces.append("cover letter" if (cover_letter or "").strip() else "cover letter (needed)")
-        if answers:
-            pieces.append(f"{len(answers)} draft answer(s)")
-        what = ", ".join(pieces) or "kit"
+        who = f"{saved.get('role', role_s)} @ {saved.get('company', company_s)}"
+        kit = saved.get("kit") or {}
+        missing = kit.get("missing") or []
+        if kit.get("status") == "complete" and not missing:
+            pieces: list[str] = []
+            if parts.get("resume"):
+                v = parts["resume"].get("version", "")
+                pieces.append(f"résumé {v}" if v else "résumé")
+            if parts.get("cover_letter"):
+                pieces.append("cover letter" if (cover_letter or "").strip() else "cover letter (needed)")
+            if answer_entries:
+                pieces.append(f"{len(answer_entries)} draft answer(s)")
+            what = ", ".join(pieces) or "kit"
+            return (
+                f"Saved the apply kit for {who} ({what}; status {saved.get('status', '?')}). "
+                "Draft answers are shown to the operator and never fill a form until confirmed — the operator files "
+                "the application themselves."
+            )
         return (
-            f"Saved the apply kit for {saved.get('role', role_s)} @ {saved.get('company', company_s)} "
-            f"({what}; status {saved.get('status', '?')}). "
-            "Draft answers are shown to the operator and never fill a form until confirmed — the operator files the "
-            "application themselves."
+            f"Apply kit saved as a DRAFT — not ready: {who} still needs {_join_plain(missing)}. "
+            "Next steps: render the résumé with careercoach_render_resume and pass its PDF path, write the cover "
+            "letter (or set cover_letter_needed=false), and collect answers with careercoach_answers (or set "
+            "no_form_questions=true). Then save again with all three."
         )
 
     registry.register_tool(careercoach_save_apply_kit)

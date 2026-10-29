@@ -235,14 +235,45 @@ def move(app_id: str, status: str) -> dict:
 # what was prepared — and, on mark_applied, what was sent — stays with the application. Additive:
 # a row without a kit reads fine, and the digest/verifier never look at it.
 def _empty_kit() -> dict:
-    """A fresh kit skeleton, so a row's kit always has a predictable shape for the detail view."""
+    """A fresh kit skeleton, so a row's kit always has a predictable shape for the detail view.
+
+    ``cover_letter.needed`` is ``None`` (unset), not ``False`` — a fresh kit's cover letter is
+    *required until the operator says otherwise*, so a kit saved with nothing reads as a DRAFT that
+    still needs a letter (``_kit_missing``). ``status``/``missing`` default to a draft that needs
+    everything; ``set_kit`` recomputes both against the real parts on every write."""
     return {
         "resume": {"path": "", "version": "", "built": ""},
-        "cover_letter": {"text": "", "needed": False},
+        "cover_letter": {"text": "", "needed": None},
         "answers": [],  # one-off form answers: [{key, label, value, status: draft|confirmed}]
+        "no_form_questions": False,  # the operator confirmed the posting asks no form questions
+        "status": "draft",  # "complete" | "draft" — recomputed by set_kit against the merged parts
+        "missing": [],  # human-readable parts not yet ready (empty ⇒ complete)
         "updated": "",
         "events": [],  # [{what, date}] — an append-only trail of what the coach prepared, when
     }
+
+
+def _kit_missing(kit: dict) -> list[str]:
+    """The apply-kit parts that aren't ready yet, in plain words (empty ⇒ the kit is complete).
+
+    Required parts: a résumé whose ``path`` is non-empty AND points at a real file; a cover letter
+    with non-blank ``text`` unless ``cover_letter.needed`` is explicitly ``False``; and at least one
+    answer unless ``no_form_questions`` is true. Called on the MERGED kit after every ``set_kit`` so
+    a partial update layered on a complete kit stays complete. The order is résumé → cover letter →
+    answers, so the list reads the same way every time."""
+    missing: list[str] = []
+    resume = kit.get("resume") or {}
+    path = str(resume.get("path") or "").strip()
+    if not path:
+        missing.append("résumé (no path)")
+    elif not Path(path).expanduser().is_file():
+        missing.append(f"résumé (file not found: {path})")
+    cover = kit.get("cover_letter") or {}
+    if cover.get("needed") is not False and not str(cover.get("text") or "").strip():
+        missing.append("cover letter")
+    if not kit.get("no_form_questions") and not (kit.get("answers") or []):
+        missing.append("answers")
+    return missing
 
 
 def _answer_snapshot(entries) -> list[dict]:
@@ -267,8 +298,10 @@ def set_kit(app_id: str, *, event: str = "", **parts) -> dict:
     in one locked, atomic write. A dict part (``resume``, ``cover_letter``) merges into the stored
     sub-dict so a partial update keeps the fields it didn't touch; any other part (``answers``) is
     set outright. ``event`` names the entry in ``kit['events']`` — defaulted to the parts changed.
-    Raises ``StoreUnreadable`` on an unreadable file and ``KeyError`` on an unknown id, each before
-    any write."""
+    After the merge the kit is re-validated (``_kit_missing``) and ``status``/``missing`` are written
+    alongside it, so a partial update on top of a complete kit stays complete and an empty save reads
+    as a draft. Raises ``StoreUnreadable`` on an unreadable file and ``KeyError`` on an unknown id,
+    each before any write."""
     today = _today()
     with _store._locked("applications"):
         rows, err = _read_rows()
@@ -291,6 +324,8 @@ def set_kit(app_id: str, *, event: str = "", **parts) -> dict:
         else:
             what = "updated kit"
         kit["updated"] = today
+        kit["missing"] = _kit_missing(kit)
+        kit["status"] = "complete" if not kit["missing"] else "draft"
         kit.setdefault("events", []).append({"what": what, "date": today})
         r["kit"] = kit
         _save(rows)

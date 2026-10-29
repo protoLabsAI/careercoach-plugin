@@ -45,6 +45,14 @@ def client(plugin, iso, monkeypatch):
     return TestClient(app), reg
 
 
+@pytest.fixture
+def resume_pdf(tmp_path):
+    """A real file on disk, so a kit's résumé passes the ``Path(path).is_file()`` completeness check."""
+    p = tmp_path / "resume.pdf"
+    p.write_bytes(b"%PDF-1.4\n")
+    return str(p)
+
+
 # ── set_kit ─────────────────────────────────────────────────────────────────────
 def test_set_kit_merges_parts_and_appends_a_dated_event(st):
     row = st.track_application(company="Acme", role="ML Engineer", status="considering")
@@ -135,28 +143,29 @@ def test_set_notes_persists_without_a_history_entry(st):
 
 
 # ── the careercoach_save_apply_kit tool ─────────────────────────────────────────────
-def test_save_apply_kit_stores_everything_and_moves_saved_to_preparing(tools, st):
+def test_save_apply_kit_stores_everything_and_moves_saved_to_preparing(tools, st, resume_pdf):
     st.track_application(company="Acme", role="ML Engineer", status="considering")
     out = tools["careercoach_save_apply_kit"].invoke(
         {
             "company": "Acme",
             "role": "ML Engineer",
-            "resume_path": "/tmp/acme.pdf",
+            "resume_path": resume_pdf,
             "resume_version": "v2",
             "cover_letter": "Dear team",
             "cover_letter_needed": True,
             "answers_json": '{"Why Acme?": "Mission"}',
         }
     )
-    assert "Acme" in out and "preparing" in out
+    assert "Saved the apply kit" in out and "Acme" in out and "preparing" in out
 
     r = st.load_applications()[0]
     assert r["status"] == "preparing"
     assert [h["status"] for h in r["history"]] == ["considering", "preparing"]  # moved with a history entry
-    assert r["kit"]["resume"] == {"path": "/tmp/acme.pdf", "version": "v2", "built": st._today()}
+    assert r["kit"]["resume"] == {"path": resume_pdf, "version": "v2", "built": st._today()}
     assert r["kit"]["cover_letter"] == {"text": "Dear team", "needed": True}
     # a one-off answer is stored as a DRAFT, keyed and labelled by the question
     assert r["kit"]["answers"] == [{"key": "Why Acme?", "label": "Why Acme?", "value": "Mission", "status": "draft"}]
+    assert r["kit"]["status"] == "complete" and r["kit"]["missing"] == []
 
 
 @pytest.mark.parametrize(
@@ -195,13 +204,16 @@ def test_save_apply_kit_partial_updates_preserve_omitted_fields(tools, st, updat
 
     out = save.invoke({**identity, **update})
 
-    assert "Saved the apply kit" in out
+    # (the reply's saved/DRAFT wording depends on kit completeness — asserted in the draft/complete
+    # tests below; this test owns the field-merge behaviour, which is unchanged by validation)
+    assert out
     after = st.load_applications()[0]
     assert after["kit"]["resume"] == {**before["kit"]["resume"], **resume_changes}
     assert after["kit"]["cover_letter"] == {**before["kit"]["cover_letter"], **letter_changes}
     assert after["kit"]["answers"] == before["kit"]["answers"]
     assert after["history"] == before["history"]
     assert len(after["kit"]["events"]) == len(before["kit"]["events"]) + 1
+    assert after["kit"]["status"] in ("complete", "draft") and isinstance(after["kit"]["missing"], list)
 
 
 def test_save_apply_kit_tracks_an_absent_role_as_preparing(tools, st):
@@ -233,6 +245,138 @@ def test_save_apply_kit_rejects_bad_answers_json_and_writes_nothing(tools, st):
     assert r["status"] == "considering" and "kit" not in r  # nothing moved, nothing stored
 
 
+# ── validation: a partial/empty kit saves as a DRAFT with `missing` (#66) ───────────────
+@pytest.mark.parametrize(
+    "use_resume, extra, expected_missing",
+    [
+        (False, {}, ["résumé (no path)", "cover letter", "answers"]),
+        (
+            False,
+            {"cover_letter": "Dear team", "cover_letter_needed": True, "answers_json": '{"Q": "A"}'},
+            ["résumé (no path)"],
+        ),
+        (True, {"answers_json": '{"Q": "A"}'}, ["cover letter"]),  # cover letter, needed unset
+        (True, {"cover_letter_needed": True, "answers_json": '{"Q": "A"}'}, ["cover letter"]),  # needed true, no text
+        (True, {"cover_letter": "Dear team", "cover_letter_needed": True}, ["answers"]),  # no answers, no flag
+    ],
+    ids=["empty", "no-resume", "no-cover-needed-unset", "no-cover-needed-true", "no-answers"],
+)
+def test_save_apply_kit_partial_kits_save_as_draft(tools, st, resume_pdf, use_resume, extra, expected_missing):
+    args = {"company": "Acme", "role": "ML Engineer", **extra}
+    if use_resume:
+        args["resume_path"], args["resume_version"] = resume_pdf, "v1"
+    out = tools["careercoach_save_apply_kit"].invoke(args)
+
+    assert out.startswith("Apply kit saved as a DRAFT — not ready:")
+    assert "Saved the apply kit" not in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["status"] == "draft"
+    assert kit["missing"] == expected_missing
+
+
+def test_save_apply_kit_resume_path_to_a_missing_file_is_a_draft(tools, st, tmp_path):
+    missing = tmp_path / "nope.pdf"  # a path that does not exist
+    out = tools["careercoach_save_apply_kit"].invoke(
+        {
+            "company": "Acme",
+            "role": "ML Engineer",
+            "resume_path": str(missing),
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "answers_json": '{"Q": "A"}',
+        }
+    )
+    assert out.startswith("Apply kit saved as a DRAFT — not ready:")
+    assert "Saved the apply kit" not in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["status"] == "draft"
+    assert kit["missing"] == [f"résumé (file not found: {missing})"]
+
+
+def test_cover_letter_needed_false_removes_the_cover_letter_from_missing(tools, st, resume_pdf):
+    out = tools["careercoach_save_apply_kit"].invoke(
+        {
+            "company": "Acme",
+            "role": "ML Engineer",
+            "resume_path": resume_pdf,
+            "resume_version": "v1",
+            "cover_letter_needed": False,  # posting asks for no letter
+            "answers_json": '{"Q": "A"}',
+        }
+    )
+    assert "Saved the apply kit" in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["status"] == "complete" and kit["missing"] == []
+
+
+def test_no_form_questions_true_removes_answers_from_missing(tools, st, resume_pdf):
+    out = tools["careercoach_save_apply_kit"].invoke(
+        {
+            "company": "Acme",
+            "role": "ML Engineer",
+            "resume_path": resume_pdf,
+            "resume_version": "v1",
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "no_form_questions": True,  # posting has no form questions
+        }
+    )
+    assert "Saved the apply kit" in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["status"] == "complete" and kit["missing"] == []
+    assert kit["no_form_questions"] is True
+
+
+def test_partial_update_on_a_complete_kit_stays_complete(tools, st, resume_pdf):
+    save = tools["careercoach_save_apply_kit"]
+    ident = {"company": "Acme", "role": "ML Engineer"}
+    save.invoke(
+        {
+            **ident,
+            "resume_path": resume_pdf,
+            "resume_version": "v1",
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "no_form_questions": True,
+            "answers_json": '{"Q": "A"}',
+        }
+    )
+    assert st.load_applications()[0]["kit"]["status"] == "complete"
+
+    out = save.invoke({**ident, "resume_version": "v2"})  # a later partial update — bump the version only
+    assert "Saved the apply kit" in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["status"] == "complete" and kit["missing"] == []
+    assert kit["resume"] == {"path": resume_pdf, "version": "v2", "built": st._today()}
+    assert kit["no_form_questions"] is True  # preserved across the omitting update
+
+
+def test_save_apply_kit_accepts_answers_json_as_a_dict(tools, st, resume_pdf):
+    out = tools["careercoach_save_apply_kit"].invoke(
+        {
+            "company": "Acme",
+            "role": "ML Engineer",
+            "resume_path": resume_pdf,
+            "resume_version": "v1",
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "answers_json": {"Why Acme?": "Mission"},  # a dict/object, not a JSON string (the S5c shape)
+        }
+    )
+    assert "Saved the apply kit" in out
+    kit = st.load_applications()[0]["kit"]
+    assert kit["answers"] == [{"key": "Why Acme?", "label": "Why Acme?", "value": "Mission", "status": "draft"}]
+    assert kit["status"] == "complete"
+
+
+def test_save_apply_kit_accepts_the_answers_alias(tools, st):
+    tools["careercoach_save_apply_kit"].invoke(
+        {"company": "Acme", "role": "ML Engineer", "answers": {"Why Acme?": "Mission"}}
+    )
+    kit = st.load_applications()[0]["kit"]  # a draft (no résumé), but the aliased answers are stored
+    assert kit["answers"] == [{"key": "Why Acme?", "label": "Why Acme?", "value": "Mission", "status": "draft"}]
+
+
 # ── GET /applications/{id} ──────────────────────────────────────────────────────────
 def test_application_detail_shape_and_404(plugin, client, monkeypatch):
     tc, _reg = client
@@ -262,6 +406,30 @@ def test_application_detail_kit_defaults_to_empty_skeleton(plugin, client):
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     body = tc.get(f"/api/plugins/careercoach/applications/{app_id}").json()
     assert body["kit"] == st._empty_kit()  # a row without a kit reads as the empty shape
+
+
+def test_application_detail_round_trips_a_complete_kit(plugin, client, resume_pdf):
+    tc, reg = client
+    st = importlib.import_module(plugin.__name__ + ".state")
+    save = {t.name: t for t in reg.tools}["careercoach_save_apply_kit"]
+    save.invoke(
+        {
+            "company": "Acme",
+            "role": "ML Engineer",
+            "resume_path": resume_pdf,
+            "resume_version": "v2",
+            "cover_letter": "Dear team",
+            "cover_letter_needed": True,
+            "answers_json": {"Why Acme?": "Mission"},
+        }
+    )
+    app_id = st.load_applications()[0]["id"]
+
+    kit = tc.get(f"/api/plugins/careercoach/applications/{app_id}").json()["kit"]
+    assert kit["status"] == "complete" and kit["missing"] == []
+    assert kit["resume"] == {"path": resume_pdf, "version": "v2", "built": st._today()}
+    assert kit["cover_letter"] == {"text": "Dear team", "needed": True}
+    assert kit["answers"] == [{"key": "Why Acme?", "label": "Why Acme?", "value": "Mission", "status": "draft"}]
 
 
 def test_application_detail_answers_preserve_draft_confirmed(plugin, client):
