@@ -48,9 +48,11 @@ def register(registry) -> None:
     The DEFAULT tool surface is lean (S4b): ~12 merged tools around the core loop — find roles →
     evaluate → apply kit → track → interview prep. Each pre-consolidation ("legacy") tool name stays
     reachable behind ``extended_tools`` (default off), registered as a thin wrapper over the SAME
-    implementation, so jobCoach's schedules and prompts that name the old tools keep working. The
-    browser-fill tools (plan_fill, verify_fill, handoff, request_submit) register only when
-    ``browser_fill`` (S3a) enables at least one ATS; the submit-gate middleware is unchanged."""
+    implementation, so jobCoach's schedules and prompts that name the old tools keep working. One
+    always-on tool is NOT a legacy wrapper: ``careercoach_read_sources`` — a read-only view the
+    delegate crew grounds on (see ``_register_delegate_read_tool``). The browser-fill tools (plan_fill,
+    verify_fill, handoff, request_submit) register only when ``browser_fill`` (S3a) enables at least one
+    ATS; the submit-gate middleware is unchanged."""
     cfg = registry.config  # this plugin's resolved config + secrets (ADR 0019)
     extended = _as_bool(cfg.get("extended_tools", False))
     from .ats import any_fill_enabled
@@ -62,8 +64,11 @@ def register(registry) -> None:
     search_jobs = _register_jobsearch_tool(registry, cfg, extended)
     scan_boards = _register_hunt_tools(registry, cfg, extended)
     _register_find_roles_tool(registry, scan_boards, search_jobs)
-    _register_packet_tools(registry, cfg, extended)
-    _register_answers_tools(registry, extended)
+    get_profile, read_profile = _register_packet_tools(registry, cfg, extended)
+    get_answers = _register_answers_tools(registry, extended)
+    # The delegate crew reads the verified record through this one read-only tool, so it can ground a
+    # score or a draft in the DEFAULT config without holding any write-capable tool (see below).
+    _register_delegate_read_tool(registry, get_profile, read_profile, get_answers)
     if fill_on:  # browser fill is opt-in per ATS (S3a); off → the apply kit is the path
         _register_formfill_tools(registry)
     _register_prepare_tool(registry)
@@ -139,7 +144,9 @@ def _register_tracker_tools(registry, extended: bool) -> None:
         if err:
             return f"Your pipeline file {state._path()} is unreadable ({err}), so I can't list it — tell the operator."
         if not rows:
-            return "Your pipeline is empty — paste me a posting, or track a role with careercoach_track_application."
+            return (
+                'Your pipeline is empty — paste me a posting, or track a role with careercoach_track(action="track").'
+            )
         return "\n".join(
             f"- {r['role']} @ {r['company']} — fit {r.get('fit_score', 0)}, {r.get('status', '?')}, {r.get('date', '?')}"
             + (f" · {r['source']}" if r.get("source") else "")
@@ -435,7 +442,7 @@ def _import_detail(row: dict) -> str:
 # write named artifacts into it, assemble the deliverable, and seed the workspace from the
 # fill-in templates/. Pure logic lives in packet.py (host-free, tested); these tools are the
 # thin agent surface. The *content* of each artifact is the agent's job (driven by the skill).
-def _register_packet_tools(registry, cfg, extended: bool) -> None:
+def _register_packet_tools(registry, cfg, extended: bool):
     from pathlib import Path
 
     from . import packet, profile, resume
@@ -880,6 +887,9 @@ def _register_packet_tools(registry, cfg, extended: bool) -> None:
                 careercoach_list_roles,
             ]
         )
+    # Hand the two read-only profile readers to register() so the always-on delegate-read tool can
+    # dispatch to them (the crew grounds on these even when extended is off — see below).
+    return careercoach_get_profile, careercoach_read_profile
 
 
 # ── agent tools: saved standard application answers (confirm once, reuse confirmed) ─
@@ -892,7 +902,7 @@ def _unknown_answer_key(key: str) -> str:
     return f"Unknown answer key {key!r}. Valid keys: {', '.join(answers.STANDARD_KEYS)}."
 
 
-def _register_answers_tools(registry, extended: bool) -> None:
+def _register_answers_tools(registry, extended: bool):
     from . import answers, profile
 
     @tool
@@ -1008,6 +1018,40 @@ def _register_answers_tools(registry, extended: bool) -> None:
     registry.register_tool(careercoach_answers)
     if extended:  # legacy names behind extended_tools — same implementations
         registry.register_tools([careercoach_get_answers, careercoach_propose_answer, careercoach_confirm_answers])
+    # The delegate-read tool reads the confirmed answers through this reader; hand it to register().
+    return careercoach_get_answers
+
+
+# ── a read-only grounding view for the delegate crew (ADR 0002) ───────────────────────────────
+# The host builds subagents WITHOUT the plugin's profile middleware, so the always-on
+# <operator_profile> block never reaches job_evaluator / application_writer. They must READ the
+# verified profile (and the confirmed standard answers) to ground a score or a draft — but a
+# hands-off workflow run has no operator to gate a write, so the crew must own NO tool that changes
+# the record or confirms an answer in the operator's name (the anti-fabrication invariant). The
+# merged careercoach_profile / careercoach_answers façades both carry write actions, so the crew is
+# granted this instead: ONE always-on, read-only tool that dispatches to the very same read
+# implementations and can never write. It lives on the default surface so the grant resolves with
+# extended_tools off — the shipped config the crew actually runs in.
+def _register_delegate_read_tool(registry, get_profile, read_profile, get_answers) -> None:
+    @tool
+    def careercoach_read_sources(source: str = "profile", doc: str = "experience", field: str = "") -> str:
+        """Read-only view of the verified record a draft must trace to — for grounding before you
+        score or write, never to change it. source="profile" (default): one `field` (roles, education,
+        skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines) returns
+        that section, or with no field the whole `doc` (experience, story-bank, reviewer, humanize,
+        improvements) as markdown. source="answers": the operator's standard application answers with
+        CONFIRMED/DRAFT status. Writes nothing — the operator records and confirms through the Career
+        Coach view (careercoach_profile / careercoach_answers). Defaults to the experience profile."""
+        src = (source or "profile").strip().lower()
+        if src == "profile":
+            if (field or "").strip():
+                return get_profile.invoke({"field": field})
+            return read_profile.invoke({"doc": doc})
+        if src == "answers":
+            return get_answers.invoke({})
+        return f'Unknown source {source!r} — use "profile" or "answers".'
+
+    registry.register_tool(careercoach_read_sources)
 
 
 # ── form filling: a PLAN before, a DIFF after (#4032 phase 3b) ────────────────
@@ -1160,7 +1204,7 @@ def _kit_handoff(ats: str) -> str:
         f"KIT HANDOFF — browser fill is off for {ats or 'unknown ATS'}. "
         "careercoach_plan_fill is disabled for this ATS. Build the apply kit: "
         "careercoach_render_resume → browser_pdf for the PDF, a cover letter only if the posting asks, "
-        "and confirmed answers from careercoach_get_answers. Save it with careercoach_save_apply_kit. "
+        'and confirmed answers from careercoach_answers(action="get"). Save it with careercoach_save_apply_kit. '
         "The operator fills the form from the Career Coach view using copy buttons. "
         "To opt into browser fill (beta), add the ATS type to the browser_fill setting "
         "(greenhouse, lever, ashby, workable). Unknown ATS types cannot be enabled. Never auto-submit."
@@ -1810,8 +1854,11 @@ def _register_rubric_knobs(registry) -> None:
 #
 # The host builds subagents WITHOUT plugin middleware (graph/agent.py's subagent stack), so the
 # always-on <operator_profile> block never reaches them. The two that judge or write about the
-# candidate get the profile READ tools instead, and their prompts say to read before working.
-PROFILE_READ_TOOLS = ["careercoach_get_profile", "careercoach_read_profile"]
+# candidate get the read-only grounding tool instead (careercoach_read_sources), and their prompts
+# say to read before working. It is on the DEFAULT surface, so the grant resolves in the shipped
+# config (extended_tools off) — and because it can only read, the autonomous crew holds no tool that
+# writes the record or confirms an answer in the operator's name.
+DELEGATE_READ_TOOL = "careercoach_read_sources"
 
 
 def _register_subagents(registry) -> None:
@@ -1852,14 +1899,14 @@ def _register_subagents(registry) -> None:
             "dimensions (defaults: technical 30, experience 25, behavioral 15, career 30) plus a "
             "location pass/fail gate, then take the weighted overall and map it to a verdict band. "
             "Score the REAL candidate: before scoring, read their verified history with "
-            "careercoach_read_profile('experience') and their skills with "
-            "careercoach_get_profile('skills'); if both come back empty, say the score can't be "
+            "careercoach_read_sources(doc='experience') and their skills with "
+            "careercoach_read_sources(field='skills'); if both come back empty, say the score can't be "
             "grounded rather than scoring an imagined background. "
             "For the full rubric, bands, and exact output format, call load_skill('job-application-"
             "assistant') and read its job-evaluation.md. Use web_search/fetch_url for missing context. "
             "Output the evaluation table, weighted overall, verdict, strengths, gaps, and a clear "
             "apply/apply-with-caveats/skip recommendation, then record it with "
-            "careercoach_track_application. Be honest: a weak fit is a weak fit — never inflate a score."
+            "careercoach_track(action='track'). Be honest: a weak fit is a weak fit — never inflate a score."
         ),
         tools=[
             "load_skill",
@@ -1867,8 +1914,8 @@ def _register_subagents(registry) -> None:
             "web_search",
             "fetch_url",
             "current_time",
-            "careercoach_track_application",
-            *PROFILE_READ_TOOLS,
+            "careercoach_track",
+            DELEGATE_READ_TOOL,
         ],
     )
 
@@ -1883,9 +1930,10 @@ def _register_subagents(registry) -> None:
             "You are application_writer, the Career Coach's apply-kit builder. Given a fit evaluation "
             "and a company-research brief, BUILD AND SAVE an apply kit that the operator completes "
             "themselves — you never open or drive the employer's form, and nothing auto-submits. "
-            "FIRST read what is true about the candidate: careercoach_read_profile('experience') for "
-            "their verified career history and careercoach_get_profile('do_not_claim') for the lines "
-            "you must never claim (plus careercoach_get_profile('skills') and ('stories') as needed). "
+            "FIRST read what is true about the candidate: careercoach_read_sources(doc='experience') "
+            "for their verified career history and careercoach_read_sources(field='do_not_claim') for "
+            "the lines you must never claim (plus careercoach_read_sources(field='skills') and "
+            "(field='stories') as needed). "
             "Draft only from what those return, and treat every do_not_claim line as a hard stop. If "
             "the history comes back empty, say so and stop: never invent a career. If the verdict was "
             "Weak or Poor Fit, say so and stop rather than forcing a kit. Follow the writing-style "
@@ -1899,7 +1947,8 @@ def _register_subagents(registry) -> None:
             "rendering refuses or a PDF tool is unavailable, report the blocker instead of claiming a "
             "PDF was built. Write a cover letter ONLY if the posting asks for one, verifying every "
             "company-specific claim against the research brief's sources before including it. Read "
-            "every form answer with careercoach_get_answers: keep CONFIRMED and DRAFT answers distinct, "
+            "every form answer with careercoach_read_sources(source='answers'): keep CONFIRMED and "
+            "DRAFT answers distinct, "
             "leave drafts as drafts, and report new or missing questions for the operator rather than "
             "inventing answers. A workflow run has NO operator in the loop, so you never confirm "
             "answers or write the operator's profile — you hold no tool for either; save one-off "
@@ -1915,19 +1964,19 @@ def _register_subagents(registry) -> None:
             "checklist (factual accuracy against the profile, do_not_claim respected, company claims "
             "verified, style, and whether the kit saved)."
         ),
-        # No operator gates a workflow run, so this autonomous drafter is granted only read-only,
-        # draft-only, résumé-render and kit-save tools: never careercoach_update_profile /
-        # careercoach_confirm_answers (gate-less writes in the operator's name) nor any
+        # No operator gates a workflow run, so this autonomous drafter is granted only read-only
+        # (careercoach_read_sources), draft-only, résumé-render, kit-save and tracking tools: never a
+        # profile write or answer confirmation (careercoach_profile's update/write/import or
+        # careercoach_answers' confirm — gate-less writes in the operator's name) nor any
         # form-driving/submit tool. The operator confirms and files later in the Career Coach view.
         tools=[
             "load_skill",
             "list_skills",
-            *PROFILE_READ_TOOLS,
-            "careercoach_get_answers",
+            DELEGATE_READ_TOOL,
             "careercoach_prepare_application",
             "careercoach_render_resume",
             "careercoach_save_apply_kit",
-            "careercoach_track_application",
+            "careercoach_track",
             "browser_open",
             "browser_pdf",
             "current_time",

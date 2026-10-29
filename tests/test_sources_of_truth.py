@@ -164,30 +164,35 @@ def test_a_dev_twin_export_does_not_clobber_the_prod_record(plugin, profile, iso
 # ── the crew and the skills read the same record ──────────────────────────────────────
 def test_drafting_and_scoring_subagents_can_read_the_profile(plugin):
     """The host builds subagents without plugin middleware, so the always-on block never reaches
-    them: the ones that write in the operator's name (or score them) need the read tools.
+    them: the ones that write in the operator's name (or score them) need to read the record.
 
-    The crew is granted FINE-GRAINED read-only tools (careercoach_get_profile / read_profile /
-    get_answers) — the merged default façades (careercoach_profile, careercoach_answers) would also
-    expose the write actions, which this autonomous crew must never hold. Those fine-grained names
-    live on the extended surface (S4b), so register with extended_tools on to resolve them."""
-    reg = FakeRegistry({"extended_tools": True})
+    The crew is granted ONE read-only grounding tool (careercoach_read_sources) — the merged default
+    façades (careercoach_profile, careercoach_answers) would also expose the write/confirm actions,
+    which this autonomous crew must never hold. careercoach_read_sources lives on the DEFAULT surface,
+    so the grant resolves in the shipped config (extended_tools OFF) — the config the crew runs in."""
+    reg = FakeRegistry()  # default surface: extended_tools off, as shipped
     plugin.register(reg)
     registered = {t.name for t in reg.tools}
+    assert "careercoach_read_sources" in registered  # the grounding tool is always on
     crew = {c.name: c for c in reg.subagents}
     for name in ("application_writer", "job_evaluator"):
         c = crew[name]
-        assert {"careercoach_get_profile", "careercoach_read_profile"} <= set(c.tools), (name, c.tools)
-        assert "careercoach_read_profile('experience')" in c.system_prompt
+        assert "careercoach_read_sources" in set(c.tools), (name, c.tools)
+        assert "careercoach_read_sources(doc='experience')" in c.system_prompt
+        # every careercoach_* tool the crew is told to call resolves on the DEFAULT surface
         assert not {t for t in c.tools if t.startswith("careercoach_")} - registered
     writer = crew["application_writer"]
-    assert "careercoach_get_profile('do_not_claim')" in writer.system_prompt
+    assert "careercoach_read_sources(field='do_not_claim')" in writer.system_prompt
     assert "never silently change the saved profile" in writer.system_prompt
     # A workflow run has no operator to gate a write, so the autonomous drafter owns NONE of the
     # tools that change the record or promote an answer in the operator's name: it renders the
-    # already-approved résumé and saves a DRAFT kit. careercoach_update_profile is unguarded
-    # (confirm_removal only shields do_not_claim), so handing it to this crew would let a hands-off
-    # run_workflow("apply") write unconfirmed claims into the single source of truth.
+    # already-approved résumé and saves a DRAFT kit. The merged careercoach_profile / careercoach_answers
+    # carry write actions (update/write/import/confirm), so handing either to this crew would let a
+    # hands-off run_workflow("apply") write unconfirmed claims into the single source of truth — it gets
+    # the read-only careercoach_read_sources instead, and none of the fine-grained write names.
     assert not {
+        "careercoach_profile",
+        "careercoach_answers",
         "careercoach_update_profile",
         "careercoach_write_profile",
         "careercoach_import_experience",

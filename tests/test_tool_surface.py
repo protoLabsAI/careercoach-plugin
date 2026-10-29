@@ -114,6 +114,49 @@ def test_default_surface_is_lean_and_keeps_the_digest(plugin, iso):
     assert not (legacy_only & non_knob), sorted(legacy_only & non_knob)
 
 
+def test_delegate_crew_tools_resolve_on_the_default_surface(plugin, iso):
+    """The crew is registered in the SHIPPED config, so every careercoach_* tool it is granted must
+    resolve there (extended_tools off). It grounds on the always-on read-only careercoach_read_sources
+    and holds NONE of the write-capable façades — so a hands-off workflow run can read the record but
+    never write it or confirm an answer in the operator's name."""
+    reg = _register(plugin, {})
+    default_names = {t.name for t in reg.tools}
+    assert "careercoach_read_sources" in default_names
+    crew = {c.name: c for c in reg.subagents}
+    assert set(crew) == {"company_researcher", "job_evaluator", "application_writer"}
+    for name, cfg in crew.items():
+        plugin_tools = {t for t in cfg.tools if t.startswith("careercoach_")}
+        assert plugin_tools <= default_names, (name, sorted(plugin_tools - default_names))
+    for name in ("job_evaluator", "application_writer"):
+        assert "careercoach_read_sources" in set(crew[name].tools)
+        write_capable = {
+            "careercoach_profile",
+            "careercoach_answers",
+            "careercoach_update_profile",
+            "careercoach_write_profile",
+            "careercoach_import_experience",
+            "careercoach_confirm_answers",
+        }
+        assert not write_capable & set(crew[name].tools), (name, sorted(write_capable & set(crew[name].tools)))
+
+
+def test_read_sources_is_read_only_and_mirrors_the_facade_reads(plugin, iso, monkeypatch):
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    tools = _tools(plugin, {"packet_root": str(iso / "ws")})
+    rs, profile_t, answers_t = (
+        tools["careercoach_read_sources"],
+        tools["careercoach_profile"],
+        tools["careercoach_answers"],
+    )
+    # reads dispatch to the very same implementations the merged façades use
+    assert rs.invoke({"doc": "experience"}) == profile_t.invoke({"action": "read", "doc": "experience"})
+    assert rs.invoke({"field": "skills"}) == profile_t.invoke({"action": "get", "field": "skills"})
+    assert rs.invoke({"source": "answers"}) == answers_t.invoke({"action": "get"})
+    # it is read-only: there is no write/confirm action, only the two read sources
+    assert "Unknown source" in rs.invoke({"source": "update"})
+    assert "Unknown source" in rs.invoke({"source": "confirm"})
+
+
 def test_default_surface_hides_the_legacy_names(plugin, iso):
     names = _names(plugin, {})
     sample = {

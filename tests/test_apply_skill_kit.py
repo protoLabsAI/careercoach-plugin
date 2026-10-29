@@ -89,13 +89,13 @@ def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_
     chat where the operator approves each one. Skill frontmatter does not grant tools, so the
     delegate must own every tool it is told to call — and must own none that writes the record,
     promotes an answer in the operator's name, or drives/submits a form."""
-    # The writer is granted FINE-GRAINED read/draft tools by their legacy names (careercoach_get_profile
-    # / read_profile / get_answers / track_application) — deliberately NOT the merged façades, which
-    # would also expose write/confirm actions this autonomous crew must never hold. Those names live on
-    # the extended surface (S4b), so register with extended_tools to resolve the grant.
+    # The writer is granted ONE read-only grounding tool (careercoach_read_sources) — deliberately NOT
+    # the merged façades (careercoach_profile / careercoach_answers), which also expose write/confirm
+    # actions this autonomous crew must never hold. careercoach_read_sources is on the DEFAULT surface,
+    # so register with the SHIPPED config (extended_tools off) and prove the grant still resolves.
     from _plugin_testkit import FakeRegistry
 
-    reg = FakeRegistry({"extended_tools": True})
+    reg = FakeRegistry()
     plugin.register(reg)
     writer = next(c for c in reg.subagents if c.name == "application_writer")
     registered = {t.name for t in reg.tools}
@@ -107,7 +107,7 @@ def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_
         "careercoach_render_resume",
         "browser_open",
         "browser_pdf",
-        "careercoach_get_answers",
+        "careercoach_read_sources",
         "careercoach_save_apply_kit",
         "careercoach_prepare_application",
     } <= named  # guards the test itself: the tools the autonomous contract relies on
@@ -115,8 +115,11 @@ def test_application_writer_owns_its_autonomous_contract_and_no_write_or_submit_
     assert not missing, f"application_writer lacks tools its autonomous contract calls: {sorted(missing)}"
 
     # No operator gates a workflow run, so the drafter owns NO tool that writes the record,
-    # confirms an answer in the operator's name, or drives/submits the employer's form.
+    # confirms an answer in the operator's name, or drives/submits the employer's form — including the
+    # merged careercoach_profile / careercoach_answers façades, whose actions can write or confirm.
     forbidden = {
+        "careercoach_profile",
+        "careercoach_answers",
         "careercoach_update_profile",
         "careercoach_write_profile",
         "careercoach_import_experience",

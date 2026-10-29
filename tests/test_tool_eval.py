@@ -112,7 +112,15 @@ def test_collects_actual_schemas_and_passes_config(monkeypatch, iso):
     assert set(placeholders) == {"careercoach_knobs", "careercoach_tune", "careercoach_preset"}
     for fn in functions.values():
         assert fn["parameters"]["type"] == "object"
-    assert evaluation.fake_pick("hello", tools) == evaluation.fake_pick("hello", tools)
+    # fake_pick is the offline stand-in for a model: it must return either an abstention (None) or a
+    # REAL tool name from the surface it was given — never a hallucinated name — and do so
+    # deterministically. Asserting membership (not just repeatability) catches a pick drawn from the
+    # wrong set; sweeping several prompts proves it actually reaches the tool names, not only None.
+    valid = {None, *(t["function"]["name"] for t in tools)}
+    picks = {evaluation.fake_pick(f"prompt-{i}", tools) for i in range(50)}
+    assert picks <= valid, picks - valid
+    assert picks & {t["function"]["name"] for t in tools}, "fake_pick never selected a real tool"
+    assert evaluation.fake_pick("hello", tools) == evaluation.fake_pick("hello", tools)  # deterministic
 
 
 @pytest.mark.parametrize(

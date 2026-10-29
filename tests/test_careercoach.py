@@ -370,12 +370,13 @@ def test_skills_declare_real_tools(plugin):
 def test_register_runs_host_free(plugin, registry):
     plugin.register(registry)  # must not raise with no host present; default config = lean surface (S4b)
     names = [t.name for t in registry.tools]
-    # The lean default surface: the 11 merged/core-loop tools + the 3 rubric-knob tools (the vendored
+    # The lean default surface: the 12 merged/core-loop tools (11 user-facing + the always-on read-only
+    # careercoach_read_sources the delegate crew grounds on) + the 3 rubric-knob tools (the vendored
     # testkit stands in for graph.sdk's Knobs/make_knob_tools, so the guarded knob path runs host-free).
     # Every pre-consolidation name is behind extended_tools, and the browser-fill tools are behind
     # browser_fill — neither is on in the default config — so they are absent here (see
     # test_tool_surface.py for both halves).
-    assert len(names) == 14 and len(set(names)) == 14
+    assert len(names) == 15 and len(set(names)) == 15
     assert {"careercoach_knobs", "careercoach_tune", "careercoach_preset"} <= set(names)
     assert {
         "careercoach_find_roles",
@@ -389,6 +390,7 @@ def test_register_runs_host_free(plugin, registry):
         "careercoach_render_resume",
         "careercoach_save_apply_kit",
         "careercoach_prepare_application",
+        "careercoach_read_sources",
     } <= set(names)
     # legacy names and the browser-fill tools do NOT register in the default config
     assert not {

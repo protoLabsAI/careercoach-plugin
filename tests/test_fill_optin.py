@@ -68,7 +68,7 @@ def assert_kit(out):
         "careercoach_render_resume",
         "browser_pdf",
         "cover letter only if the posting asks",
-        "careercoach_get_answers",
+        'careercoach_answers(action="get")',  # the default-surface answers tool (S4b), not the legacy name
         "Career Coach view",
         "copy buttons",
         "Never auto-submit",
