@@ -345,24 +345,40 @@ def _register_apply_kit_tool(registry) -> None:
         missing = kit.get("missing") or []
         if kit.get("status") == "complete" and not missing:
             pieces: list[str] = []
-            if parts.get("resume"):
-                v = parts["resume"].get("version", "")
+            if kit.get("resume"):
+                v = kit["resume"].get("version", "")
                 pieces.append(f"résumé {v}" if v else "résumé")
-            if parts.get("cover_letter"):
-                pieces.append("cover letter" if (cover_letter or "").strip() else "cover letter (needed)")
-            if answer_entries:
-                pieces.append(f"{len(answer_entries)} draft answer(s)")
+            cover = kit.get("cover_letter") or {}
+            if str(cover.get("text") or "").strip():
+                pieces.append("cover letter")
+            elif cover.get("needed") is False:
+                pieces.append("no cover letter (not requested)")
+            if kit.get("answers"):
+                pieces.append(f"{len(kit['answers'])} draft answer(s)")
+            elif kit.get("no_form_questions"):
+                pieces.append("no form questions")
             what = ", ".join(pieces) or "kit"
             return (
                 f"Saved the apply kit for {who} ({what}; status {saved.get('status', '?')}). "
                 "Draft answers are shown to the operator and never fill a form until confirmed — the operator files "
                 "the application themselves."
             )
+        steps: list[str] = []
+        for part in missing:
+            if part == "résumé (no path)":
+                steps.append("render the résumé with careercoach_render_resume and pass its PDF path")
+            elif part.startswith("résumé (file not found: "):
+                steps.append(
+                    "no file exists at that résumé path; re-render with careercoach_render_resume "
+                    "and pass the real PDF path"
+                )
+            elif part == "cover letter":
+                steps.append("write the cover letter (or set cover_letter_needed=false)")
+            elif part == "answers":
+                steps.append("collect answers with careercoach_answers (or set no_form_questions=true)")
         return (
             f"Apply kit saved as a DRAFT — not ready: {who} still needs {_join_plain(missing)}. "
-            "Next steps: render the résumé with careercoach_render_resume and pass its PDF path, write the cover "
-            "letter (or set cover_letter_needed=false), and collect answers with careercoach_answers (or set "
-            "no_form_questions=true). Then save again with all three."
+            f"Next steps: {'; '.join(steps)}. Then save again."
         )
 
     registry.register_tool(careercoach_save_apply_kit)
