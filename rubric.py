@@ -7,7 +7,7 @@ weighted; **Location is a separate pass/fail gate**, not weighted here.
 The weights live here as data so they can be tested for real, and are wired into
 a live, agent-tunable ``Knobs`` surface in ``__init__.py`` — so "score these more
 on growth than raw skills" is a one-line ``careercoach_tune`` / ``careercoach_preset``,
-not a prompt edit. The ``job-application-assistant`` skill reads them at eval time.
+not a prompt edit. The ``apply`` skill reads them at eval time.
 """
 
 from __future__ import annotations

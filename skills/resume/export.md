@@ -7,7 +7,7 @@ switching route**.
 
 Honour the operator's `render_format` setting: `docx` → Route 1, `html` → Route 2 (Route 3
 while `browser_pdf` isn't available), `latex` → the moderncv appendix in
-`job-application-assistant/cv-guide.md`.
+[cv-guide.md](../apply-form/cv-guide.md).
 
 **One file artifact per export type per resume, not one per save.** Every
 `save_file_artifact` call without an `artifact_id` adds a panel entry, and the panel keeps only
@@ -37,7 +37,7 @@ path `careercoach_role_packet(action="list")` prints for it — or into `<worksp
 because that's where `execute_code` gained its managed Python runtime, provisioned on first
 use.
 
-The procedure is already documented: read `job-application-assistant/cv-guide.md` for the
+The procedure is already documented: read [cv-guide.md](../apply-form/cv-guide.md) for the
 full steps and the version floors. In short: `load_skill("docx")`, author the CV with
 `python-docx` following `cv-guide.md` + `writing-style.md`, save it to an **absolute** path in
 the role folder (cowork's skill defaults to a project folder or `output_dir`; neither fits

@@ -210,8 +210,11 @@ PROFILE_TOOLS = ("careercoach_profile",)
 
 
 def test_profile_skills_declare_the_profile_tools_their_steps_call():
-    for name in ("job-application-assistant", "setup-coach", "role-packet"):
+    for name in ("apply-form", "job-hunt", "resume", "interview-coach", "career-strategy"):
         fm, body = _skill(name)
+        for guide in (ROOT / "skills" / name).glob("*.md"):
+            if guide.name != "SKILL.md":
+                body += guide.read_text(encoding="utf-8")
         for tool_name in PROFILE_TOOLS:
             if f"`{tool_name}" in body:
                 assert tool_name in fm["tools"], f"{name} calls {tool_name} but doesn't declare it"
@@ -233,6 +236,6 @@ def test_nothing_still_names_experience_md_as_a_source():
 
 
 def test_setup_coach_does_not_promise_an_editable_panel():
-    _, body = _skill("setup-coach")
+    _, body = _skill("job-hunt")
     assert "edit it there" not in body
     assert "read-only" in body

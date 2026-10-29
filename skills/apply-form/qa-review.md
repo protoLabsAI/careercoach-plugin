@@ -35,6 +35,6 @@ what happened, the fix, which phase it applies to). This is how the system gets 
 
 ## 4. Hand off (do not submit)
 Present: the packet path, the completeness summary, any stretches/flags the user still needs to decide,
-and the suggested next step (interview-coach to prep, upskill for real gaps). Then **stop** — the user
+and the suggested next step (interview to prep, strategy for real gaps). Then **stop** — the user
 reviews and submits the application themselves. If they answer a new evidence question or change a call,
 revise the affected artifact and re-run this phase; don't re-do the whole packet.

@@ -8,11 +8,11 @@ An excellent Claude Code job-application framework. What we ported and adapted:
 
 | From upstream | Into this plugin |
 |---------------|------------------|
-| `03-writing-style.md` (anti-slop rules, the interview-backtrack honesty test, forward-looking framing) | `skills/job-application-assistant/writing-style.md` |
-| `04-job-evaluation.md` (weighted 4-dimension fit rubric, bands, "call the employer" playbook, motivation filter) | `skills/job-application-assistant/job-evaluation.md` + the live `careercoach` rubric knobs |
-| `05-cv-templates.md` / `06-cover-letter-templates.md` (content discipline: 2-page limit, relevance-weighted cutting, the LaTeX gotchas) | `skills/job-application-assistant/cv-guide.md` / `cover-letter-guide.md` |
+| `03-writing-style.md` (anti-slop rules, the interview-backtrack honesty test, forward-looking framing) | `skills/apply-form/writing-style.md` |
+| `04-job-evaluation.md` (weighted 4-dimension fit rubric, bands, "call the employer" playbook, motivation filter) | `skills/apply-form/job-evaluation.md` + the live `careercoach` rubric knobs |
+| `05-cv-templates.md` / `06-cover-letter-templates.md` (content discipline: 2-page limit, relevance-weighted cutting, the LaTeX gotchas) | `skills/apply-form/cv-guide.md` / `cover-letter-guide.md` |
 | `07-interview-prep.md` (STAR framework, question banks, roleplay) | `skills/interview-coach/SKILL.md` |
-| `upskill/SKILL.md` (two-pass gap analysis, heatmap, learning plan, anti-fabrication rules) | `skills/upskill/SKILL.md` |
+| `upskill/SKILL.md` (two-pass gap analysis, heatmap, learning plan, anti-fabrication rules) | `skills/career-strategy/` (the upskilling section) |
 
 **What changed in the adaptation:**
 

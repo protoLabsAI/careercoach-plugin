@@ -5,9 +5,8 @@ description: >-
   resume", "parse my CV", "turn my profile into a resume", "restyle it", "make a PDF /
   Word version", "will this get through an ATS", "which resume is the current one". The
   resume is worked on as ONE versioned artifact, tailored variants branch off it, and
-  exports become downloadable files. For scoring a posting or writing a cover letter see
-  job-application-assistant; for the full filed application see role-packet; for the
-  first-run interview see setup-coach.
+  exports become downloadable files. For posting evaluation, cover letters or a full filed
+  application see apply; for the first-run interview see job-hunt.
 tools: [careercoach_profile, careercoach_role_packet, show_artifact, get_artifact, update_artifact, rewrite_artifact, list_artifacts, check_artifact, save_file_artifact, delete_artifact, pin_artifact, show_component, load_skill]
 ---
 
@@ -110,10 +109,10 @@ Read one when you reach its step, not all up front.
 | `templates/*.html` | Step 2 — the ATS-safe starting points (catalogue below) |
 
 Content discipline is **not** duplicated here. Before writing a single bullet, read
-`job-application-assistant/cv-guide.md` (section order, relevance-weighted cutting, the
-two-page budget) and `job-application-assistant/writing-style.md` (tone, banned clichés,
+[cv-guide.md](../apply-form/cv-guide.md) (section order, relevance-weighted cutting, the
+two-page budget) and [writing-style.md](../apply-form/writing-style.md) (tone, banned clichés,
 the interview-backtrack test). For the filed, gated, one-role-at-a-time version of this
-work, read `role-packet/SKILL.md` — this skill is what its Phase 3 renders with.
+work, read [the gated packet flow](../apply-form/packet-flow.md) — this skill is what its Phase 3 renders with.
 
 If a reference file won't open, say so and work from this page rather than inventing a
 procedure.

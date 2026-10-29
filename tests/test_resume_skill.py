@@ -101,7 +101,7 @@ BARE_WORDS = {
     "skills",
     "stories",
     "svg",
-    "upskill",
+    "strategy",
 }
 
 # Anywhere in the text — prose, backticks and fenced blocks alike (fences are where most of
@@ -218,7 +218,7 @@ AVAILABILITY = ("`execute_code` in your toolset", "`docx` in your available skil
 
 
 def test_every_file_naming_cowork_uses_the_one_availability_test_that_works():
-    routers = {ROOT / "skills/job-application-assistant/SKILL.md", ROOT / "skills/role-packet/SKILL.md"}
+    routers = {ROOT / "skills/apply-form/application-guide.md", ROOT / "skills/apply-form/packet-flow.md"}
     docx_route = re.compile(r"`docx`|load_skill\(['\"]docx")
     naming = sorted(
         {
@@ -273,7 +273,7 @@ def test_the_skill_survives_the_artifact_panel_evicting_the_resume():
     assert "wasn't written by you" in tailor and "re-save the copy of record" in tailor
     assert "Updated tailored resume.md" in tailor, "a re-file answers Updated, not Wrote"
     assert "pass the same `req` it was filed under" in tailor, "one folder per role across both flows"
-    packet_flow = _flat((ROOT / "skills/role-packet/SKILL.md").read_text(encoding="utf-8"))
+    packet_flow = _flat((ROOT / "skills/apply-form/packet-flow.md").read_text(encoding="utf-8"))
     assert "pass the same `req` it was filed under" in packet_flow, "role-packet must reuse the resume's folder"
     assert 'careercoach_role_packet(action="scaffold"' not in tailor, "recovery must not use a write tool as a lookup"
     assert "Master Resume.html" in tailor, "the approved master's wording needs a copy of record"
@@ -543,10 +543,10 @@ STALE = (
     "quirks mode",  # a srcdoc iframe is never in quirks mode (HTML spec; measured for core #3457)
 )
 READ_FIRST = (
-    "skills/job-application-assistant/SKILL.md",
-    "skills/job-application-assistant/cv-guide.md",
-    "skills/job-application-assistant/cover-letter-guide.md",
-    "skills/role-packet/SKILL.md",
+    "skills/apply-form/application-guide.md",
+    "skills/apply-form/cv-guide.md",
+    "skills/apply-form/cover-letter-guide.md",
+    "skills/apply-form/packet-flow.md",
     "__init__.py",
     "workflows/apply.yaml",
     "CREDITS.md",
@@ -566,11 +566,11 @@ def test_nothing_the_agent_reads_first_still_promises_a_pdf_the_host_cannot_make
 
 
 def test_the_guides_now_state_what_is_true_and_hand_off_to_the_resume_skill():
-    cv = _flat((ROOT / "skills/job-application-assistant/cv-guide.md").read_text(encoding="utf-8"))
+    cv = _flat((ROOT / "skills/apply-form/cv-guide.md").read_text(encoding="utf-8"))
     assert "You do **not** see the rendered page" in cv
     assert "The artifact plugin does not make PDFs" in cv
     assert 'load_skill("resume")' in cv
-    letter = _flat((ROOT / "skills/job-application-assistant/cover-letter-guide.md").read_text(encoding="utf-8"))
+    letter = _flat((ROOT / "skills/apply-form/cover-letter-guide.md").read_text(encoding="utf-8"))
     assert "`resume` skill's `export.md`" in letter and "doesn't make PDFs" in letter
 
 
