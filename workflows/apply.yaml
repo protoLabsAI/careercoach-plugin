@@ -5,7 +5,7 @@
 # Steps are chained via `depends_on`; each step's output feeds the next through
 # {{steps.<id>.output}} templating. Every step is a configured subagent (the engine
 # only runs subagent steps) — the crew is registered in __init__.py and pulls the full
-# discipline from the job-application-assistant skill via load_skill.
+# discipline from the apply skill via load_skill.
 name: apply
 description: >-
   Evaluate a job posting and, if it's a fit, build and save an apply kit — the
@@ -47,7 +47,7 @@ steps:
     subagent: application_writer
     depends_on: [evaluate, research]
     prompt: |
-      Load the apply-form skill and follow its default apply kit flow. Using the evaluation
+      Load the apply skill and follow its default apply kit flow. Using the evaluation
       and company research below, build a tailored résumé PDF with careercoach_render_resume
       → browser_open (the local file:// URL only) → browser_pdf. Use only operator-approved
       résumé wording and confirmed profile facts. This run has no operator in the loop, so you

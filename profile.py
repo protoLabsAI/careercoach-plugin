@@ -111,14 +111,14 @@ TOTAL_FIELDS = len(IDENTITY_FIELDS) + len(SECTIONS)
 # The voice/guardrail gate, injected with the profile on every turn.
 #
 # It lives here, not in a skill, because of an observed failure: the writing discipline sits in
-# ``job-application-assistant/writing-style.md`` and only loads on the tailoring path, so a bare
+# ``apply/writing-style.md`` and only loads on the tailoring path, so a bare
 # "convert my resume to a docx" produced a real deliverable at 16 em-dashes per 1000 words
 # against the operator's stated limit of 3, carrying a phrase they had explicitly retired. A rule
 # that only binds when you enter through the front door isn't a rule. Always-on is the fix.
 WRITE_GATE = (
     "BEFORE WRITING ANYTHING IN THEIR NAME — CV, cover letter, application answer, bio, LinkedIn\n"
     "text, or any docx/pdf/html export — load the writing discipline first (`load_skill`\n"
-    "job-application-assistant, then its writing-style.md; plus `my-writing-style` if\n"
+    "apply, then its writing-style.md; plus `my-writing-style` if\n"
     "`list_skills` shows one) and check your draft against DO NOT CLAIM above. This applies to a\n"
     'bare "make me a resume" exactly as much as to a tailored application: entering through a\n'
     "side door does not suspend the rules."

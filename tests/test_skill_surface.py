@@ -133,3 +133,51 @@ def test_no_operator_specific_names_in_skills():
         if path.is_file():
             text = path.read_text(encoding="utf-8").lower()
             assert "josh" not in text and "jobcoach" not in text, path
+
+
+# The runtime surfaces the HOST executes against a skill by name: the always-on write gate
+# (profile.WRITE_GATE, injected every turn), the apply-workflow subagent prompts, and the
+# workflow file. A load_skill call that names a folded-away skill fails silently — the
+# autonomous crew has no operator watching it — so these are held to the five live names.
+RUNTIME_SURFACES = {
+    "profile.py": ROOT / "profile.py",
+    "__init__.py": ROOT / "__init__.py",
+    "workflows/apply.yaml": ROOT / "workflows/apply.yaml",
+}
+# Skills folded away by this change. Their directories were deleted or renamed in frontmatter,
+# so naming one in a load_skill target (or the write gate) sends the agent to nothing.
+FOLDED_AWAY_SKILLS = ("job-application-assistant", "apply-form")
+
+
+def test_runtime_load_skill_calls_name_a_live_skill():
+    live = set(ENTRYPOINTS.values())
+    found = 0
+    for label, path in RUNTIME_SURFACES.items():
+        for name in re.findall(r"load_skill\(['\"]([a-z-]+)['\"]\)", path.read_text(encoding="utf-8")):
+            found += 1
+            assert name in live, f"{label} calls load_skill({name!r}), which is not one of {sorted(live)}"
+    assert found >= 2, "the apply-workflow subagents must still pull their discipline via load_skill"
+
+
+def test_no_runtime_surface_names_a_folded_away_skill():
+    for label, path in RUNTIME_SURFACES.items():
+        text = path.read_text(encoding="utf-8")
+        # 'apply-form' is still a live DIRECTORY name, so only flag it as a load_skill target.
+        assert "job-application-assistant" not in text, (
+            f"{label} still names the deleted job-application-assistant skill"
+        )
+        for gone in FOLDED_AWAY_SKILLS:
+            assert f"load_skill('{gone}')" not in text and f'load_skill("{gone}")' not in text, (
+                f"{label} loads the folded-away {gone!r} skill"
+            )
+
+
+def test_the_always_on_write_gate_points_at_the_live_apply_skill():
+    """The gate injects every turn and names the skill that carries the writing discipline.
+    It uses the bare-prose `load_skill` form, not a paren call, so it is checked by name."""
+    text = (ROOT / "profile.py").read_text(encoding="utf-8")
+    gate = re.search(r"WRITE_GATE\s*=\s*\((.*?)\n\)", text, flags=re.S)
+    assert gate, "WRITE_GATE constant not found"
+    body = gate.group(1)
+    assert "load_skill" in body, "the gate must still route through load_skill"
+    assert "apply, then its writing-style.md" in body, "the gate must name the live apply skill"

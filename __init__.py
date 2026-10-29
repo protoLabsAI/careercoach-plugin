@@ -1850,7 +1850,7 @@ def _register_rubric_knobs(registry) -> None:
 # ── a delegate crew: research → evaluate → write (register_subagent) ──────────
 # Three purpose-built subagents that the `apply` workflow chains (ADR 0002). Each carries a
 # COMPACT prompt and is granted `load_skill` so it can pull the full discipline from the
-# job-application-assistant skill (the source of truth) rather than duplicating it here.
+# `apply` skill (the source of truth) rather than duplicating it here.
 #
 # The host builds subagents WITHOUT plugin middleware (graph/agent.py's subagent stack), so the
 # always-on <operator_profile> block never reaches them. The two that judge or write about the
@@ -1902,8 +1902,8 @@ def _register_subagents(registry) -> None:
             "careercoach_read_sources(doc='experience') and their skills with "
             "careercoach_read_sources(field='skills'); if both come back empty, say the score can't be "
             "grounded rather than scoring an imagined background. "
-            "For the full rubric, bands, and exact output format, call load_skill('job-application-"
-            "assistant') and read its job-evaluation.md. Use web_search/fetch_url for missing context. "
+            "For the full rubric, bands, and exact output format, call load_skill('apply') and read "
+            "its job-evaluation.md. Use web_search/fetch_url for missing context. "
             "Output the evaluation table, weighted overall, verdict, strengths, gaps, and a clear "
             "apply/apply-with-caveats/skip recommendation, then record it with "
             "careercoach_track(action='track'). Be honest: a weak fit is a weak fit — never inflate a score."
@@ -1939,8 +1939,8 @@ def _register_subagents(registry) -> None:
             "Weak or Poor Fit, say so and stop rather than forcing a kit. Follow the writing-style "
             "discipline: no em-dashes, no clichés, and the interview-backtrack honesty test (reframe "
             "emphasis, NEVER claim experience the candidate lacks). For the full guidance call "
-            "load_skill('job-application-assistant') and read writing-style.md, cv-guide.md, and "
-            "cover-letter-guide.md; load_skill('apply-form') carries the apply-kit flow. "
+            "load_skill('apply'): its SKILL.md carries the apply-kit flow, and read its writing-style.md, "
+            "cv-guide.md, and cover-letter-guide.md for the writing discipline. "
             "Build the tailored résumé PDF from the operator-approved résumé with "
             "careercoach_render_resume(company) → browser_open (the returned local file:// URL only) → "
             "browser_pdf; keep the returned PDF path, and never silently change the saved profile. If "

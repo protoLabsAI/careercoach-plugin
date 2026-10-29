@@ -27,8 +27,8 @@ forking core.
 **Coaching (the default):**
 - **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
 - **Interview practice** — a STAR answer bank and realistic **mock interviews with per-answer feedback** (skill: `interview-coach`).
-- **Honest material feedback** — a real critique of your CV/cover letter against an anti-slop, anti-fabrication standard (skill: `job-application-assistant` + `writing-style`).
-- **Upskilling** — turns the jobs you're chasing into a prioritized gap heatmap + a learning plan with real resources (skill: `upskill`).
+- **Honest material feedback** — a real critique of your CV/cover letter against an anti-slop, anti-fabrication standard (skill: `apply`, with the writing-style discipline + `my-writing-style`).
+- **Upskilling** — turns the jobs you're chasing into a prioritized gap heatmap + a learning plan with real resources (skill: `strategy`).
 
 **Execution (when you ask):**
 - **Find fresh roles** (skill: `job-hunt`) — keep a **company watchlist** and `careercoach_scan_boards` reads
@@ -71,11 +71,11 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 8 skills; `job-application-assistant`, `role-packet` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply-form` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 5 skills (`job-hunt`, `apply`, `resume`, `interview`, `strategy`); `apply` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
 | **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
-| **User-facing slash skill** | `skills/setup-coach/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
-| **Gated, filed pipeline** (skill-driven) | `skills/role-packet/` + `packet.py` + `templates/` | the resume flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
-| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → build & save apply kit` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated `role-packet` flow) |
+| **User-facing slash skill** | `skills/job-hunt/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
+| **Gated, filed pipeline** (skill-driven) | `skills/apply-form/packet-flow.md` + `packet.py` + `templates/` | the role-packet flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
+| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → build & save apply kit` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated role-packet flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
 | **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_get_profile` / `careercoach_update_profile` / `careercoach_import_experience` / `careercoach_export_experience` (the operator profile) / `careercoach_read_profile` / `careercoach_write_profile` (the story bank) |
 | **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, delivered on every model call as an ephemeral context frame (`wrap_model_call`, the host's ADR 0108 D2 contract) |
@@ -108,15 +108,12 @@ careercoach-plugin/
 ├─ contacts.py                # LinkedIn Connections import, referrals, follow-ups — tested
 ├─ hunt.py                    # the job-hunt tools (watchlist, scan, history, contacts, digest)
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
-├─ skills/
-│  ├─ job-application-assistant/   # router SKILL.md + writing-style / job-evaluation / cv / cover-letter
-│  ├─ role-packet/                 # the gated pipeline: SKILL.md + evidence-map / ats-skills-entry / recruiter-brief / qa-review
+├─ skills/                         # 5 skills; directory names kept, frontmatter name in parens
+│  ├─ apply-form/                  # name: apply — evaluate fit, CV/cover-letter + writing-style / job-evaluation, the gated packet-flow, and the opt-in browser-fill beta
 │  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
-│  ├─ apply-form/                  # default: build & save an apply kit for the operator to file; opt-in beta: plan → fill → verify → handoff → gated submit
-│  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest
-│  ├─ interview-coach/             # STAR bank + mock interviews with feedback
-│  ├─ career-strategy/             # positioning, offers, negotiation, decisions (the coach)
-│  └─ upskill/                     # gap heatmap + learning plan
+│  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest; absorbs the setup-coach first-run interview
+│  ├─ interview-coach/             # name: interview — STAR bank + mock interviews with feedback
+│  └─ career-strategy/             # name: strategy — positioning, offers, negotiation, decisions, and the upskilling gap heatmap + learning plan
 ├─ templates/                  # fill-in workspace starters (an importable Experience.md, story bank, reviewer, Humanize, improvements)
 ├─ workflows/apply.yaml        # the autonomous research → evaluate → write pipeline
 └─ tests/                      # host-free (vendored testkit): rubric, state, packet, register() surface
@@ -269,7 +266,7 @@ careercoach-plugin/
   the verbatim block the agent receives. The person being described should never have to open a file in
   Finder to see their own record.
 - **The voice gate is always-on, not a step in one skill.** The writing discipline used to live only inside
-  `job-application-assistant`, so a side-door request ("just convert my resume to a docx") produced a real
+  the `apply` skill's writing-style guide, so a side-door request ("just convert my resume to a docx") produced a real
   deliverable at 16 em-dashes per 1000 words against the operator's stated limit of 3, carrying a phrase
   they'd explicitly retired. A rule that only binds when you enter through the front door isn't a rule, so
   it now rides in the always-on block alongside the `do_not_claim` guardrails.
