@@ -56,12 +56,17 @@ steps:
       Write a cover letter ONLY if the posting asks for one, following the writing-style
       discipline and honesty test. Verify every company-specific claim against research sources.
       If the verdict was Weak or Poor Fit, say so and stop rather than forcing a draft.
-      Read every form answer using your granted standard-answers read tool; keep drafts as drafts and ask the
+      Then collect every form answer using your granted standard-answers read tool,
+      careercoach_read_sources(source='answers'); keep drafts as drafts and ask the
       operator about new or missing questions. If operator input is unavailable, report the
       pending questions without inventing answers or claiming the kit is complete.
-      Save the apply kit with careercoach_save_apply_kit: the returned PDF path, known version,
-      requested cover letter and one-off answers as drafts. When no letter is requested, clear
-      any stale letter with cover_letter="" and cover_letter_needed=false. Check save success.
+      Only THEN call careercoach_save_apply_kit with all three together: resume_path=the returned
+      PDF path, cover_letter=letter text, answers_json=a question-to-answer object/dict or JSON string
+      (not the answer-bank report). Include resume_version if known; kit answers are stored as drafts.
+      When no letter is requested, clear any stale letter with cover_letter="" and
+      cover_letter_needed=false. Set no_form_questions=true only when there genuinely are no form questions.
+      If the reply says DRAFT, fill in the listed missing parts and save again with all three;
+      report any blocker requiring operator input without claiming completion. Check save success.
       Hand off: open the role in the Career Coach view, review drafts, attach the PDF, use the
       copy buttons to complete the application, then press Mark applied after submitting it.
       Do not drive the employer's form or mark the role applied. Nothing auto-submits.
