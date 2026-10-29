@@ -169,9 +169,10 @@ def test_keep_unknown_item_is_4xx(client):
     assert 400 <= r.status_code < 500 and "error" in r.json()
 
 
+@pytest.mark.parametrize("body_route", [False, True])
 @pytest.mark.parametrize("status", ["considering", "preparing", "applied", "interviewing", "offer"])
 @pytest.mark.parametrize("match", ["url", "company_role"])
-def test_keep_preserves_existing_application(plugin, client, monkeypatch, status, match):
+def test_keep_preserves_existing_application(plugin, client, monkeypatch, status, match, body_route):
     tc, reg = client
     wl = importlib.import_module(plugin.__name__ + ".watchlist")
     st = importlib.import_module(plugin.__name__ + ".state")
@@ -188,7 +189,11 @@ def test_keep_preserves_existing_application(plugin, client, monkeypatch, status
     )
     before = st._path().read_bytes()
     monkeypatch.setattr(st, "_today", lambda: "2026-10-28")
-    response = tc.post("/api/plugins/careercoach/inbox/123456/keep")
+    response = (
+        tc.post("/api/plugins/careercoach/inbox/keep", json={"id": "123456"})
+        if body_route
+        else tc.post("/api/plugins/careercoach/inbox/123456/keep")
+    )
     assert response.status_code == 200
     assert response.json()["application"] == existing
     assert st._path().read_bytes() == before
@@ -211,17 +216,26 @@ def test_inbox_routes_accept_market_search_ids(plugin, client, action, encoded):
     assert wl.inbox_for_view() == []
 
 
-@pytest.mark.parametrize("operation", ["inbox_for_view", "mark_kept"])
-def test_keep_unreadable_inbox_returns_conflict(plugin, client, monkeypatch, operation):
+@pytest.mark.parametrize("body_route", [False, True])
+@pytest.mark.parametrize("operation", ["inbox_for_view", "mark_kept", "track_application", "dismiss"])
+def test_inbox_routes_unreadable_store_returns_conflict(plugin, client, monkeypatch, operation, body_route):
     tc, _reg = client
     wl = importlib.import_module(plugin.__name__ + ".watchlist")
     _inbox_job(wl)
 
-    def unreadable(*args):
-        raise wl.StoreUnreadable(wl._path("inbox"), "invalid JSON")
+    st = importlib.import_module(plugin.__name__ + ".state")
+    module = st if operation == "track_application" else wl
 
-    monkeypatch.setattr(wl, operation, unreadable)
-    response = tc.post("/api/plugins/careercoach/inbox/j1/keep")
+    def unreadable(*args, **kwargs):
+        raise module.StoreUnreadable(st._path() if module is st else wl._path("inbox"), "invalid JSON")
+
+    monkeypatch.setattr(module, operation, unreadable)
+    action = "dismiss" if operation == "dismiss" else "keep"
+    response = (
+        tc.post(f"/api/plugins/careercoach/inbox/{action}", json={"id": "j1"})
+        if body_route
+        else tc.post(f"/api/plugins/careercoach/inbox/j1/{action}")
+    )
     assert response.status_code == 409
     assert "error" in response.json()
 
@@ -268,3 +282,44 @@ def test_move_route_bad_status_is_4xx_and_good_move_works(plugin, client):
 
     missing = tc.post("/api/plugins/careercoach/applications/nope/move", json={"status": "applied"})
     assert missing.status_code == 400 and "error" in missing.json()
+
+
+@pytest.mark.parametrize("action", ["keep", "dismiss"])
+def test_inbox_body_routes_accept_url_ids(plugin, client, action):
+    tc, reg = client
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    st = importlib.import_module(plugin.__name__ + ".state")
+    item_id = "himalayas:https://himalayas.app/companies/acme/jobs/123?ref=x&y=1"
+    _inbox_job(wl, item_id)
+    response = tc.post(f"/api/plugins/careercoach/inbox/{action}", json={"id": item_id})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    rows = st.load_applications()
+    if action == "keep":
+        assert len(rows) == 1
+        assert response.json()["application"] == rows[0]
+        assert rows[0]["status"] == "considering"
+        assert "careercoach.application_tracked" in [t for t, _ in reg.emitted]
+    else:
+        assert response.json() == {"ok": True}
+        assert rows == []
+    assert tc.get("/api/plugins/careercoach/jobs").json()["inbox"] == []
+    _inbox_job(wl, item_id)
+    assert tc.get("/api/plugins/careercoach/jobs").json()["inbox"] == []
+
+
+@pytest.mark.parametrize("action", ["keep", "dismiss"])
+@pytest.mark.parametrize("payload", [None, {}, {"id": ""}, {"id": None}, {"id": 123}])
+def test_inbox_body_routes_require_id(client, action, payload):
+    tc, _reg = client
+    response = tc.post(f"/api/plugins/careercoach/inbox/{action}", json=payload)
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+@pytest.mark.parametrize("action, expected", [("keep", 404), ("dismiss", 200)])
+def test_inbox_body_routes_unknown_id(client, action, expected):
+    tc, _reg = client
+    response = tc.post(f"/api/plugins/careercoach/inbox/{action}", json={"id": "unknown"})
+    assert response.status_code == expected
+    assert "error" in response.json() if expected == 404 else response.json() == {"ok": True}
