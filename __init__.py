@@ -47,6 +47,7 @@ def register(registry) -> None:
     cfg = registry.config  # this plugin's resolved config + secrets (ADR 0019)
 
     _register_tracker_tools(registry)
+    _register_apply_kit_tool(registry)
     _register_jobsearch_tool(registry, cfg)
     _register_hunt_tools(registry, cfg)
     _register_packet_tools(registry, cfg)
@@ -130,6 +131,96 @@ def _register_tracker_tools(registry) -> None:
         )
 
     registry.register_tools([careercoach_track_application, careercoach_list_applications])
+
+
+# ── agent tool: the apply kit (the default apply path — the coach prepares, the operator files) ─
+# The settled default is an APPLY KIT: the coach readies the tailored résumé, a cover letter when
+# the posting asks for one, and every form answer; the operator fills the form themselves. Nothing
+# auto-submits. The kit lives on the application row (state.set_kit) so what was prepared stays with
+# the application. One-off answers are stored as DRAFT and never copied into a confirmed field.
+def _register_apply_kit_tool(registry) -> None:
+    import json as _json
+
+    from . import state
+
+    @tool
+    def careercoach_save_apply_kit(
+        company: str,
+        role: str,
+        resume_path: str = "",
+        resume_version: str = "",
+        cover_letter: str = "",
+        cover_letter_needed: bool = False,
+        answers_json: str = "",
+    ) -> str:
+        """Save the apply kit for one role — the tailored résumé PDF path/version, a cover letter (when the posting
+        asks for one), and one-off form answers — onto its pipeline row, and move a Saved row to `preparing`. The
+        operator files the form themselves; nothing is submitted. `answers_json` is an optional JSON object of form
+        question -> answer, stored as DRAFT (shown to the operator, never used as a confirmed answer). Tracks the role
+        as `preparing` if it isn't in the pipeline yet."""
+        company_s, role_s = (company or "").strip(), (role or "").strip()
+        answers: list[dict] = []
+        text = (answers_json or "").strip()
+        if text:
+            try:
+                data = _json.loads(text)
+            except ValueError as e:
+                return f'Apply kit not saved: answers_json isn\'t valid JSON ({e}). Pass an object like {{"Why us?": "..."}}.'
+            if not isinstance(data, dict):
+                return "Apply kit not saved: answers_json must be a JSON object mapping a form question to an answer."
+            answers = [
+                {"key": str(k), "label": str(k), "value": "" if v is None else str(v), "status": "draft"}
+                for k, v in data.items()
+            ]
+        try:
+            row = state._find(state.load_applications(), company_s, role_s)
+            if row is None:
+                # not in the pipeline yet — track it as `preparing` so the kit has a row to live on
+                row = state.track_application(company=company_s, role=role_s, status="preparing")
+            app_id = row["id"]
+            parts: dict = {}
+            if resume_path or resume_version:
+                parts["resume"] = {
+                    "path": (resume_path or "").strip(),
+                    "version": (resume_version or "").strip(),
+                    "built": state._today(),
+                }
+            if cover_letter or cover_letter_needed:
+                parts["cover_letter"] = {"text": cover_letter or "", "needed": bool(cover_letter_needed)}
+            if answers:
+                parts["answers"] = answers
+            saved = state.set_kit(app_id, **parts)
+            # a Saved (considering) row is now being readied → move it to preparing with a history entry
+            if saved.get("status") == "considering":
+                saved = state.move(app_id, "preparing")
+        except state.StoreUnreadable as e:
+            return f"Apply kit not saved: {e}"
+        except Exception as e:  # noqa: BLE001 — a tool never raises
+            return f"Apply kit not saved: {e}"
+        try:
+            registry.emit(
+                "application_tracked",
+                {"company": saved.get("company", ""), "role": saved.get("role", ""), "status": saved.get("status", "")},
+            )
+        except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
+            pass
+        pieces: list[str] = []
+        if parts.get("resume"):
+            v = parts["resume"]["version"]
+            pieces.append(f"résumé {v}" if v else "résumé")
+        if parts.get("cover_letter"):
+            pieces.append("cover letter" if (cover_letter or "").strip() else "cover letter (needed)")
+        if answers:
+            pieces.append(f"{len(answers)} draft answer(s)")
+        what = ", ".join(pieces) or "kit"
+        return (
+            f"Saved the apply kit for {saved.get('role', role_s)} @ {saved.get('company', company_s)} "
+            f"({what}; status {saved.get('status', '?')}). "
+            "Draft answers are shown to the operator and never fill a form until confirmed — the operator files the "
+            "application themselves."
+        )
+
+    registry.register_tool(careercoach_save_apply_kit)
 
 
 # ── agent tool: live job search (the real job source, Phase 3) ────────────────
@@ -1685,7 +1776,8 @@ def _register_views(registry, cfg) -> None:
     from fastapi import APIRouter, Body
     from fastapi.responses import HTMLResponse, JSONResponse
 
-    from . import profile, state
+    from . import answers as ans_mod
+    from . import contacts, profile, state
     from . import watchlist as wl
     from .rubric import DEFAULT_WEIGHTS
 
@@ -1791,6 +1883,81 @@ def _register_views(registry, cfg) -> None:
             return JSONResponse({"error": str(e)}, status_code=409)
         except (KeyError, ValueError) as e:
             return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
+
+    def _find_app(app_id: str) -> dict | None:
+        return next((r for r in state.load_applications() if r.get("id") == app_id), None)
+
+    def _answers_view() -> list[dict]:
+        """The saved standard answers rendered as ``[{key, value, status}]`` — draft/confirmed
+        preserved so the detail view can show what still needs confirming. A load never raises."""
+        return [
+            {"key": k, "value": e.get("value", ""), "status": e.get("status", "draft")}
+            for k, e in ans_mod.load().items()
+        ]
+
+    def _timeline(app: dict) -> list[dict]:
+        """The application's history and its kit events merged into one date-sorted trail (ISO dates
+        sort chronologically as strings). Each entry carries a ``kind`` so the view can tell a status
+        change from a prepared-the-kit event."""
+        out: list[dict] = []
+        for h in app.get("history") or []:
+            out.append({"date": str(h.get("date") or ""), "kind": "status", "status": h.get("status", "")})
+        for ev in (app.get("kit") or {}).get("events") or []:
+            out.append({"date": str(ev.get("date") or ""), "kind": "kit", "what": ev.get("what", "")})
+        out.sort(key=lambda e: e.get("date") or "")
+        return out
+
+    @data.get("/applications/{app_id}")
+    async def _application(app_id: str):
+        """One application in full: the row, its apply kit, the saved standard answers (each with its
+        draft/confirmed status), the contacts at that company (``[]`` when the contacts store is
+        absent or unreadable — a referral hint never blocks the view), and a date-sorted timeline of
+        history + kit events. An unknown id is a 404."""
+        app = _find_app(app_id)
+        if app is None:
+            return JSONResponse({"error": f"no application with id {app_id!r}"}, status_code=404)
+        try:
+            company_contacts = contacts.at_company(app.get("company", ""))
+        except contacts.StoreUnreadable:
+            company_contacts = []
+        return JSONResponse(
+            {
+                "application": app,
+                "kit": app.get("kit") or state._empty_kit(),
+                "answers": _answers_view(),
+                "contacts": company_contacts,
+                "timeline": _timeline(app),
+            }
+        )
+
+    @data.post("/applications/{app_id}/applied")
+    async def _applied(app_id: str, payload: dict = Body(default={})):
+        """Mark an application applied: move it to ``applied`` with a history entry and snapshot what
+        was sent into ``applied_with``. An optional body ``{"answers": [...]}`` overrides the snapshot
+        source; otherwise it comes from the kit, else the saved answers. A bad id is a 404."""
+        answers_used = (payload or {}).get("answers")
+        answers_used = answers_used if isinstance(answers_used, list) else None
+        try:
+            row = state.mark_applied(app_id, answers_used=answers_used)
+        except state.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        except KeyError as e:
+            return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=404)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
+
+    @data.patch("/applications/{app_id}/notes")
+    async def _notes(app_id: str, payload: dict = Body(default={})):
+        """Persist the operator's notes on an application (body: ``{"notes": ...}``). A bad id is a 404."""
+        notes = str((payload or {}).get("notes") or "")
+        try:
+            row = state.set_notes(app_id, notes)
+        except state.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        except KeyError as e:
+            return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=404)
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
 
