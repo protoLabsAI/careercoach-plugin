@@ -32,7 +32,8 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
 ## Setting up (once)
 
 - **Target roles / locations / exclusions** can be set in Settings → Career Coach. Blank target
-  roles and locations fall back to the confirmed profile's `target_roles` and `location`.
+  roles and locations fall back to the confirmed profile's `target_roles` and `target_locations`.
+  The identity `location` is a home location and does not restrict searches.
   Each comma-separated
   target role is an all-words title match ("Design Engineer" matches "Senior Design Systems Engineer",
   not "Product Designer"). `locations` takes places plus `remote` (= remote and open to the US).
@@ -89,12 +90,14 @@ must not delay scanning. Never invent facts.
    metrics, skill levels or work authorization. For their own Experience.md,
    `careercoach_profile(action="import_experience")` returns a preview and `preview_id`.
 2. **Confirm targets once.** Show the extracted profile and propose `target_roles`
-   (comma-separated) and `location` from the document, clearly labeled as proposals.
+   (comma-separated) and search `target_locations` from the document, clearly labeled as proposals.
+   Keep the documented home `location` separate from the confirmed search geography.
    Ask ONE combined question: "May I save this profile and search these target roles and
    location, or what should I correct?" Include any missing resume, targets or location
    in this same question. Wait for confirmation; never treat silence as consent.
    Save confirmed fields with `careercoach_profile(action="update", field=…, content=…)`,
-   including `field="target_roles"` and `field="location"`. Apply a confirmed import
+   including `field="target_roles"` and `field="target_locations"`; save the documented home
+   location with `field="location"`. Apply a confirmed import
    using `apply=true` and its `preview_id`. Preserve every source claim across the
    appropriate sections; report write refusals, never silently truncate. Unconfirmed
    proposals stay unsaved; scan only confirmed targets or explicit search terms.

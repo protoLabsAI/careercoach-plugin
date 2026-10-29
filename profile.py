@@ -68,6 +68,7 @@ IDENTITY_FIELDS: dict[str, str] = {
     "name": "Full name",
     "location": "Location",
     "target_roles": "Target roles (comma-separated)",
+    "target_locations": "Search locations (confirmed places or remote)",
     "work_auth": "Work authorization",
     "contact": "Contact (email · phone · LinkedIn · portfolio)",
     "headlines": "Role-type headlines they'd accept",

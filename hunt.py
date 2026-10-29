@@ -36,7 +36,10 @@ def _int(value, default: int) -> int:
 
 
 def filters(cfg) -> dict:
-    """Settings take precedence; blank search fields use the confirmed profile."""
+    """Settings take precedence; blank search fields use confirmed search preferences.
+
+    Identity location is a home location, never an implicit restriction on job searches.
+    """
     from . import profile
 
     roles = cfg.get("target_roles", "") or ""
@@ -47,7 +50,7 @@ def filters(cfg) -> dict:
             raise profile.StoreUnreadable(profile._path(), error)
         identity = saved.get("identity", {})
         roles = roles if roles.strip() else identity.get("target_roles", "")
-        locations = locations if locations.strip() else identity.get("location", "")
+        locations = locations if locations.strip() else identity.get("target_locations", "")
     exclude = cfg.get("title_exclude")
     return {
         "roles": roles,

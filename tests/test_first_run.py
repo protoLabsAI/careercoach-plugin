@@ -23,7 +23,7 @@ def test_empty_profile_hint_updates_after_write(plugin, profile):
 def test_profile_filter_fallback_and_settings_precedence(plugin, profile, blank):
     hunt = importlib.import_module(plugin.__name__ + ".hunt")
     profile.update_field("target_roles", "Software Engineer")
-    profile.update_field("location", "Remote")
+    profile.update_field("target_locations", "Remote")
     f = hunt.filters({"target_roles": blank, "locations": blank})
     assert f["roles"] == "Software Engineer"
     assert f["locations"] == "Remote"
@@ -37,7 +37,7 @@ def test_default_market_is_keyless_and_feeds_view(plugin, profile, monkeypatch, 
     reg = FakeRegistry({"jobs_provider": "jsearch", "jobs_api_key": "test-key"} if configured else {})
     plugin.register(reg)
     tools = {t.name: t for t in reg.tools}
-    for field, value in [("target_roles", "Software Engineer"), ("location", "Remote")]:
+    for field, value in [("target_roles", "Software Engineer"), ("target_locations", "Remote")]:
         tools["careercoach_profile"].invoke({"action": "update", "field": field, "content": value})
     source = importlib.import_module(plugin.__name__ + ".jobsource")
     wl = importlib.import_module(plugin.__name__ + ".watchlist")
@@ -70,6 +70,10 @@ def test_default_market_is_keyless_and_feeds_view(plugin, profile, monkeypatch, 
     if not configured:
         assert "keyless" in result
     assert len(wl.inbox_for_view()) == 1
+    assert wl.peek_inbox() == []
+    digest = asyncio.run(tools["careercoach_digest"].ainvoke({}))
+    assert "From the background watch" not in digest
+    assert len(wl.inbox_for_view()) == 1
     tools["careercoach_answers"].invoke({"action": "get"})
     answers = importlib.import_module(plugin.__name__ + ".answers")
     stored, error = answers.load_checked()
@@ -92,6 +96,7 @@ def test_skill_first_run_sequence():
         "**drafts**",
         'field="target_roles"',
         'field="location"',
+        'field="target_locations"',
         'provider="himalayas"',
         "**inbox**",
     ]:
@@ -110,3 +115,16 @@ def test_unreadable_profile_is_not_onboarding(plugin, profile):
     with pytest.raises(profile.StoreUnreadable):
         hunt.filters({})
     assert hunt.filters({"target_roles": "Designer", "locations": "Remote"})["roles"] == "Designer"
+
+
+def test_home_location_does_not_restrict_existing_searches(plugin, profile):
+    hunt = importlib.import_module(plugin.__name__ + ".hunt")
+    boards = importlib.import_module(plugin.__name__ + ".boards")
+    profile.update_field("location", "Portland, OR")
+    profile.update_field("target_roles", "Software Engineer")
+    for blank in ("", "   ", None):
+        filters = hunt.filters({"locations": blank})
+        assert filters["locations"] == ""
+        assert boards.passes({"title": "Software Engineer", "location": "Remote"}, locations=filters["locations"])
+    profile.update_field("target_locations", "Remote")
+    assert hunt.filters({})["locations"] == "Remote"

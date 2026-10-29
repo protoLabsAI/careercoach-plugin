@@ -362,7 +362,10 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                 for j in jobs
                 if boards.passes(j, locations=location)
             ]
-            watchlist.add_to_inbox([j for j in matches if not scan.annotate(j, index)["tracked"]])
+            untracked = [j for j in matches if not scan.annotate(j, index)["tracked"]]
+            watchlist.add_to_inbox(untracked)
+            # Retain displayed results for the view without repeating them in the digest.
+            watchlist.drop_from_inbox([j["id"] for j in untracked])
         except state.StoreUnreadable as exc:
             src += f" Results could not reach the inbox: {exc}."
         if not jobs:
@@ -408,7 +411,8 @@ def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
     ) -> str:
         """Find roles to pursue. source="watched" (default) scans the companies on your watchlist's own
         job boards — the freshest source, and it feeds the pipeline inbox; source="market" searches live
-        postings across the job source. `roles`/`query` are the titles or keywords to match (both
+        postings across the job source. Both sources retain results in the view inbox, marked as
+        already shown so the digest does not repeat them. `roles`/`query` are the titles or keywords to match (both
         accepted); `locations` where (places, or "remote"); `max_age_days` 0 = any age; `only_new`
         (watched) shows only roles no earlier scan returned; `remote` (market) remote-only; `limit` caps
         results. `provider` (market) overrides Settings, e.g. "himalayas" or "hn" for keyless search.
