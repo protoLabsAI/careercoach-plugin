@@ -31,7 +31,7 @@ def gate(plugin, iso, monkeypatch):
     middleware instance, and the live ``formfill`` / ``submitgate`` modules that back them."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
     monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
-    reg = FakeRegistry({"packet_root": str(iso / "ws")})
+    reg = FakeRegistry({"packet_root": str(iso / "ws"), "browser_fill": "greenhouse"})
     plugin.register(reg)
     tools = {t.name: t for t in reg.tools}
     middleware = next(m for m in (f(None) for f in reg.middlewares) if type(m).__name__ == "_SubmitGateMiddleware")
@@ -336,7 +336,9 @@ def test_middleware_blocks_a_submit_after_a_colliding_plan_fill_form(gate, monke
     filled = [{"label": "Email", "kind": "text", "required": True, "value": "ada@example.com"}]
 
     # Plan + verify + operator-approve + grant form A, all through the tools.
-    sid_a = _sid_from_plan_output(gate.plan_fill.invoke({"form_json": json.dumps(form), "company": "", "role": ""}))
+    sid_a = _sid_from_plan_output(
+        gate.plan_fill.invoke({"ats": "greenhouse", "form_json": json.dumps(form), "company": "", "role": ""})
+    )
     gate.verify_fill.invoke({"session_id": sid_a, "form_json": json.dumps(filled)})
     assert gate.formfill.is_verified(sid_a) is True
     monkeypatch.setattr(gate.plugin, "_turn_is_headless", lambda: False)
@@ -347,7 +349,9 @@ def test_middleware_blocks_a_submit_after_a_colliding_plan_fill_form(gate, monke
 
     # Plan form B through the SAME careercoach_plan_fill path — identical rows, blank company/role →
     # it collides onto A's id — then read B back cleanly.
-    sid_b = _sid_from_plan_output(gate.plan_fill.invoke({"form_json": json.dumps(form), "company": "", "role": ""}))
+    sid_b = _sid_from_plan_output(
+        gate.plan_fill.invoke({"ats": "greenhouse", "form_json": json.dumps(form), "company": "", "role": ""})
+    )
     assert sid_b == sid_a, "identical rows + blank identity collide onto one id (the plan_fill hole)"
     gate.verify_fill.invoke({"session_id": sid_b, "form_json": json.dumps(filled)})
     assert gate.formfill.is_verified(sid_b) is True  # the session reads as verified again…

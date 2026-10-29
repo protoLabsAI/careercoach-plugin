@@ -86,9 +86,19 @@ def state(plugin, iso):
 
 
 @pytest.fixture
-def tools(plugin, iso, monkeypatch):
+def tools(plugin, iso, monkeypatch, request):
     """The registered agent tools by name, with an isolated store and workspace."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    reg = FakeRegistry({"packet_root": str(iso / "ws")})
+    cfg = {"packet_root": str(iso / "ws")}
+    if request.module.__name__ in {
+        "test_formfill",
+        "test_ats_greenhouse",
+        "test_ats_ashby",
+        "test_ats_workable",
+        "test_submitgate",
+        "test_handoff",
+    }:
+        cfg["browser_fill"] = "greenhouse,lever,ashby,workable"
+    reg = FakeRegistry(cfg)
     plugin.register(reg)
     return {t.name: t for t in reg.tools}
