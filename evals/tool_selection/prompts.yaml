@@ -1,0 +1,71 @@
+# Fixed S4a baseline: keep ids, wording and old expectations stable across surface cuts.
+# Score ONLY the first call. These are independent turns with no private profile fixture.
+# Today evaluation/prep starts by reading confirmed facts; no dedicated evaluate/prep
+# tool exists. Decoy host calls are deliberately not accepted for these plugin tasks.
+# URLs and companies are fictional; no tool is ever executed by this benchmark.
+aliases:
+  # TODO(S4b): fill each capability with acceptable NEW-surface tool names.
+  # Keep the old expect lists below so the same corpus scores both surfaces.
+  find: []
+  evaluate: []
+  apply_kit: []
+  track: []
+  interview: []
+  profile: []
+  digest: []
+  coaching: []
+
+prompts:
+  - {id: find-01, prompt: "Any new AI engineer roles at my watched companies?", expect: [careercoach_scan_boards], capability: find}
+  - {id: find-02, prompt: "Search the market for remote ML jobs.", expect: [careercoach_search_jobs], capability: find}
+  - {id: find-03, prompt: "Scan the companies I watch for data engineering openings in Berlin.", expect: [careercoach_scan_boards], capability: find}
+  - {id: find-04, prompt: "Find remote platform engineer vacancies across the market.", expect: [careercoach_search_jobs], capability: find}
+  - {id: find-05, prompt: "Which companies am I watching for new roles?", expect: [careercoach_watchlist], capability: find}
+  - {id: find-06, prompt: "Check my watched company boards for senior machine learning openings.", expect: [careercoach_scan_boards], capability: find}
+
+  - {id: evaluate-01, prompt: "Is this posting a fit for my confirmed background? Read my profile first: https://example.com/jobs/ml-engineer", expect: [careercoach_get_profile, careercoach_read_profile], capability: evaluate}
+  - {id: evaluate-02, prompt: "Evaluate this Acme role against my saved experience: build Python data pipelines and deploy ML models. Start with my experience record.", expect: [careercoach_get_profile, careercoach_read_profile], capability: evaluate}
+  - {id: evaluate-03, prompt: "Before assessing https://example.com/jobs/platform, retrieve my recorded skills so we can identify genuine gaps.", expect: [careercoach_get_profile, careercoach_read_profile], capability: evaluate}
+  - {id: evaluate-04, prompt: "This Globex job requires Kubernetes and Go. Look up my confirmed skills before telling me whether I qualify.", expect: [careercoach_get_profile, careercoach_read_profile], capability: evaluate}
+  - {id: evaluate-05, prompt: "Compare my verified work history with a senior data engineer role requiring SQL and streaming systems; read that history first.", expect: [careercoach_get_profile, careercoach_read_profile], capability: evaluate}
+  - {id: evaluate-06, prompt: "Help me assess a Berlin-only research engineer posting. Check my saved location and work authorization first.", expect: [careercoach_get_profile], capability: evaluate}
+
+  - {id: apply-01, prompt: "Build the apply kit for the Acme ML engineer role, starting from my confirmed profile.", expect: [careercoach_get_profile, careercoach_read_profile], capability: apply_kit}
+  - {id: apply-02, prompt: "Save the approved apply kit for Acme's ML engineer role with resume path /tmp/acme-resume.pdf and version v1; no cover letter is needed.", expect: [careercoach_save_apply_kit], capability: apply_kit}
+  - {id: apply-03, prompt: "Start a role packet for the Globex data engineer opening. The posting says to build SQL pipelines.", expect: [careercoach_scaffold_role], capability: apply_kit}
+  - {id: apply-04, prompt: "Assemble the completed Acme ML engineer role packet from the artifacts already approved and saved.", expect: [careercoach_assemble_packet], capability: apply_kit}
+  - {id: apply-05, prompt: "Render my already approved resume for the Acme apply kit.", expect: [careercoach_render_resume], capability: apply_kit}
+  - {id: apply-06, prompt: "Before tailoring an application for Globex, read my verified career experience.", expect: [careercoach_read_profile, careercoach_get_profile], capability: apply_kit}
+
+  - {id: track-01, prompt: "Mark the Acme ML engineer role applied; I submitted it myself today.", expect: [careercoach_track_application], capability: track}
+  - {id: track-02, prompt: "What's in my application pipeline?", expect: [careercoach_list_applications], capability: track}
+  - {id: track-03, prompt: "Show the applications that are at the interview stage.", expect: [careercoach_list_applications], capability: track}
+  - {id: track-04, prompt: "Record that Globex rejected my data engineer application.", expect: [careercoach_track_application], capability: track}
+  - {id: track-05, prompt: "I received an offer for the Acme platform engineer role. Update the tracker.", expect: [careercoach_track_application], capability: track}
+  - {id: track-06, prompt: "List the roles I've applied to so I can decide where to follow up.", expect: [careercoach_list_applications], capability: track}
+
+  - {id: interview-01, prompt: "Prepare me for the Acme interview using my saved story bank. Read it first.", expect: [careercoach_read_profile], capability: interview}
+  - {id: interview-02, prompt: "Pull up my confirmed experience before choosing examples for a leadership interview.", expect: [careercoach_get_profile, careercoach_read_profile], capability: interview}
+  - {id: interview-03, prompt: "Help me practice a technical interview based on the skills in my saved profile. Retrieve those skills first.", expect: [careercoach_get_profile], capability: interview}
+  - {id: interview-04, prompt: "Read my story bank so we can pick a real example for a conflict-resolution interview question.", expect: [careercoach_read_profile], capability: interview}
+  - {id: interview-05, prompt: "Look up my recorded career history before we rehearse tell me about yourself.", expect: [careercoach_get_profile, careercoach_read_profile], capability: interview}
+  - {id: interview-06, prompt: "For interview prep, retrieve the do-not-claim section of my profile so my answers stay accurate.", expect: [careercoach_get_profile], capability: interview}
+
+  - {id: profile-01, prompt: "Update my location to Berlin; I confirm that's where I live now.", expect: [careercoach_update_profile], capability: profile}
+  - {id: profile-02, prompt: "Show me which parts of my career profile are still missing.", expect: [careercoach_get_profile], capability: profile}
+  - {id: profile-03, prompt: "Add Python and SQL to my confirmed skills. I use both at work.", expect: [careercoach_update_profile], capability: profile}
+  - {id: profile-04, prompt: "What location do you have saved in my profile?", expect: [careercoach_get_profile], capability: profile}
+  - {id: profile-05, prompt: "Preview importing my edited Experience.md into my profile; don't apply it yet.", expect: [careercoach_import_experience], capability: profile}
+  - {id: profile-06, prompt: "Export my confirmed experience profile to a file I can review.", expect: [careercoach_export_experience], capability: profile}
+
+  - {id: digest-01, prompt: "Give me this morning's digest.", expect: [careercoach_digest], capability: digest}
+  - {id: digest-02, prompt: "Show my job-hunt digest for the last three days.", expect: [careercoach_digest], capability: digest}
+  - {id: digest-03, prompt: "What's the daily roundup of new matches and follow-ups?", expect: [careercoach_digest], capability: digest}
+  - {id: digest-04, prompt: "Pull together my career digest for the last week.", expect: [careercoach_digest], capability: digest}
+  - {id: digest-05, prompt: "Give me the morning briefing with fresh role matches and overdue application follow-ups.", expect: [careercoach_digest], capability: digest}
+  - {id: digest-06, prompt: "Show today's job search roundup, including my pipeline and outreach reminders.", expect: [careercoach_digest], capability: digest}
+
+  - {id: coaching-01, prompt: "What does the STAR method mean in an interview? Just explain the concept.", expect: none, capability: coaching}
+  - {id: coaching-02, prompt: "I'm discouraged by rejections. Can we talk about how to keep perspective?", expect: none, capability: coaching}
+  - {id: coaching-03, prompt: "Give me a generic example of a polite thank-you after an interview, with placeholders.", expect: none, capability: coaching}
+  - {id: coaching-04, prompt: "What are some general ways to handle nerves before an interview?", expect: none, capability: coaching}
