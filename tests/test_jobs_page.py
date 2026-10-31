@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from urllib.parse import quote
 
 import pytest
@@ -335,6 +336,63 @@ def test_brand_new_agent_shows_empty_with_setup_and_suggestions(plugin):
 
 
 # ── About-you drawer replaces the page-foot disclosures (§5/§6) ─────────────────────────
+def test_about_scrim_selector_matches_shell_sibling_and_covers_detail(plugin):
+    class BodyChildren(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.ids = []
+
+        def handle_starttag(self, tag, attrs):
+            if self.stack == ["html", "body"]:
+                self.ids.append(dict(attrs).get("id"))
+            if tag not in {"meta", "link", "input", "br", "hr"}:
+                self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            assert self.stack.pop() == tag
+
+    html = plugin._DASHBOARD_HTML
+    parser = BodyChildren()
+    parser.feed(html)
+    assert parser.ids.index("cc") < parser.ids.index("about-scrim")
+    css = html.split("</style>")[0]
+    assert "#about-scrim { display: none; }" in css
+    assert "#cc.about-open ~ #about-scrim { display: block; }" in css
+    scrim = re.search(r"\.scrim \{([^}]+)\}", css).group(1)
+    assert "position: fixed; inset: 0;" in scrim
+
+    def z_index(selector):
+        return int(re.search(re.escape(selector) + r" \{[^}]*z-index: (\d+)", css)[1])
+
+    assert z_index("#detail") < z_index(".scrim") < z_index("#about")
+
+
+@pytest.mark.parametrize("dismiss", ["scrim", "close", "escape"])
+def test_about_drawer_dismissal_clears_scrim_state_and_returns_focus(plugin, dismiss):
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      ['about-btn', 'about-close', 'about-scrim', 'about'].forEach(function (id) {
+        var el = document.getElementById(id);
+        el.addEventListener = function (type, handler) { this['on' + type] = handler; };
+        el.focus = function () { document.activeElement = this; };
+      });
+    """)
+    html = plugin._DASHBOARD_HTML
+    ctx.eval(html[html.index("  // About-you drawer: open") : html.index("  // The job detail drawer dismisses")])
+    ctx.eval("document.getElementById('about-btn').onclick();")
+    assert ctx.eval("document.getElementById('cc').classList.contains('about-open')")
+    assert ctx.eval("document.getElementById('about').getAttribute('aria-hidden')") == "false"
+    assert ctx.eval("document.activeElement.id") == "about-close"
+    if dismiss == "escape":
+        ctx.eval("document.getElementById('about').onkeydown({key: 'Escape', stopPropagation: function () {}});")
+    else:
+        ctx.eval("document.getElementById('about-%s').onclick();" % dismiss)
+    assert not ctx.eval("document.getElementById('cc').classList.contains('about-open')")
+    assert ctx.eval("document.getElementById('about').getAttribute('aria-hidden')") == "true"
+    assert ctx.eval("document.activeElement.id") == "about-btn"
+
+
 def test_page_foot_disclosures_are_gone(plugin):
     html = plugin._DASHBOARD_HTML
     assert 'class="coach"' not in html  # the coaching-tips paragraph left the page foot

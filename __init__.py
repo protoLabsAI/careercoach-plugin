@@ -2879,7 +2879,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
            flex-direction: column; background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border); }
   #about[aria-hidden="true"] { display: none; }
   #about-scrim { display: none; }
-  .about-open #about-scrim { display: block; }
+  #cc.about-open ~ #about-scrim { display: block; }
   .dtop { display: flex; gap: 8px; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--pl-color-border); }
   .dtitle { font-size: 16px; font-weight: 600; }
   .dbody { overflow: auto; padding: 16px 20px 28px; }
