@@ -46,7 +46,8 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
   `careercoach_track(action="list")` before a sweep so already-applied roles are recognized.
   For bulk imports that preserve original dates, see the optional extended tools below.
 - **Contacts:** ask who the operator knows at target companies and log relevant conversations and
-  follow-ups with `careercoach_log_contact`. Bulk connections import is optional (see below).
+  follow-ups with `careercoach_log_contact`. When one is finished or dropped, end it with `close=True`.
+  Bulk connections import is optional (see below).
 
 ## The morning routine
 
