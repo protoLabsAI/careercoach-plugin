@@ -73,6 +73,28 @@ def test_dashboard_cover_letter_unset_reads_as_not_written(plugin):
     assert "Not written yet." in html and "Not needed for this posting." in html
 
 
+# ── epic #85 R1: the view is the "Jobs" shell, not the old single scroll ──────
+def test_dashboard_is_the_jobs_shell(plugin):
+    """The redesigned shell (spec §2/§5/§6): eyebrow + plain "Jobs" title + About-you ghost button,
+    a Pipeline/Inbox/Closed tablist, and the About-you drawer carrying the three disclosures that
+    used to sit at the page foot. The accent h1, the coaching-tips paragraph and the inline
+    profile/rubric disclosures are gone."""
+    html = plugin._DASHBOARD_HTML
+    assert '<div class="pl-eyebrow">Career Coach</div>' in html
+    assert '<h1 class="t" id="title">Jobs</h1>' in html
+    assert ">About you</button>" in html
+    assert 'role="tablist"' in html and 'data-tab="pipeline"' not in html  # tabs are built in JS
+    assert "TAB = 'pipeline'" in html  # Pipeline is the default tab
+    # the page-foot disclosures moved into the About-you drawer (still read-only)
+    assert "To change anything, tell your coach in chat." in html
+    assert 'details class="disc"' not in html and 'class="coach"' not in html
+    # §6 removals: no accent h1, no hex fallbacks, no hand-rolled component classes
+    import re as _re
+
+    assert not _re.search(r"var\(--pl-[a-z0-9-]+,\s*#", html)
+    assert "color: var(--pl-color-accent, #" not in html
+
+
 # ── the pure fit rubric ───────────────────────────────────────────────────────
 def test_rubric_defaults_and_presets_sum_to_100(plugin):
     rubric = importlib.import_module(plugin.__name__ + ".rubric")
