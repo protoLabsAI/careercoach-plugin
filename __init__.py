@@ -104,15 +104,15 @@ INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
 
 
 def _promote_inbox_item(item: dict) -> dict:
-    """Keep an inbox card: a `considering` pipeline row carrying its score, reason and posting
-    evidence. An existing application is left exactly as it is."""
+    """Keep an inbox card: a `considering` pipeline row carrying its reason and posting evidence. An
+    existing application is left exactly as it is. The card's score is a keyword title match, not a
+    fit evaluation, so `fit_score` stays 0 (unscored) until the role is actually evaluated."""
     from . import state
     from . import watchlist as wl
 
     row = state.track_application(
         company=item.get("company") or "",
         role=item.get("title") or "",
-        fit_score=int(item.get("score") or 0),
         status="considering",
         notes=item.get("reason") or "",
         source=item.get("url") or "",
@@ -508,9 +508,13 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
             if location:
                 src += f"; {result.provider_label.split(' (')[0]} ignores `location`"
         src += "."
-        jobs = result.jobs
         from . import boards, scan, state, watchlist
 
+        # List what can reach the inbox, so the count the agent reports is the count the operator sees.
+        jobs = [j for j in result.jobs if boards.passes(j, locations=location)]
+        left_out = len(result.jobs) - len(jobs)
+        if left_out:
+            src += f" Left out {left_out} other(s) outside your locations."
         try:
             index = scan.tracked_index(state.load_applications())
             matches = [
@@ -522,7 +526,6 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                     "reason": watchlist.match_reason(j, query),
                 }
                 for j in jobs
-                if boards.passes(j, locations=location)
             ]
             untracked = [j for j in matches if not scan.annotate(j, index)["tracked"]]
             watchlist.add_to_inbox(untracked)
@@ -2439,8 +2442,8 @@ def _register_views(registry, cfg) -> None:
         return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
 
     def _keep_inbox_item(item_id: str):
-        """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its score,
-        reason and posting evidence) and hide it from the inbox. Existing applications are
+        """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its reason
+        and posting evidence) and hide it from the inbox. Existing applications are
         preserved unchanged."""
         try:
             item = wl.inbox_item(item_id)
