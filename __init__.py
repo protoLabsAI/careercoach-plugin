@@ -100,8 +100,45 @@ def _as_bool(value) -> bool:
 
 
 # ── agent tools: the application tracker ──────────────────────────────────────
+INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
+
+
+def _promote_inbox_item(item: dict) -> dict:
+    """Keep an inbox card: a `considering` pipeline row carrying its score, reason and posting
+    evidence. An existing application is left exactly as it is."""
+    from . import state
+    from . import watchlist as wl
+
+    row = state.track_application(
+        company=item.get("company") or "",
+        role=item.get("title") or "",
+        fit_score=int(item.get("score") or 0),
+        status="considering",
+        notes=item.get("reason") or "",
+        source=item.get("url") or "",
+        posting={k: item.get(k) for k in ("title", "location", "snippet", "url", "posted")},
+        insert_only=True,
+    )
+    wl.mark_kept(item["id"])
+    return row
+
+
+def _inbox_card(inbox_id: str, company: str, role: str) -> dict | None:
+    """The inbox card named by id, or by company + role. Raises on an unreadable inbox."""
+    from . import watchlist as wl
+    from .companies import company_key, role_key
+
+    cards = wl.inbox_for_view()
+    wanted = (inbox_id or "").strip()
+    if wanted:
+        return next((j for j in cards if j.get("id") == wanted), None)
+    key = (company_key(company or ""), role_key(role or ""))
+    return next((j for j in cards if (company_key(j.get("company", "")), role_key(j.get("title", ""))) == key), None)
+
+
 def _register_tracker_tools(registry, extended: bool) -> None:
     from . import state
+    from . import watchlist as wl
 
     @tool
     def careercoach_track_application(
@@ -164,12 +201,60 @@ def _register_tracker_tools(registry, extended: bool) -> None:
         notes: str = "",
         source: str = "",
         app_id: str = "",
+        inbox_id: str = "",
     ) -> str:
-        """Manage your application pipeline. action: "track" (record or update a role — company, role,
-        0-100 fit_score, status considering/preparing/applied/interviewing/offer/rejected/passed, notes,
-        source posting URL); "list" (show the pipeline, optional `status` filter); "move" (move an
-        application to `status` — name it by `app_id`, or by `company` + `role`). Defaults to "track"."""
+        """Manage your application pipeline and the new-roles inbox. action: "track" (record or update a
+        role — company, role, 0-100 fit_score, status considering/preparing/applied/interviewing/offer/
+        rejected/passed, notes, source posting URL; tracking a role clears its inbox card); "list" (show
+        the pipeline, optional `status` filter); "move" (move an application to `status` — name it by
+        `app_id`, or by `company` + `role`); "inbox" (show new roles waiting for a decision); "keep" (add
+        an inbox card to the pipeline) and "dismiss" (drop a card for good) — name the card by `inbox_id`,
+        or by `company` + `role`. Defaults to "track"."""
         act = (action or "track").strip().lower()
+        if act == "inbox":
+            try:
+                cards = wl.inbox_for_view()
+            except wl.StoreUnreadable as e:
+                return f"Can't read the inbox: {e}"
+            if not cards:
+                return "The inbox is empty: no new roles are waiting for a decision."
+            lines = [
+                f"- {j.get('title', '')} @ {j.get('company', '')} — score {j.get('score', 0)}, "
+                f"{j.get('location') or 'location unknown'}, inbox_id: {j.get('id', '')}"
+                for j in cards[:INBOX_LIST_CAP]
+            ]
+            more = len(cards) - len(lines)
+            tail = f"\n{more} more in the Career Coach view." if more > 0 else ""
+            return f"{len(cards)} new role(s), newest first:\n" + "\n".join(lines) + tail
+        if act in ("keep", "dismiss"):
+            try:
+                card = _inbox_card(inbox_id, company, role)
+                if card is None:
+                    named = inbox_id or " / ".join(x for x in (company, role) if x) or "nothing"
+                    return f'No inbox card matches {named}. Use action="inbox" to see what is waiting.'
+                label = f"{card.get('title', '')} @ {card.get('company', '')}"
+                if act == "dismiss":
+                    wl.dismiss([card["id"]])
+                    event = ("inbox_changed", {"action": "dismiss", "id": card["id"]})
+                    reply = f"Dismissed {label}. It won't come back."
+                else:
+                    row = _promote_inbox_item(card)
+                    event = (
+                        "application_tracked",
+                        {
+                            "company": row.get("company", ""),
+                            "role": row.get("role", ""),
+                            "status": row.get("status", ""),
+                        },
+                    )
+                    reply = f"Kept {label}: it's in the pipeline as {row.get('status', 'considering')}."
+            except (state.StoreUnreadable, wl.StoreUnreadable) as e:
+                return f"Not changed: {e}"
+            try:
+                registry.emit(*event)
+            except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
+                pass
+            return reply
         if act == "track":
             return careercoach_track_application.invoke(
                 {
@@ -206,7 +291,7 @@ def _register_tracker_tools(registry, extended: bool) -> None:
             except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
                 pass
             return f"Moved {row.get('role', '')} @ {row.get('company', '')} to {row.get('status', '?')}."
-        return f'Unknown action {action!r} — use "track", "list" or "move".'
+        return f'Unknown action {action!r} — use "track", "list", "move", "inbox", "keep" or "dismiss".'
 
     registry.register_tool(careercoach_track)
     if extended:  # legacy names, reachable behind extended_tools — same implementations
@@ -2358,27 +2443,13 @@ def _register_views(registry, cfg) -> None:
         reason and posting evidence) and hide it from the inbox. Existing applications are
         preserved unchanged."""
         try:
-            item = next((j for j in wl.inbox_for_view() if j.get("id") == item_id), None)
+            item = wl.inbox_item(item_id)
         except wl.StoreUnreadable as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         if item is None:
             return JSONResponse({"error": f"no inbox item {item_id!r}"}, status_code=404)
-        company = item.get("company") or ""
-        role = item.get("title") or ""
-        url = item.get("url") or ""
-        posting = {k: item.get(k) for k in ("title", "location", "snippet", "url", "posted")}
         try:
-            row = state.track_application(
-                company=company,
-                role=role,
-                fit_score=int(item.get("score") or 0),
-                status="considering",
-                notes=item.get("reason") or "",
-                source=url,
-                posting=posting,
-                insert_only=True,
-            )
-            wl.mark_kept(item_id)
+            row = _promote_inbox_item(item)
         except (state.StoreUnreadable, wl.StoreUnreadable) as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
