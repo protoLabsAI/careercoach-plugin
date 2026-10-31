@@ -37,12 +37,13 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.13.2 (PATCH): blank packet roots use the agent's own data directory,
-    and incomplete apply kits are saved as drafts with accurate missing-item replies."""
+    This release is v0.13.3 (PATCH): draft figures are grounded against the profile and story bank —
+    interview answers, cover letters and application drafts flag any number that isn't there or whose
+    direction is reversed, and unknown metrics become [fill in: …] instead of being invented."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.13.2"
+    assert pyproject == "0.13.3"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
