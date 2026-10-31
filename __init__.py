@@ -2760,7 +2760,7 @@ def _register_watch_verifier(registry) -> None:
 # iframe's own path (ADR 0042). Live refresh subscribes to `careercoach.#` and reloads on an event.
 _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Career Coach</title>
+<title>Career Coach — Jobs</title>
 <script>
   // Fleet-proxy-safe base: "" on the host, "/agents/<slug>" behind the proxy (ADR 0042).
   var BASE = location.pathname.split('/plugins/')[0];
@@ -2769,239 +2769,254 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   document.head.appendChild(link);
 </script>
 <style>
-  :root { --gap: 14px; }
-  body { margin: 0; padding: 24px; background: var(--pl-color-bg, #0a0f14);
-         color: var(--pl-color-fg, #e6e6e6);
-         font-family: var(--pl-font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif); }
-  h1 { font-size: 20px; margin: 0 0 2px; color: var(--pl-color-accent, #9b87f2); }
-  .sub { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin: 0 0 20px; }
-  .card { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-          border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
-  .card > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-               color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 12px; font-weight: 600; }
-  .empty { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 14px; padding: 16px 0; }
-  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
-          background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa); }
-  .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
-  code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
+  /* House style (spec §1.7 / §6): /_ds/plugin-kit.css classes and --pl-* tokens only. No custom
+     accent, no hex fallbacks, no hand-rolled .btn/.pill/.card; overlay colour from --pl-color-overlay. */
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--pl-color-bg); color: var(--pl-color-fg);
+         font-family: var(--pl-font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif); overflow: hidden; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--pl-color-fg-muted); }
+  .sm { font-size: 12px; }
+  .empty { color: var(--pl-color-fg-muted); font-size: 14px; padding: 12px 0; }
+  code { background: var(--pl-color-bg-subtle); padding: 1px 6px; border-radius: 5px; }
 
-  /* Inbox: new roles the watch surfaced, each a keep/dismiss decision. */
-  .inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px;
-                padding: 12px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
+  /* One-viewport shell: the page never scrolls; the active tab body scrolls inside itself (§2). */
+  .cc { container: cc / inline-size; position: relative; overflow: hidden; height: 100dvh;
+        display: flex; flex-direction: column; background: var(--pl-color-bg); }
+  .hd { display: flex; align-items: flex-start; gap: 12px; padding: 20px 24px 8px; flex: none; }
+  .hd .t { font-size: 18px; font-weight: 600; margin: 2px 0 0; color: var(--pl-color-fg); }
+  .hd .s { font-size: 13px; color: var(--pl-color-fg-muted); margin: 3px 0 0; }
+  .hd .sp { flex: 1; }
+
+  .banner { margin: 8px 24px 0; flex: none; }
+  .pl-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--pl-radius, 10px);
+               border: 1px solid var(--pl-color-border); background: var(--pl-color-bg-raised); font-size: 13px; }
+  .pl-banner--error { border-color: var(--pl-color-status-error); }
+
+  .today { margin: 8px 24px 0; padding: 10px 14px; border: 1px solid var(--pl-color-border);
+           border-radius: var(--pl-radius, 10px); background: var(--pl-color-bg-raised); flex: none; }
+  .today > h3 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                color: var(--pl-color-fg-muted); font-weight: 600; }
+  .trow { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px;
+          border-top: 1px solid var(--pl-color-border); }
+  .trow:first-of-type { border-top: 0; }
+  .tmark { flex: none; font-size: 12px; }
+  .pl-chip--warning { color: var(--pl-color-status-warning); }
+
+  .tabs { display: flex; gap: 2px; padding: 8px 24px 0; border-bottom: 1px solid var(--pl-color-border); flex: none; }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted);
+         font: inherit; font-size: 13px; padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
+  .tab:focus-visible, .body:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .pl-count { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--pl-color-bg-subtle);
+              color: var(--pl-color-fg-muted); font-variant-numeric: tabular-nums; }
+
+  .body { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 24px; }
+  .skel { display: grid; gap: 10px; }
+  .pl-skel { height: 16px; border-radius: 6px; background: var(--pl-color-bg-subtle); }
+
+  .emptyc { display: grid; place-items: center; text-align: center; gap: 10px; padding: 48px 24px; }
+  .emptyc .empty-title { font-size: 15px; font-weight: 600; }
+  .emptyc-desc { max-width: 380px; margin: 0; }
+  .sugs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+  /* Inbox list (carried; its redesign is R3). */
+  .inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px; padding: 12px 0;
+                border-top: 1px solid var(--pl-color-border); }
   .inbox-item:first-child { border-top: 0; }
   .inbox-item .title { font-weight: 600; font-size: 14px; }
-  .inbox-item .co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
-  .score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; padding: 2px 8px;
-           border-radius: 999px; background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-accent, #9b87f2); }
-  .reason { flex-basis: 100%; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  .inbox-item .co { color: var(--pl-color-fg-muted); font-size: 13px; }
+  .score { font-variant-numeric: tabular-nums; }
+  .reason { flex-basis: 100%; color: var(--pl-color-fg-muted); font-size: 13px; }
   .inbox-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  .plink { color: var(--pl-color-accent, #9b87f2); font-size: 12px; text-decoration: none; }
+  .plink { color: var(--pl-color-accent); font-size: 12px; text-decoration: none; }
   .plink:hover { text-decoration: underline; }
-  button.btn { font: inherit; font-size: 13px; cursor: pointer; padding: 5px 12px; border-radius: 8px;
-               border: 1px solid var(--pl-color-border, #232b36); background: var(--pl-color-bg-subtle, #1b2330);
-               color: var(--pl-color-fg, #e6e6e6); }
-  button.btn.keep { border-color: var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
-  button.btn:disabled { opacity: .5; cursor: default; }
 
-  /* Pipeline board: six columns, cards drag between them (or use the per-card Move-to select). */
-  .board { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: var(--gap);
-           align-items: start; overflow-x: auto; }
-  @media (max-width: 860px) { .board { grid-template-columns: repeat(2, minmax(150px, 1fr)); } }
-  .col { background: var(--pl-color-bg-subtle, #1b2330); border: 1px solid var(--pl-color-border, #232b36);
-         border-radius: 10px; padding: 8px; min-height: 60px; }
-  .col.over { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed; }
+  /* Pipeline board (carried; its redesign is R2) + the Closed stub (§2). */
+  .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) 140px; gap: 12px; align-items: start; }
+  @container cc (max-width: 899px) { .board { grid-template-columns: repeat(5, 220px) 140px; overflow-x: auto; } }
+  .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: 10px;
+         padding: 8px; min-height: 60px; }
+  .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
   .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 2px 4px 8px;
-            color: var(--pl-color-fg-muted, #9aa0aa); font-weight: 600; display: flex; justify-content: space-between; }
-  .col h3 .count { background: var(--pl-color-bg-raised, #12181f); border-radius: 999px; padding: 0 7px; }
-  .pcard { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-           border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
+            color: var(--pl-color-fg-muted); font-weight: 600; display: flex; justify-content: space-between; }
+  .col.stub { display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center;
+              text-align: center; border-style: dashed; color: var(--pl-color-fg-muted); font-size: 12px; }
+  .col.stub .stub-n { color: var(--pl-color-fg); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pcard { background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border); border-radius: 8px;
+           padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
   .pcard:last-child { margin-bottom: 0; }
   .pcard .prole { font-weight: 600; font-size: 13px; }
-  .pcard .pco { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; }
-  .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
-                  color: var(--pl-color-fg-muted, #9aa0aa); margin-top: 5px; }
-  .pcard .nudge { margin-top: 6px; font-size: 12px; color: var(--pl-color-accent, #9b87f2);
-                  border: 1px solid var(--pl-color-accent, #9b87f2); border-radius: 6px; padding: 4px 7px; }
-  .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; padding: 4px;
-                    border-radius: 6px; border: 1px solid var(--pl-color-border, #232b36);
-                    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+  .pcard .pco { color: var(--pl-color-fg-muted); font-size: 12px; }
+  .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 5px; }
+  .pcard .nudge { margin-top: 6px; font-size: 12px; color: var(--pl-color-status-warning);
+                  border: 1px solid var(--pl-color-border); border-radius: 6px; padding: 4px 7px; }
+  .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; }
+  .closed-list { display: grid; gap: 8px; max-width: 520px; }
+  .pipeline-hint { margin: 0 0 10px; }
 
-  /* The secondary disclosures: the profile the coach holds, and the fit rubric. Compact, below the board. */
-  details.disc { margin-top: 12px; }
-  details.disc > summary { cursor: pointer; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px;
-                           padding: 6px 0; font-weight: 600; }
-  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
-  .row .name { width: 92px; color: var(--pl-color-fg-muted, #9aa0aa); text-transform: capitalize; }
-  .track { flex: 1; height: 6px; border-radius: 4px; background: var(--pl-color-border, #232b36); overflow: hidden; }
-  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent, #9b87f2); }
-  #profile .row { align-items: baseline; gap: 12px; }
-  #profile .row .name { width: 190px; flex: none; text-transform: none; }
-  #profile .row .empty { padding: 0; font-size: 13px; font-style: italic; }
-  #profile-ctx { margin: 10px 0 0; padding: 12px; border-radius: 8px; overflow-x: auto;
-                 background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa);
-                 font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
-  .coach { margin-top: 18px; padding: 14px 16px; border-radius: 12px;
-           border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa);
-           font-size: 13px; line-height: 1.6; }
+  /* About-you drawer: three read-only accordions + the rubric bars (§5). */
+  .arow { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-size: 13px; }
+  .arow .aname { width: 150px; flex: none; color: var(--pl-color-fg-muted); }
+  .track { flex: 1; height: 6px; border-radius: 4px; background: var(--pl-color-border); overflow: hidden; }
+  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent); }
+  .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .grp { border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius, 10px); margin-bottom: 10px;
+         background: var(--pl-color-bg-raised); }
+  .grp > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center;
+                   padding: 10px 12px; font-size: 13px; font-weight: 600; }
+  .grp > summary::-webkit-details-marker { display: none; }
+  .grp > summary .chev { color: var(--pl-color-fg-muted); transition: transform .15s; }
+  .grp[open] > summary .chev { transform: rotate(90deg); }
+  .grp-body { padding: 0 12px 12px; }
+  .ctx { margin: 0; padding: 10px; border-radius: 8px; background: var(--pl-color-bg-subtle);
+         color: var(--pl-color-fg-muted); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; }
 
-  /* The inline move-failure toast and the rejected/passed chooser — no browser modals (sandboxed iframe). */
-  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
-           background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-accent, #9b87f2);
-           color: var(--pl-color-fg, #e6e6e6); padding: 10px 16px; border-radius: 10px; font-size: 13px;
+  /* Drawers / dialogs / toast — overlay colour from the token, never a hardcoded rgba (§6). */
+  .scrim { position: fixed; inset: 0; z-index: 41; background: var(--pl-color-overlay); }
+  #about { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 42; display: flex;
+           flex-direction: column; background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border); }
+  #about[aria-hidden="true"] { display: none; }
+  #about-scrim { display: none; }
+  #cc.about-open ~ #about-scrim { display: block; }
+  .dtop { display: flex; gap: 8px; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--pl-color-border); }
+  .dtitle { font-size: 16px; font-weight: 600; }
+  .dbody { overflow: auto; padding: 16px 20px 28px; }
+
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
+           background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong);
+           color: var(--pl-color-fg); padding: 10px 16px; border-radius: 10px; font-size: 13px;
            opacity: 0; pointer-events: none; transition: opacity .15s; max-width: 80%; }
   #toast.show { opacity: 1; }
-  #chooser { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
-             background: rgba(0,0,0,.5); }
-  #chooser .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-                  border-radius: 12px; padding: 20px; max-width: 320px; }
-  #chooser p { margin: 0 0 14px; font-size: 14px; }
-  #chooser .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* Mark-applied confirmation — an inline overlay (never window.confirm, which a sandboxed iframe
-     without allow-modals silently suppresses, returning false). z-index above #detail (40) so it
-     sits over the open drawer. Mirrors the #chooser box. */
+  #chooser { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+             background: var(--pl-color-overlay); }
   #confirm { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
-             background: rgba(0,0,0,.5); }
-  #confirm .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-                  border-radius: 12px; padding: 20px; max-width: 320px; }
-  #confirm p { margin: 0 0 14px; font-size: 14px; }
-  #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+             background: var(--pl-color-overlay); }
+  #chooser .box, #confirm .box { max-width: 320px; }
+  #chooser p, #confirm p { margin: 0 0 14px; font-size: 14px; }
+  #chooser .choices, #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* The job detail drawer (S2b): a right-side overlay; Esc, the ✕ and the backdrop all dismiss it.
-     Reuses the same --pl-* tokens as the rest, so it reads correctly in both light and dark. */
+  /* Job detail drawer (carried; §4 redesign is later). */
   #detail { position: fixed; inset: 0; z-index: 40; display: none; }
   #detail.open { display: block; }
-  #detail .detail-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+  #detail .detail-backdrop { position: absolute; inset: 0; background: var(--pl-color-overlay); }
   #detail .detail-panel { position: absolute; top: 0; right: 0; height: 100%; width: min(560px, 100%);
     box-sizing: border-box; overflow-y: auto; padding: 0 20px 28px;
-    background: var(--pl-color-bg-raised, #12181f); border-left: 1px solid var(--pl-color-border, #232b36);
-    box-shadow: -8px 0 24px rgba(0,0,0,.3); }
+    background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border); }
   #detail .detail-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start;
     justify-content: space-between; gap: 12px; padding: 18px 0 12px;
-    background: var(--pl-color-bg-raised, #12181f); border-bottom: 1px solid var(--pl-color-border, #232b36); }
+    background: var(--pl-color-bg-raised); border-bottom: 1px solid var(--pl-color-border); }
   #detail .detail-role { font-size: 17px; font-weight: 700; }
-  #detail .detail-co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin-top: 2px; }
-  #detail .detail-close { font-size: 16px; line-height: 1; padding: 6px 10px; }
-  #detail .dsec { padding: 14px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
+  #detail .detail-co { color: var(--pl-color-fg-muted); font-size: 13px; margin-top: 2px; }
+  #detail .detail-close { font-size: 16px; line-height: 1; }
+  #detail .dsec { padding: 14px 0; border-top: 1px solid var(--pl-color-border); }
   #detail .dsec:first-child { border-top: 0; }
   #detail .dsec > h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 10px; font-weight: 600; }
+    color: var(--pl-color-fg-muted); margin: 0 0 10px; font-weight: 600; }
   #detail .kit-block { margin-bottom: 14px; }
   #detail .kit-block:last-child { margin-bottom: 0; }
   #detail .kit-block h5 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
   #detail .kv { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; flex-wrap: wrap; }
-  #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted); }
   #detail .kv a.plink { word-break: break-all; }
-  #detail .snippet, #detail .cover-text, #detail .answer-val { white-space: pre-wrap; line-height: 1.5;
-    font-size: 13px; }
-  #detail .snippet { margin-top: 10px; color: var(--pl-color-fg-muted, #9aa0aa); }
-  #detail .cover-text { margin-top: 8px; padding: 10px; border-radius: 8px;
-    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .snippet, #detail .cover-text, #detail .answer-val { white-space: pre-wrap; line-height: 1.5; font-size: 13px; }
+  #detail .snippet { margin-top: 10px; color: var(--pl-color-fg-muted); }
+  #detail .cover-text { margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--pl-color-bg-subtle); }
   #detail .fitline { display: flex; align-items: baseline; gap: 10px; }
-  #detail .fit.big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums;
-    color: var(--pl-color-accent, #9b87f2); }
-  #detail .verdict { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  #detail .fit.big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--pl-color-accent); }
+  #detail .verdict { color: var(--pl-color-fg-muted); font-size: 13px; }
   #detail .notes-ta { width: 100%; min-height: 84px; box-sizing: border-box; resize: vertical; font: inherit;
-    font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pl-color-border, #232b36);
-    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+    font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pl-color-border);
+    background: var(--pl-color-bg-subtle); color: var(--pl-color-fg); }
   #detail .dsec-actions { margin-top: 8px; }
-  #detail .answer { padding: 8px 10px; border-radius: 8px; margin: 8px 0;
-    border: 1px solid var(--pl-color-border, #232b36); }
-  #detail .answer.draft { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed;
-    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .answer { padding: 8px 10px; border-radius: 8px; margin: 8px 0; border: 1px solid var(--pl-color-border); }
+  #detail .answer.draft { border-color: var(--pl-color-status-warning); border-style: dashed; background: var(--pl-color-bg-subtle); }
   #detail .answer-head { display: flex; align-items: center; gap: 8px; }
   #detail .answer-key { font-weight: 600; font-size: 13px; }
   #detail .answer-head .copy { margin-left: auto; }
   #detail .answer-val { margin-top: 5px; }
-  #detail .draft-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
-    border: 1px solid var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
   #detail .timeline, #detail .contacts { list-style: none; margin: 0; padding: 0; font-size: 13px; }
   #detail .timeline li { display: flex; gap: 10px; padding: 3px 0; }
-  #detail .timeline .tl-date { flex: none; width: 92px; font-variant-numeric: tabular-nums;
-    color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .timeline .tl-date { flex: none; width: 92px; font-variant-numeric: tabular-nums; color: var(--pl-color-fg-muted); }
   #detail .contacts li { padding: 3px 0; }
   #detail .action-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-  #detail .hint { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; margin: 6px 0 0; }
+  #detail .hint { color: var(--pl-color-fg-muted); font-size: 12px; margin: 6px 0 0; }
+
+  @container cc (max-width: 599px) {
+    .hd .s { display: none; }
+    #about, #detail .detail-panel { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) { .grp > summary .chev { transition: none; } }
 </style></head>
 <body>
-  <h1 id="title">Career Coach</h1>
-  <p class="sub" id="sub">Loading your jobs…</p>
-
-  <div class="card">
-    <h2>New roles from your watch</h2>
-    <div id="inbox"><p class="empty">Loading…</p></div>
+  <div class="cc" id="cc">
+    <div class="hd">
+      <div>
+        <div class="pl-eyebrow">Career Coach</div>
+        <h1 class="t" id="title">Jobs</h1>
+        <p class="s" id="sub" hidden></p>
+      </div>
+      <span class="sp"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="about-btn">About you</button>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <section class="today pl-callout pl-callout--info" id="today" aria-label="Needs you today" hidden></section>
+    <div class="tabs" role="tablist" aria-label="Jobs" id="tabs"></div>
+    <div class="body" id="body" role="tabpanel" tabindex="0"></div>
   </div>
 
-  <div class="card">
-    <h2>Pipeline</h2>
-    <div class="board" id="board"><p class="empty">Loading…</p></div>
-  </div>
+  <!-- About-you drawer (§5): opened by the header button; three read-only accordions. -->
+  <div class="scrim" id="about-scrim"></div>
+  <aside id="about" class="pl-drawer pl-drawer--right" role="dialog" aria-modal="true"
+         aria-labelledby="about-title" aria-hidden="true">
+    <div class="dtop">
+      <div class="grow"><div class="dtitle" id="about-title">About you</div></div>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="about-close" aria-label="Close">✕</button>
+    </div>
+    <div class="dbody" id="about-body"></div>
+  </aside>
 
-  <div class="card">
-    <details class="disc">
-      <summary>What your coach knows about you</summary>
-      <p class="sub" id="profile-cov" style="margin-top:10px">Loading…</p>
-      <p class="sub">A read-only view. To change anything, tell your coach in chat.</p>
-      <div id="profile"></div>
-      <details style="margin-top:12px">
-        <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
-          Exactly what it&rsquo;s told each turn
-        </summary>
-        <pre id="profile-ctx"></pre>
-      </details>
-    </details>
-    <details class="disc">
-      <summary>Fit rubric — how a posting is scored</summary>
-      <div id="weights" style="margin-top:10px"></div>
-    </details>
-  </div>
+  <div id="toast" class="pl-toast" role="status" aria-live="polite"></div>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
-  <div class="coach">
-    This is your coach, not just an auto-applier. Ask it to <b>run a mock interview</b>,
-    <b>critique your CV</b>, <b>weigh an offer</b>, or <b>rehearse a salary negotiation</b> —
-    or paste a posting and say <code>/apply</code> to have it evaluate fit and draft a tailored
-    CV + cover letter. Tune how strictly it scores with <code>careercoach_preset growth-first</code>.
-  </div>
-
-  <div id="toast" role="status" aria-live="polite"></div>
   <div id="chooser" role="dialog" aria-modal="true">
-    <div class="box">
+    <div class="pl-card pl-dialog box">
       <p id="chooser-q">Close this role as rejected, or passed on?</p>
       <div class="choices">
-        <button class="btn keep" id="choose-passed">Mark passed (default)</button>
-        <button class="btn" id="choose-rejected">Mark rejected</button>
-        <button class="btn" id="choose-cancel">Cancel</button>
+        <button class="pl-btn pl-btn--primary" id="choose-passed">Mark passed (default)</button>
+        <button class="pl-btn" id="choose-rejected">Mark rejected</button>
+        <button class="pl-btn" id="choose-cancel">Cancel</button>
       </div>
     </div>
   </div>
   <div id="confirm" role="dialog" aria-modal="true">
-    <div class="box">
+    <div class="pl-card pl-dialog box">
       <p id="confirm-q"></p>
       <div class="choices">
-        <button class="btn keep" id="confirm-ok">Yes (default)</button>
-        <button class="btn" id="confirm-cancel">Cancel</button>
+        <button class="pl-btn pl-btn--primary" id="confirm-ok">Yes (default)</button>
+        <button class="pl-btn" id="confirm-cancel">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- The job detail drawer (S2b): opened by clicking a pipeline card; rendered client-side from
-       GET /applications/{id}. Esc, the ✕ and the backdrop dismiss it. -->
+  <!-- The job detail drawer (carried): opened by a board/closed card; GET /applications/{id}. -->
   <div id="detail" aria-hidden="true">
     <div class="detail-backdrop"></div>
-    <aside class="detail-panel" role="dialog" aria-modal="true" aria-label="Job detail">
+    <aside class="detail-panel pl-drawer pl-drawer--right" role="dialog" aria-modal="true" aria-label="Job detail">
       <div class="detail-top">
         <div id="detail-title"></div>
-        <button class="btn detail-close" id="detail-close" aria-label="Close detail">✕</button>
+        <button class="pl-btn pl-btn--ghost detail-close" id="detail-close" aria-label="Close detail">✕</button>
       </div>
       <div id="detail-body"></div>
     </aside>
   </div>
 
 <script type="module">
-  // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme: it stamps
-  // data-theme on :root so the --pl-* tokens track the console's light/dark theme (and re-theme
-  // live). Import it and let it drive; fall back to a plain fetch if it can't load (older host /
-  // offline) so the page still renders — just without theme sync.
+  // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme (data-theme on
+  // :root so the --pl-* tokens follow light/dark). Import it; fall back to a plain fetch so the
+  // page still renders without theme sync on an older/offline host.
   var kit;
   try { kit = await import(BASE + '/_ds/plugin-kit.js'); }
   catch (e) { kit = { initPluginView: function (cb) { cb(); },
@@ -3020,11 +3035,35 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
-  var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
-  var DRAG_ID = null;
-  var DETAIL = null;      // the last GET /applications/{id} payload while the drawer is open
-  var DETAIL_ID = null;   // the application id the drawer is showing (null when closed)
 
+  // ── shell state ─────────────────────────────────────────────────────────────────────
+  var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
+  var STATE = null, STATE_FAILED = false, JOBS_FAILED = false, LOADING = true;
+  var TAB = 'pipeline', TODAY_ALL = false, LAST_VISIT = 0;
+  var DRAG_ID = null, DETAIL = null, DETAIL_ID = null;
+
+  function closedColName() {
+    var cols = JOBS.columns || {}, names = Object.keys(cols);
+    for (var i = 0; i < names.length; i++) { if (isClosedColumn(cols[names[i]] || [])) return names[i]; }
+    return null;
+  }
+  function closedStatuses() { var c = closedColName(); return c ? (JOBS.columns[c] || []) : []; }
+  function isClosedApp(a) { return closedStatuses().indexOf(a.status) !== -1; }
+  function openApps() { return (JOBS.applications || []).filter(function (a) { return !isClosedApp(a); }); }
+  function closedApps() { return (JOBS.applications || []).filter(isClosedApp); }
+  // Counts: Pipeline is the live roles (closed never counts), Closed the dead ones (§2, principle 3).
+  function counts() { return { pipeline: openApps().length, inbox: (JOBS.inbox || []).length, closed: closedApps().length }; }
+  // Brand-new agent (§7): no profile, and nothing anywhere. Needs /state, so a partial failure is never "new".
+  function isBrandNew() {
+    if (JOBS_FAILED || LOADING || STATE_FAILED || !STATE) return false;
+    var cov = STATE.completeness || {};
+    var noProfile = cov.empty || cov.filled === 0;
+    return noProfile && (JOBS.applications || []).length === 0 && (JOBS.inbox || []).length === 0;
+  }
+  function itemTime(it) { var s = it.first_seen || it.posted || ''; if (!s) return 0; var t = new Date(s).getTime(); return isNaN(t) ? 0 : t; }
+  function compose(text) { try { parent.postMessage({ type: 'protoagent:chat:compose', text: String(text).slice(0, 4000) }, '*'); } catch (e) {} }
+  function skel(n) { var out = '<div class="skel" aria-hidden="true">'; for (var i = 0; i < n; i++) { out += '<div class="pl-skel"></div>'; } return out + '</div>'; }
+  function setTab(t) { TAB = t; renderTabs(); renderBody(); var b = document.getElementById('tab-' + t); if (b && b.focus) b.focus(); }
   function toast(msg) {
     var t = document.getElementById('toast');
     t.textContent = msg;
@@ -3115,7 +3154,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (!app || app.status === status) return;
     var prev = app.status;
     app.status = status;
-    renderBoard();
+    renderBody();
     write('/applications/' + encodeURIComponent(id) + '/move', { status: status })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -3123,7 +3162,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       })
       .catch(function () {
         app.status = prev;
-        renderBoard();
+        renderBody();
         toast('Could not move that role — left it where it was.');
       });
   }
@@ -3152,170 +3191,297 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       });
   }
 
-  function renderInbox() {
-    var box = document.getElementById('inbox');
-    var items = JOBS.inbox || [];
-    if (!items.length) {
-      box.innerHTML = '<p class="empty">Nothing new — your watch hasn\\'t surfaced any roles to review.</p>';
-      return;
+
+  // >>> view renderers
+  function renderBanner() {
+    var b = document.getElementById('banner');
+    if (JOBS_FAILED) {
+      b.hidden = false;
+      b.innerHTML = '<div class="pl-banner pl-banner--error" role="alert"><span class="grow">Couldn’t load your jobs.</span>' +
+        '<button class="pl-btn pl-btn--sm" id="retry">Retry</button></div>';
+      var r = document.getElementById('retry'); if (r) r.onclick = function () { load(); };
+    } else { b.hidden = true; b.innerHTML = ''; }
+  }
+  function renderHeader() {
+    var st = (STATE && STATE.settings) || {};
+    var roles = st.target_roles || '';
+    var sub = document.getElementById('sub');
+    if (roles) { sub.textContent = 'Targeting: ' + roles; sub.hidden = false; }
+    else { sub.textContent = ''; sub.hidden = true; }
+  }
+  // The Today band's rows, in priority order (§2): overdue follow-ups, interviews to prep, offers
+  // awaiting a decision, new inbox roles since the last visit, then Saved/Preparing with no kit.
+  function todayItems() {
+    var a = JOBS.applications || [], days = JOBS.followup_days || 0, items = [];
+    var fu = a.filter(function (x) { return x.followup && x.status === 'applied'; });
+    if (fu.length) {
+      var minD = Math.min.apply(null, fu.map(function (x) { var n = daysSince(lastMoveDate(x)); return n == null ? days : n; }));
+      items.push({ ic: '⚠', tone: 'warning',
+        t: fu.length + (fu.length === 1 ? ' application has' : ' applications have') + ' had no reply in ' + minD + '+ days',
+        b: 'Review', go: function () { setTab('pipeline'); } });
     }
-    box.innerHTML = items.map(function (it) {
+    a.filter(function (x) { return x.status === 'interviewing'; }).forEach(function (x) {
+      items.push({ ic: '●', tone: 'info', t: 'Interviewing: ' + (x.role || 'a role') + ' @ ' + (x.company || '') + ' · prep not started',
+        b: 'Prep', go: function () { openDetail(x.id); } });
+    });
+    a.filter(function (x) { return x.status === 'offer'; }).forEach(function (x) {
+      items.push({ ic: '★', tone: 'info', t: 'Offer: ' + (x.role || 'a role') + ' @ ' + (x.company || '') + ' — awaiting your decision',
+        b: 'Review', go: function () { openDetail(x.id); } });
+    });
+    var nw = (JOBS.inbox || []).filter(function (it) { var t = itemTime(it); return t && t > LAST_VISIT; }).length;
+    if (nw) { items.push({ ic: '✦', tone: 'info', t: nw + ' new ' + (nw === 1 ? 'role' : 'roles') + ' since your last visit',
+      b: 'Triage', go: function () { setTab('inbox'); } }); }
+    var nk = a.filter(function (x) { return (x.status === 'considering' || x.status === 'preparing') && !(x.kit && x.kit.status === 'complete'); });
+    if (nk.length) { items.push({ ic: '○', tone: 'info',
+      t: nk.length + (nk.length === 1 ? ' saved role has' : ' saved or preparing roles have') + ' no apply kit yet',
+      b: 'Build', go: function () { openDetail(nk[0].id); } }); }
+    return items;
+  }
+  function renderToday() {
+    var el = document.getElementById('today');
+    if (LOADING) { el.hidden = false; el.innerHTML = '<h3>Needs you today</h3>' + skel(2); return; }
+    if (JOBS_FAILED || isBrandNew()) { el.hidden = true; el.innerHTML = ''; return; }
+    var items = todayItems();
+    if (!items.length) { el.hidden = true; el.innerHTML = ''; return; }  // "Nothing needs you today" (§7)
+    el.hidden = false;
+    var cc = document.getElementById('cc');
+    var cap = (cc && cc.clientWidth && cc.clientWidth < 600) ? 2 : 3;  // 2 rows on the rail, 3 otherwise (§8)
+    var shown = TODAY_ALL ? items : items.slice(0, cap), more = items.length - shown.length;
+    el.innerHTML = '<h3>Needs you today</h3>' + shown.map(function (it, i) {
+      var mark = it.tone === 'warning'
+        ? '<span class="tmark pl-chip pl-chip--warning" aria-hidden="true">' + it.ic + '</span>'
+        : '<span class="tmark" aria-hidden="true">' + it.ic + '</span>';
+      return '<div class="trow pl-row">' + mark + '<span class="grow">' + esc(it.t) + '</span>' +
+        '<button class="pl-btn pl-btn--sm" data-t="' + i + '">' + esc(it.b) + '</button></div>';
+    }).join('') + (more > 0 ? '<div class="trow pl-row"><span class="grow"></span>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="today-more">+' + more + ' more</button></div>' : '');
+    el.querySelectorAll('[data-t]').forEach(function (btn) { btn.onclick = function () { shown[+btn.getAttribute('data-t')].go(); }; });
+    var m = document.getElementById('today-more'); if (m) m.onclick = function () { TODAY_ALL = true; renderToday(); };
+  }
+  // WAI-ARIA tabs (§10): roving tabindex, arrow/Home/End keys, counts in the accessible name,
+  // the count hidden at 0. During loading the strip shows with no counts.
+  function renderTabs() {
+    var el = document.getElementById('tabs');
+    if (isBrandNew()) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var showCounts = !LOADING && !JOBS_FAILED;
+    var c = showCounts ? counts() : null;
+    var T = [['pipeline', 'Pipeline'], ['inbox', 'Inbox'], ['closed', 'Closed']];
+    el.innerHTML = T.map(function (t) {
+      var n = c ? c[t[0]] : 0, on = TAB === t[0];
+      var name = t[1] + (n ? ', ' + n : '');
+      return '<button class="tab" role="tab" id="tab-' + t[0] + '" aria-controls="body" aria-selected="' + on + '"' +
+        ' tabindex="' + (on ? 0 : -1) + '" data-tab="' + t[0] + '" aria-label="' + name + '">' +
+        t[1] + (n ? ' <span class="pl-count" aria-hidden="true">' + n + '</span>' : '') + '</button>';
+    }).join('');
+    el.querySelectorAll('.tab').forEach(function (btn, i) {
+      btn.onclick = function () { setTab(btn.getAttribute('data-tab')); };
+      btn.onkeydown = function (e) {
+        var ni = -1;
+        if (e.key === 'ArrowRight') ni = (i + 1) % T.length;
+        else if (e.key === 'ArrowLeft') ni = (i - 1 + T.length) % T.length;
+        else if (e.key === 'Home') ni = 0;
+        else if (e.key === 'End') ni = T.length - 1;
+        else return;
+        e.preventDefault(); setTab(T[ni][0]);
+      };
+    });
+    var body = document.getElementById('body'); if (body) body.setAttribute('aria-labelledby', 'tab-' + TAB);
+  }
+  function renderBody() {
+    var b = document.getElementById('body');
+    if (LOADING || JOBS_FAILED) { b.innerHTML = skel(5); return; }  // API unreachable: bodies stay skeletons (§7)
+    if (isBrandNew()) return renderNew(b);
+    if (TAB === 'inbox') return renderInbox(b);
+    if (TAB === 'closed') return renderClosedTab(b);
+    return renderPipeline(b);
+  }
+  // Brand-new empty state (§7): the coaching-tips paragraph now lives here as three suggestion chips.
+  function renderNew(b) {
+    b.innerHTML = '<div class="emptyc pl-empty">' +
+      '<div class="empty-title">Your coach hasn’t started a search yet</div>' +
+      '<p class="muted sm emptyc-desc">Run /setup-coach in chat. It builds your profile, then a watch starts surfacing roles here.</p>' +
+      '<button class="pl-btn pl-btn--primary" id="setup">Start setup</button>' +
+      '<div class="sugs">' + ['Paste a posting and say /apply', 'Critique my CV', 'Run a mock interview'].map(function (s) {
+        return '<button class="pl-suggestion pl-btn pl-btn--sm" data-sug="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') +
+      '</div></div>';
+    var setup = document.getElementById('setup');
+    if (setup) setup.onclick = function () { compose('/setup-coach'); toast('Drafted “/setup-coach” into the chat composer. Nothing was sent.'); };
+    b.querySelectorAll('[data-sug]').forEach(function (x) { x.onclick = function () { var s = x.getAttribute('data-sug'); compose(s); toast('Drafted “' + s + '” into the chat composer.'); }; });
+  }
+  function renderInbox(b) {
+    var items = JOBS.inbox || [];
+    if (!items.length) { b.innerHTML = '<p class="empty">Nothing new — your watch hasn’t surfaced any roles to review.</p>'; return; }
+    b.innerHTML = items.map(function (it) {
       var score = Number(it.score || 0);
-      var link = it.url
-        ? '<a class="plink" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>'
-        : '';
+      var link = it.url ? '<a class="plink" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '';
       var reason = it.reason ? '<div class="reason">' + esc(it.reason) + '</div>' : '';
       return '<div class="inbox-item" data-id="' + esc(it.id) + '">' +
         '<span class="title">' + esc(it.title) + '</span>' +
         '<span class="co">' + esc(it.company) + '</span>' +
-        '<span class="score">' + score + '</span>' +
+        '<span class="score pl-badge">' + score + '</span>' +
         '<span class="inbox-actions">' + link +
-          '<button class="btn keep" data-keep>Keep</button>' +
-          '<button class="btn" data-dismiss>Dismiss</button>' +
-        '</span>' + reason +
-      '</div>';
+          '<button class="pl-btn pl-btn--primary pl-btn--sm" data-keep>Keep</button>' +
+          '<button class="pl-btn pl-btn--sm" data-dismiss>Dismiss</button>' +
+        '</span>' + reason + '</div>';
     }).join('');
-    box.querySelectorAll('.inbox-item').forEach(function (el) {
+    b.querySelectorAll('.inbox-item').forEach(function (el) {
       var id = el.getAttribute('data-id');
-      var keep = el.querySelector('[data-keep]');
-      var dismiss = el.querySelector('[data-dismiss]');
+      var keep = el.querySelector('[data-keep]'), dismiss = el.querySelector('[data-dismiss]');
       var btns = [keep, dismiss];
       keep.addEventListener('click', function () { inboxAction(id, 'keep', btns); });
       dismiss.addEventListener('click', function () { inboxAction(id, 'dismiss', btns); });
     });
   }
-
-  function renderBoard() {
-    var board = document.getElementById('board');
-    var cols = JOBS.columns || {};
-    var colNames = Object.keys(cols);
-    var reverse = statusToColumn();
-    var apps = JOBS.applications || [];
-    var days = JOBS.followup_days || 0;
-    var buckets = Object.create(null);
-    var other = [];
-    colNames.forEach(function (c) { buckets[c] = []; });
-    apps.forEach(function (a) {
-      var col = reverse[a.status];
-      if (col && buckets[col]) buckets[col].push(a);
-      else other.push(a);
-    });
-
-    var selOpts = '<option value="">Move to…</option>' +
-      colNames.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
-
-    // Unknown/legacy statuses remain visible, without inventing a persisted status or a
-    // move destination. Their cards can still be moved to any configured column.
-    var displayCols = other.length ? colNames.concat([null]) : colNames;
-    board.innerHTML = displayCols.map(function (col) {
-      var rows = col === null ? other : buckets[col];
-      var cards = rows.map(function (a) {
-        var n = daysSince(lastMoveDate(a));
-        var age = n == null ? '' : '<span>' + n + 'd</span>';
-        // The follow-up nudge renders ONLY for an applied card the server flagged `followup`.
-        var nudge = a.followup
-          ? '<div class="nudge">No reply in ' + (n == null ? days : n) + ' days — follow up?</div>'
-          : '';
-        return '<div class="pcard" draggable="true" data-id="' + esc(a.id) + '">' +
-          '<div class="prole">' + esc(a.role) + '</div>' +
-          '<div class="pco">' + esc(a.company) + '</div>' +
-          '<span class="pill">' + esc(a.status) + '</span>' +
-          '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
-          nudge +
-          '<select class="movesel" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
-        '</div>';
-      }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
-      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + '>' +
-        '<h3>' + esc(col === null ? 'Other statuses' : col) + '<span class="count">' + rows.length + '</span></h3>' +
-        cards +
-      '</div>';
-    }).join('') || '<p class="empty">No pipeline columns.</p>';
-
-    board.querySelectorAll('.pcard').forEach(function (card) {
-      card.addEventListener('dragstart', function (ev) {
-        DRAG_ID = card.getAttribute('data-id');
-        try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
-      });
+  function cardHtml(a, selOpts) {
+    var n = daysSince(lastMoveDate(a));
+    var age = n == null ? '' : '<span>' + n + 'd</span>';
+    var nudge = a.followup ? '<div class="nudge">No reply in ' + (n == null ? (JOBS.followup_days || 0) : n) + ' days — follow up?</div>' : '';
+    return '<div class="pcard pl-board-card" draggable="true" data-id="' + esc(a.id) + '">' +
+      '<div class="prole">' + esc(a.role) + '</div>' +
+      '<div class="pco">' + esc(a.company) + '</div>' +
+      '<span class="pl-badge">' + esc(a.status) + '</span>' +
+      '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
+      nudge +
+      '<select class="movesel pl-select" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
+    '</div>';
+  }
+  function wireCards(b) {
+    b.querySelectorAll('.pcard').forEach(function (card) {
+      card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
       card.addEventListener('dragend', function () { DRAG_ID = null; });
-      // A plain click (not a drag, and not on the Move-to select) opens the detail drawer.
-      card.addEventListener('click', function (ev) {
-        if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return;
-        openDetail(card.getAttribute('data-id'));
-      });
+      card.addEventListener('click', function (ev) { if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return; openDetail(card.getAttribute('data-id')); });
     });
-    board.querySelectorAll('.col[data-col]').forEach(function (colEl) {
-      colEl.addEventListener('dragover', function (ev) {
-        ev.preventDefault();
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-        colEl.classList.add('over');
-      });
+    b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
+      colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
       colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
-      colEl.addEventListener('drop', function (ev) {
-        ev.preventDefault();
-        colEl.classList.remove('over');
-        var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
-        if (id) moveToColumn(id, colEl.getAttribute('data-col'));
-      });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
     });
-    board.querySelectorAll('.movesel').forEach(function (sel) {
+    b.querySelectorAll('.movesel').forEach(function (sel) {
       var card = sel.closest('.pcard');
-      sel.addEventListener('change', function () {
-        var col = sel.value;
-        sel.value = '';
-        if (col) moveToColumn(card.getAttribute('data-id'), col);
-      });
+      sel.addEventListener('change', function () { var col = sel.value; sel.value = ''; if (col) moveToColumn(card.getAttribute('data-id'), col); });
     });
   }
-
-  // The transparency panel: every field the coach holds, and every one it doesn't. The
-  // operator should never have to open a file to see their own record.
-  function renderProfile(d) {
-    if (!d) {
-      document.getElementById('profile-cov').textContent = 'Could not load your profile.';
-      return;
-    }
-    var prof = d.profile || { identity: {}, sections: {} };
-    var cov = d.completeness || { known: [], missing: [], filled: 0, total: 0 };
-    var labels = d.field_labels || {};
-
-    document.getElementById('profile-cov').textContent = d.profile_error
-      ? ('Your profile file is unreadable (' + d.profile_error + '). Nothing new will be saved '
-         + 'until it is fixed — ask your coach where it is.')
-      : cov.filled
-      ? (cov.filled + ' of ' + cov.total + ' recorded'
-         + (cov.updated ? ' · updated ' + cov.updated : ''))
-      : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';
-
-    var rows = Object.keys(labels).map(function (k) {
-      var v = (prof.identity && prof.identity[k]) || (prof.sections && prof.sections[k]) || '';
-      var body = v
-        ? '<span>' + esc(v.length > 220 ? v.slice(0, 220) + '…' : v) + '</span>'
-        : '<span class="empty">not recorded</span>';
-      return '<div class="row"><span class="name">' + esc(labels[k]) + '</span>' + body + '</div>';
-    });
-    document.getElementById('profile').innerHTML = rows.join('');
-    document.getElementById('profile-ctx').textContent =
-      d.context_block || '(nothing injected — no profile recorded yet)';
+  function colSelOpts() {
+    var cols = JOBS.columns || {};
+    return '<option value="">Move to…</option>' + Object.keys(cols).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
   }
-
-  function renderWeights(d) {
-    var w = (d && d.weights) || {};
-    document.getElementById('weights').innerHTML = Object.keys(w).map(function (k) {
-      return '<div class="row"><span class="name">' + esc(k) + '</span>' +
-        '<span class="track"><span class="bar" style="width:' + Number(w[k] || 0) + '%"></span></span>' +
-        '<span class="fit">' + Number(w[k] || 0) + '</span></div>';
+  // Pipeline tab (§2): the live board — five open columns (+ an Other column for legacy statuses)
+  // and a narrow Closed stub that links to the Closed tab and still takes a drag-to-close drop.
+  function renderPipeline(b) {
+    var cols = JOBS.columns || {}, colNames = Object.keys(cols);
+    if (!colNames.length) { b.innerHTML = '<p class="empty">No pipeline columns.</p>'; return; }
+    var reverse = statusToColumn(), apps = JOBS.applications || [], closedName = closedColName();
+    var buckets = Object.create(null), other = [];
+    colNames.forEach(function (c) { buckets[c] = []; });
+    apps.forEach(function (a) { var col = reverse[a.status]; if (col && buckets[col]) buckets[col].push(a); else other.push(a); });
+    var openNames = colNames.filter(function (c) { return c !== closedName; });
+    var selOpts = colSelOpts();
+    var displayCols = openNames.concat(other.length ? [null] : []);
+    var cards = displayCols.map(function (col) {
+      var rows = col === null ? other : buckets[col];
+      var inner = rows.map(function (a) { return cardHtml(a, selOpts); }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
+      var lbl = col === null ? 'Other statuses' : col;
+      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + ' role="listitem" aria-label="' + esc(lbl) + ', ' + rows.length + '">' +
+        '<h3>' + esc(lbl) + '<span class="pl-count">' + rows.length + '</span></h3>' + inner + '</div>';
     }).join('');
+    var stub = '';
+    if (closedName) {
+      var cn = buckets[closedName].length;
+      stub = '<div class="col stub" data-col="' + esc(closedName) + '" role="listitem" aria-label="' + esc(closedName) + ', ' + cn + '">' +
+        '<span class="muted sm">' + esc(closedName) + '</span><b class="stub-n">' + cn + '</b>' +
+        '<span class="muted sm">Drop here to close</span>' +
+        '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="to-closed">View all</button></div>';
+    }
+    b.innerHTML = '<p class="muted sm pipeline-hint">Drag a card to a column to move it, or use its <span class="pl-kbd">Move to…</span> menu. Closed roles live on the Closed tab.</p>' +
+      '<div class="board pl-board" role="list">' + cards + stub + '</div>';
+    var tc = document.getElementById('to-closed'); if (tc) tc.onclick = function () { setTab('closed'); };
+    wireCards(b);
   }
-
-  function renderHeader(state) {
-    var st = (state && state.settings) || {};
-    var prof = (state && state.profile) || { identity: {} };
-    var name = (prof.identity && prof.identity.name) || st.name || '';
-    document.getElementById('title').textContent = name ? ('Career Coach — ' + name) : 'Career Coach';
-    document.getElementById('sub').textContent = st.target_roles
-      ? ('Targeting: ' + st.target_roles) : 'Set your profile in Settings › Career Coach.';
+  // Closed tab (§2/§3): the dead roles, off the working board. The full searchable table is R4;
+  // for now the carried card (with its move menu, so a role can be reopened) opens the drawer.
+  function renderClosedTab(b) {
+    var rows = closedApps().slice().sort(function (x, y) { return lastMoveDate(x) < lastMoveDate(y) ? 1 : -1; });
+    if (!rows.length) { b.innerHTML = '<div class="emptyc"><div class="empty-title">No closed roles</div><p class="muted sm emptyc-desc">Roles you reject or pass on land here, out of the working board.</p></div>'; return; }
+    var selOpts = colSelOpts();
+    b.innerHTML = '<p class="muted sm">' + rows.length + ' closed ' + (rows.length === 1 ? 'role' : 'roles') + ' — open one to review, or move it back with its menu.</p>' +
+      '<div class="closed-list">' + rows.map(function (a) { return cardHtml(a, selOpts); }).join('') + '</div>';
+    wireCards(b);
   }
-
+  // About-you drawer content (§5): three read-only accordions. /state failure shows a warning callout.
+  function accordion(title, open, inner) {
+    return '<details class="grp pl-accordion"' + (open ? ' open' : '') + '><summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(title) + '</span></summary><div class="grp-body">' + inner + '</div></details>';
+  }
+  function aboutProfile() {
+    var inner;
+    if (STATE_FAILED || !STATE) {
+      inner = '<div class="pl-callout pl-callout--warning" role="status">Couldn’t load your profile. Nothing new will be saved until it is fixed — ask your coach where it is.</div>';
+    } else if (STATE.profile_error) {
+      inner = '<div class="pl-callout pl-callout--warning" role="status">Your profile file is unreadable (' + esc(STATE.profile_error) + '). Nothing new will be saved until it is fixed.</div>';
+    } else {
+      var prof = STATE.profile || { identity: {}, sections: {} };
+      var cov = STATE.completeness || { filled: 0, total: 0, updated: '' };
+      var labels = STATE.field_labels || {};
+      var covLine = cov.filled ? (cov.filled + ' of ' + cov.total + ' recorded' + (cov.updated ? ' · updated ' + esc(cov.updated) : '')) : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';
+      var rows = Object.keys(labels).map(function (k) {
+        var v = (prof.identity && prof.identity[k]) || (prof.sections && prof.sections[k]) || '';
+        var val = v ? esc(v.length > 220 ? v.slice(0, 220) + '…' : v) : '<span class="muted"><em>not recorded</em></span>';
+        return '<div class="arow"><span class="aname">' + esc(labels[k]) + '</span><span>' + val + '</span></div>';
+      }).join('');
+      inner = '<p class="muted sm">' + covLine + '</p>' + rows;
+    }
+    return accordion('What your coach knows about you', true, inner);
+  }
+  function aboutRubric() {
+    var w = (STATE && STATE.weights) || {}, keys = Object.keys(w);
+    var inner = keys.length ? keys.map(function (k) {
+      return '<div class="arow"><span class="aname">' + esc(k) + '</span><span class="track"><span class="bar" style="width:' + Number(w[k] || 0) + '%"></span></span><span class="fit">' + Number(w[k] || 0) + '</span></div>';
+    }).join('') : '<p class="muted sm">Not available.</p>';
+    return accordion('Fit rubric — how a role is scored', false, inner);
+  }
+  function aboutContext() {
+    var ctx = (STATE && STATE.context_block) || '(nothing injected — no profile recorded yet)';
+    return accordion('Exactly what it’s told each turn', false, '<pre class="pl-code-block ctx">' + esc(ctx) + '</pre>');
+  }
+  function renderAboutBody() {
+    var body = document.getElementById('about-body');
+    var openIdx = [];
+    body.querySelectorAll('details.grp').forEach(function (d, i) { openIdx[i] = d.open; });
+    var head = '<p class="muted sm">A read-only view. To change anything, tell your coach in chat. Settings live in Settings › Career Coach.</p>';
+    body.innerHTML = head + aboutProfile() + aboutRubric() + aboutContext();
+    body.querySelectorAll('details.grp').forEach(function (d, i) { if (typeof openIdx[i] === 'boolean') d.open = openIdx[i]; });
+  }
+  function aboutIsOpen() { return document.getElementById('about').getAttribute('aria-hidden') === 'false'; }
+  function openAbout() {
+    renderAboutBody();
+    document.getElementById('cc').classList.add('about-open');
+    document.getElementById('about').setAttribute('aria-hidden', 'false');
+    var c = document.getElementById('about-close'); if (c && c.focus) c.focus();
+  }
+  function closeAbout() {
+    document.getElementById('cc').classList.remove('about-open');
+    document.getElementById('about').setAttribute('aria-hidden', 'true');
+    var ab = document.getElementById('about-btn'); if (ab && ab.focus) ab.focus();
+  }
+  function trap(e, root) {
+    if (e.key !== 'Tab') return;
+    var f = root.querySelectorAll('button:not([disabled]),summary,select,textarea,input,a[href],[tabindex="0"]'); if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  // Live refresh (§7): re-render in place, keep the active tab, the body scroll and the focused row.
+  function render() {
+    var body = document.getElementById('body');
+    var scroll = body ? body.scrollTop : 0;
+    var ae = document.activeElement;
+    var fid = ae && ae.getAttribute ? ae.getAttribute('data-id') : null;
+    renderBanner(); renderHeader(); renderToday(); renderTabs(); renderBody();
+    if (aboutIsOpen()) renderAboutBody();
+    body = document.getElementById('body'); if (body) body.scrollTop = scroll;
+    if (fid) { try { var el = document.querySelector('#body [data-id="' + fid + '"]'); if (el && el.focus) el.focus(); } catch (e) {} }
+  }
+  // <<< view renderers
   // >>> s2b pure renderers — self-contained markup builders (depend only on esc), unit-tested.
   function fitVerdict(score) {
     var s = Number(score || 0);
@@ -3331,11 +3497,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function answerRow(a) {
     a = a || {};
     var isDraft = a.status === 'draft';
-    var badge = isDraft ? '<span class="draft-badge">Draft — confirm before using</span>' : '';
+    var badge = isDraft ? '<span class="pl-badge pl-badge--warning">Draft — confirm before using</span>' : '';
     return '<div class="answer' + (isDraft ? ' draft' : '') + '">' +
       '<div class="answer-head">' +
         '<span class="answer-key">' + esc(a.label || a.key || '') + '</span>' + badge +
-        '<button class="btn copy" type="button">Copy</button>' +
+        '<button class="pl-btn pl-btn--sm copy" type="button">Copy</button>' +
       '</div>' +
       '<div class="answer-val">' + esc(a.value == null ? '' : a.value) + '</div>' +
     '</div>';
@@ -3361,7 +3527,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       if (r.built) out += '<div class="kv"><span class="k">Built</span><span>' + esc(r.built) + '</span></div>';
       if (r.path) {
         out += '<div class="kv"><span class="k">File</span><code>' + esc(r.path) + '</code>' +
-          '<button class="btn copy" type="button" data-copy-path>Copy path</button></div>';
+          '<button class="pl-btn pl-btn--sm copy" type="button" data-copy-path>Copy path</button></div>';
       }
     } else {
       out += '<p class="empty">No resume built yet.</p>';
@@ -3371,7 +3537,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var cl = kit.cover_letter || {};
     out += '<div class="kit-block"><h5>Cover letter</h5>';
     if (cl.text) {
-      out += '<div class="dsec-actions"><button class="btn copy" type="button" data-copy-cover>' +
+      out += '<div class="dsec-actions"><button class="pl-btn pl-btn--sm copy" type="button" data-copy-cover>' +
         'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
     } else if (cl.needed === false) {
       // Only an explicit "not needed" clears the letter; unset (null) still needs one, matching
@@ -3548,7 +3714,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     document.getElementById('detail-title').innerHTML =
       '<div class="detail-role">' + esc(app.role || title || 'This role') + '</div>' +
       '<div class="detail-co">' + esc(app.company || '') +
-        (app.status ? ' · <span class="pill">' + esc(app.status) + '</span>' : '') + '</div>';
+        (app.status ? ' · <span class="pl-badge">' + esc(app.status) + '</span>' : '') + '</div>';
 
     var html = '';
     // posting
@@ -3575,7 +3741,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       '<textarea id="detail-notes-text" class="notes-ta" ' +
       'placeholder="Your notes on this role — the fit reason, next steps, anything.">' +
       esc(app.notes || '') + '</textarea>' +
-      '<div class="dsec-actions"><button class="btn" type="button" id="detail-notes-save">Save notes</button></div>' +
+      '<div class="dsec-actions"><button class="pl-btn pl-btn--sm" type="button" id="detail-notes-save">Save notes</button></div>' +
       '</section>';
 
     // apply kit
@@ -3596,11 +3762,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     // actions — each drafts a chat message; Mark applied posts /applied behind an inline confirm
     html += '<section id="detail-actions" class="dsec"><h4>Ask your coach</h4>' +
       '<div class="action-btns">' +
-        '<button class="btn act" type="button" data-act="kit">Build apply kit</button>' +
-        '<button class="btn act" type="button" data-act="tailor">Tailor resume</button>' +
-        '<button class="btn act" type="button" data-act="prep">Prep me for this interview</button>' +
+        '<button class="pl-btn act" type="button" data-act="kit">Build apply kit</button>' +
+        '<button class="pl-btn act" type="button" data-act="tailor">Tailor resume</button>' +
+        '<button class="pl-btn act" type="button" data-act="prep">Prep me for this interview</button>' +
       '</div>' +
-      '<div class="action-btns"><button class="btn keep" type="button" id="detail-applied">Mark applied</button></div>' +
+      '<div class="action-btns"><button class="pl-btn pl-btn--primary" type="button" id="detail-applied">Mark applied</button></div>' +
       '<p class="hint">The buttons above draft a message for your coach — you review and send it. ' +
       'Nothing is sent automatically.</p></section>';
 
@@ -3641,35 +3807,39 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     });
   }
 
+
+  // /jobs drives the band, tabs and bodies; /state feeds the header subline and the About-you
+  // drawer. A failed /state is a partial failure (§7) — the view still renders. A failed /jobs is
+  // "API unreachable": the error banner + Retry, bodies left as skeletons.
   function load() {
-    // /jobs drives the inbox + board; /state is the profile/rubric disclosure and the header. A
-    // failed /state still renders the jobs view.
     return api('/jobs').then(function (jobs) {
       JOBS = jobs || { inbox: [], applications: [], columns: {}, followup_days: 0 };
-      renderInbox();
-      renderBoard();
-      return api('/state').then(function (s) { return s; }, function () { return null; });
-    }).then(function (state) {
-      renderHeader(state);
-      renderProfile(state);
-      renderWeights(state);
-    }).catch(function () {
-      document.getElementById('sub').textContent = 'Could not load your jobs.';
+      JOBS_FAILED = false;
+      return api('/state').then(function (s) { STATE = s; STATE_FAILED = false; },
+                               function () { STATE = null; STATE_FAILED = true; });
+    }, function () { JOBS_FAILED = true; STATE = null; STATE_FAILED = false; }).then(function () {
+      LOADING = false; render();
     });
   }
 
-  // Live refresh (ADR 0039): ask the console to forward `careercoach.#` events into this iframe,
-  // and reload whenever one arrives. We also reload after each successful write (above).
+  // Live refresh (ADR 0039): subscribe to `careercoach.#` and reload in place on an event.
   function subscribe() {
-    try { parent.postMessage({ type: 'protoagent:subscribe', patterns: ['careercoach.#'] }, '*'); }
-    catch (e) {}
+    try { parent.postMessage({ type: 'protoagent:subscribe', patterns: ['careercoach.#'] }, '*'); } catch (e) {}
   }
   window.addEventListener('message', function (e) {
     var d = e && e.data;
     if (d && d.type === 'protoagent:event') load();
   });
 
-  // The detail drawer dismisses on the ✕, the backdrop, and Esc.
+  // About-you drawer: open from the header; Esc / the ✕ / the scrim dismiss it and return focus.
+  document.getElementById('about-btn').addEventListener('click', openAbout);
+  document.getElementById('about-close').addEventListener('click', closeAbout);
+  document.getElementById('about-scrim').addEventListener('click', closeAbout);
+  document.getElementById('about').addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { e.stopPropagation(); closeAbout(); } else { trap(e, document.getElementById('about')); }
+  });
+
+  // The job detail drawer dismisses on the ✕, the backdrop, and Esc.
   (function () {
     var close = document.getElementById('detail-close');
     if (close) close.addEventListener('click', closeDetail);
@@ -3680,9 +3850,16 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     });
   })();
 
-  // initPluginView runs the console handshake (ADR 0026) — applies the theme and captures the
-  // bearer — then fires our callback once ready. The timer is a fallback for a host context that
-  // never posts an init, so the page isn't left blank.
+  // "New since your last visit" (§11.1): read the prior visit, then stamp now for the next one.
+  // Per browser, in a try/catch; if storage is unavailable, fall back to the last 24h.
+  try {
+    var lv = localStorage.getItem('cc:lastVisit');
+    LAST_VISIT = lv ? Number(lv) : (Date.now() - 86400000);
+    localStorage.setItem('cc:lastVisit', String(Date.now()));
+  } catch (e) { LAST_VISIT = Date.now() - 86400000; }
+
+  // First paint: skeletons + the tab strip (no counts) before any data arrives (§7 Loading).
+  LOADING = true; render();
   kit.initPluginView(function () { subscribe(); load(); });
   setTimeout(function () { subscribe(); load(); }, 800);
 </script>

@@ -267,3 +267,16 @@ def test_detail_additions_keep_the_theme_contract(plugin):
     assert "--pl-color-surface" not in html
     # the drawer styling reuses the kit's own tokens
     assert "#detail .detail-panel" in html
+
+
+# ── epic #85 R1: the carried drawer is restyled with kit classes (no hand-rolled .btn/.pill) ─
+def test_carried_drawer_uses_kit_classes(plugin):
+    html = plugin._DASHBOARD_HTML
+    # the drawer panel declares the kit drawer component; its backdrop uses the overlay token
+    assert 'class="detail-panel pl-drawer pl-drawer--right"' in html
+    assert "#detail .detail-backdrop { position: absolute; inset: 0; background: var(--pl-color-overlay); }" in html
+    # the status chip and the action buttons are kit atoms now, not hand-rolled .pill / .btn
+    assert 'class="pl-badge">' in html  # the status chip in the drawer header
+    assert 'class="pl-btn act"' in html  # the "Ask your coach" action buttons
+    assert 'class="pl-btn pl-btn--primary" type="button" id="detail-applied"' in html  # Mark applied
+    assert 'class="btn' not in html and 'class="pill"' not in html
