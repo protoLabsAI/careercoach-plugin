@@ -1,0 +1,588 @@
+<style>
+  .pv { display: grid; gap: var(--pl-space-3); font-family: var(--pl-font-sans); }
+  .pv-bar { display: flex; flex-wrap: wrap; gap: var(--pl-space-3); align-items: center; font-size: 12px; color: var(--pl-color-fg-muted); }
+  .pv-bar label { display: flex; gap: var(--pl-space-2); align-items: center; }
+  .cc { container: cc / inline-size; position: relative; overflow: hidden; height: 760px; margin: 0 auto; width: 100%;
+        border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); background: var(--pl-color-bg);
+        display: flex; flex-direction: column; }
+  .cc.rail { width: 420px; }
+  .cc.mid { width: 720px; }
+  .hd { display: flex; align-items: flex-start; gap: var(--pl-space-3); padding: var(--pl-space-4) var(--pl-space-4) var(--pl-space-2); }
+  .hd .t { font-size: 18px; font-weight: 600; margin: 0; }
+  .hd .s { font-size: 12px; color: var(--pl-color-fg-muted); margin: 2px 0 0; }
+  .hd .sp { flex: 1; }
+  .today { margin: 0 var(--pl-space-4) var(--pl-space-2); padding: var(--pl-space-2) var(--pl-space-3);
+           border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); background: var(--pl-color-bg-raised); }
+  .today h3 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--pl-color-fg-muted); font-weight: 600; }
+  .trow { display: flex; align-items: center; gap: var(--pl-space-2); padding: 5px 0; font-size: 13px; border-top: 1px solid var(--pl-color-border); }
+  .trow:first-of-type { border-top: 0; }
+  .trow .grow { flex: 1; min-width: 0; }
+  .tabs { display: flex; gap: var(--pl-space-1); padding: 0 var(--pl-space-4); border-bottom: 1px solid var(--pl-color-border); }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted); font: inherit; font-size: 13px;
+         padding: var(--pl-space-2) var(--pl-space-3); cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
+  .tab:focus-visible, .row:focus-visible, .pcard:focus-visible, .tr:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .cnt { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--pl-color-bg-subtle); color: var(--pl-color-fg-muted); font-variant-numeric: tabular-nums; }
+  .body { flex: 1; min-height: 0; overflow: auto; padding: var(--pl-space-3) var(--pl-space-4) var(--pl-space-4); }
+  .muted { color: var(--pl-color-fg-muted); }
+  .sm { font-size: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: var(--pl-space-2); align-items: center; margin-bottom: var(--pl-space-2); font-size: 12px; }
+  .toolbar .grow { flex: 1; }
+  /* inbox */
+  .grp { border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); margin-bottom: var(--pl-space-2); background: var(--pl-color-bg-raised); }
+  .grp > summary { list-style: none; cursor: pointer; display: flex; gap: var(--pl-space-2); align-items: center; padding: var(--pl-space-2) var(--pl-space-3); font-size: 13px; font-weight: 600; }
+  .grp > summary::-webkit-details-marker { display: none; }
+  .grp > summary .chev { transition: transform .15s; color: var(--pl-color-fg-muted); }
+  .grp[open] > summary .chev { transform: rotate(90deg); }
+  .grp > summary .grow { flex: 1; }
+  .row { display: flex; gap: var(--pl-space-2); align-items: flex-start; padding: var(--pl-space-2) var(--pl-space-3); border-top: 1px solid var(--pl-color-border); cursor: pointer; }
+  .row:hover, .row.sel { background: var(--pl-color-bg-hover); }
+  .row .main { flex: 1; min-width: 0; }
+  .row .ti { font-size: 13px; font-weight: 600; }
+  .row .meta { font-size: 12px; color: var(--pl-color-fg-muted); }
+  .row .acts { display: flex; gap: 4px; visibility: hidden; }
+  .row:hover .acts, .row:focus-within .acts, .row.sel .acts, .row:focus .acts { visibility: visible; }
+  .row .ck { visibility: hidden; margin-top: 2px; }
+  .row:hover .ck, .row:focus-within .ck, .row.sel .ck, .row:focus .ck, .multi .row .ck { visibility: visible; }
+  .newdot { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; color: var(--pl-color-status-info); font-weight: 600; }
+  /* board */
+  .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 120px; gap: var(--pl-space-2); align-items: start; }
+  .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); padding: 6px; min-height: 80px; }
+  .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
+  .col h4 { margin: 2px 4px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--pl-color-fg-muted); display: flex; justify-content: space-between; font-weight: 600; }
+  .col .list { display: grid; gap: 6px; max-height: 520px; overflow: auto; }
+  .pcard { background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); padding: 7px 8px; cursor: grab; font-size: 12px; }
+  .pcard.lift { border-color: var(--pl-color-accent); }
+  .pcard .r { font-weight: 600; font-size: 13px; }
+  .pcard .nudge { margin-top: 5px; font-size: 11px; color: var(--pl-color-status-warning); }
+  .stub { display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center; text-align: center; min-height: 160px; font-size: 12px; color: var(--pl-color-fg-muted); border-style: dashed; }
+  .stub b { color: var(--pl-color-fg); font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stages { display: none; }
+  /* closed */
+  .tr { cursor: pointer; }
+  .pager { display: flex; gap: var(--pl-space-2); align-items: center; justify-content: flex-end; margin-top: var(--pl-space-2); font-size: 12px; }
+  .sub2 { display: none; font-size: 12px; color: var(--pl-color-fg-muted); }
+  /* drawer */
+  .scrim { position: absolute; inset: 0; background: var(--pl-color-overlay); display: none; z-index: 5; }
+  .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border);
+            z-index: 6; display: none; flex-direction: column; }
+  .cc.dopen .scrim { display: block; } .cc.dopen .drawer { display: flex; }
+  .dtop { display: flex; gap: var(--pl-space-2); align-items: flex-start; padding: var(--pl-space-3) var(--pl-space-4); border-bottom: 1px solid var(--pl-color-border); }
+  .dtop .grow { flex: 1; min-width: 0; }
+  .dbody { overflow: auto; padding: var(--pl-space-3) var(--pl-space-4) var(--pl-space-5); display: grid; gap: var(--pl-space-3); }
+  .dsec h5 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--pl-color-fg-muted); font-weight: 600; }
+  .step { display: flex; gap: var(--pl-space-2); padding: 6px 0; border-top: 1px solid var(--pl-color-border); font-size: 13px; }
+  .step:first-of-type { border-top: 0; }
+  .step .n { flex: none; width: 20px; height: 20px; border-radius: 999px; border: 1px dashed var(--pl-color-border-strong); display: grid; place-items: center; font-size: 11px; color: var(--pl-color-fg-muted); }
+  .toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9; display: none; gap: var(--pl-space-2); align-items: center;
+           background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong); border-radius: var(--pl-radius); padding: 8px 12px; font-size: 13px; }
+  .toast.show { display: flex; }
+  .dlg { position: absolute; inset: 0; z-index: 8; background: var(--pl-color-overlay); display: none; place-items: center; }
+  .dlg.show { display: grid; }
+  .dlg .box { max-width: 300px; }
+  .emptyc { display: grid; place-items: center; text-align: center; gap: var(--pl-space-2); padding: var(--pl-space-6) var(--pl-space-4); }
+  .sugs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @container cc (max-width: 899px) {
+    .board { grid-template-columns: repeat(5, 220px) 110px; overflow-x: auto; scroll-snap-type: x mandatory; }
+    .col { scroll-snap-align: start; }
+    .drawer { width: 100%; }
+  }
+  @container cc (max-width: 599px) {
+    .board { display: none; } .stages { display: block; }
+    .drawer { top: 15%; width: 100%; border-left: 0; border-top: 1px solid var(--pl-color-border); border-radius: var(--pl-radius) var(--pl-radius) 0 0; }
+    .c-co, .c-dt { display: none; } .sub2 { display: block; }
+    .hd .s { display: none; }
+  }
+  .today .more2 { display: none; }
+  @media (prefers-reduced-motion: reduce) { .grp > summary .chev { transition: none; } }
+</style>
+
+<div class="pv">
+  <div class="pv-bar" role="group" aria-label="Preview controls">
+    <strong>Preview · invented data</strong>
+    <label>Scenario <select id="pv-scn" class="pl-select">
+      <option value="real">Real volumes (49 · 15 · 86)</option>
+      <option value="quiet">Nothing needs you today</option>
+      <option value="new">Brand-new agent</option>
+    </select></label>
+    <label>Width <select id="pv-w" class="pl-select">
+      <option value="wide">Wide (full)</option>
+      <option value="mid">Split-screen (720px)</option>
+      <option value="rail">Rail panel (420px)</option>
+    </select></label>
+    <label>Theme <select id="pv-th" class="pl-select">
+      <option value="">Console</option><option value="light">Light</option><option value="dark">Dark</option>
+    </select></label>
+  </div>
+
+  <div class="cc" id="cc">
+    <div class="hd">
+      <div><div class="pl-eyebrow">Career Coach</div><h2 class="t">Jobs</h2><p class="s">Targeting: Staff / Senior Platform Engineer · remote</p></div>
+      <span class="sp"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="about-btn">About you</button>
+    </div>
+    <section class="today" id="today" aria-label="Needs you today"><h3>Needs you today</h3><div class="muted sm">Loading…</div></section>
+    <div class="tabs" role="tablist" aria-label="Jobs" id="tabs"></div>
+    <div class="body" id="body" role="tabpanel"><p class="muted">Loading…</p></div>
+
+    <div class="scrim" id="scrim"></div>
+    <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
+      <div class="dtop"><div class="grow" id="d-head"><div id="d-title"></div></div>
+        <button class="pl-btn pl-btn--ghost pl-btn--sm" id="d-close" aria-label="Close">✕</button></div>
+      <div class="dbody" id="d-body"></div>
+    </aside>
+    <div class="dlg" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-q"><div class="pl-card box"><p id="dlg-q" style="margin:0 0 12px;font-size:14px"></p><div id="dlg-btns" style="display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"><span id="toast-t"></span><button class="pl-btn pl-btn--ghost pl-btn--xs" id="toast-undo" hidden>Undo</button></div>
+    <div class="sr" id="live" role="status" aria-live="polite"></div>
+  </div>
+  <p class="muted sm">Every name, company and date here is invented. The scores mirror the real data shape: inbox title match is 100 or 0, and almost all applications are unscored.</p>
+</div>
+
+<script id="s-data">
+/* Invented demo data only: seeded, so every reload is identical. */
+var SEED = 7; function rnd() { SEED = (SEED * 16807) % 2147483647; return (SEED - 1) / 2147483646; }
+function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+var CO = ['Northwind Labs','Lumen Grid','Quarry Systems','Fernbank AI','Halcyon Data','Brightwater','Copperline','Tessellate','Orchard Cloud','Pinecrest Health','Vantage Rail','Kestrel Robotics','Moonrise Media','Driftwood Pay','Saltmarsh Bio','Ironleaf','Bluefin Logistics','Arcadia Learning','Nimbus Ops','Granite Security'];
+var MATCH = ['Staff Platform Engineer','Senior Platform Engineer','Staff Infrastructure Engineer','Senior Site Reliability Engineer','Staff Backend Engineer, Platform','Senior DevEx Engineer'];
+var MISS = ['Engineering Manager, Payments','Data Scientist II','Solutions Architect','Product Designer','Technical Program Manager','Sales Engineer'];
+var HOUR = 3600e3, DAY = 24 * HOUR, NOW = Date.now();
+function iso(ms) { return new Date(ms).toISOString().slice(0, 10); }
+var INBOX = [];
+// 49 rows: 7 found in the last day, 21 this week, 12 older (all title matches, score 100); 9 title misses (score 0)
+[[7, 0, 20], [21, 26, 160], [12, 170, 600]].forEach(function (b) {
+  for (var i = 0; i < b[0]; i++) INBOX.push({ score: 100, title: pick(MATCH), posted: NOW - (b[1] + rnd() * (b[2] - b[1])) * HOUR });
+});
+for (var j = 0; j < 9; j++) INBOX.push({ score: 0, title: pick(MISS), posted: NOW - rnd() * 300 * HOUR });
+INBOX.forEach(function (r, i) {
+  r.id = 'in' + i; r.company = pick(CO);
+  r.matched = r.score ? (/Site Reliability/.test(r.title) ? 'Site Reliability Engineer' : /DevEx/.test(r.title) ? 'Platform Engineer' : r.title.replace(/,.*$/, '').replace(/^(Staff|Senior) /, '$1 ')) : '';
+  r.ghost = (i === 30) ? 'Reposted 4 times in 60 days with the same text' : '';
+});
+var LAST_VISIT = NOW - 18 * HOUR;
+var APPS = [];
+function app(status, role, ageDays, extra) {
+  var a = { id: 'ap' + APPS.length, status: status, role: role, company: pick(CO), date: iso(NOW - (ageDays + 5) * DAY), updated: iso(NOW - ageDays * DAY),
+            fit_score: 0, notes: '', source: 'https://jobs.example.com/' + APPS.length, followup: false, history: [] };
+  for (var k in extra) a[k] = extra[k];
+  APPS.push(a); return a;
+}
+app('saved', 'Staff Platform Engineer', 2, { fit_score: 82 });
+app('preparing', 'Senior Site Reliability Engineer', 4);
+for (var a = 0; a < 15; a++) app('applied', pick(MATCH), [3, 5, 6, 8, 9, 11, 12, 13, 14, 15, 17, 19, 21, 23, 26][a], { followup: a >= 12, fit_score: a === 1 ? 71 : 0 });
+app('interviewing', 'Staff Infrastructure Engineer', 6, { fit_score: 77 });
+for (var c = 0; c < 86; c++) app(c % 29 === 5 ? 'passed' : 'rejected', pick(rnd() < .8 ? MATCH : MISS), 10 + Math.floor(c * 1.6), { fit_score: c === 9 ? 64 : 0 });
+var SAVED_ANSWERS = 3;
+var COLS = ['saved', 'preparing', 'applied', 'interviewing', 'offer'];
+var COL_LABEL = { saved: 'Saved', preparing: 'Preparing', applied: 'Applied', interviewing: 'Interviewing', offer: 'Offer' };
+</script>
+<script id="s-app">
+var S = { tab: 'pipeline', scn: 'real', w: 'wide', sort: 'newest', hideGhost: false, sel: {}, open: { today: true, week: true, older: false, miss: false },
+          stage: {}, closedPage: 0, closedQ: '', closedOut: 'all', lift: null, liftCol: null, dismissed: {}, kept: {}, dOpen: null, dReturn: null, focus: null };
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function ago(ms) { var h = Math.floor((NOW - ms) / HOUR); if (h < 1) return 'just now'; if (h < 24) return h + 'h ago'; return Math.floor(h / 24) + 'd ago'; }
+function days(d) { return Math.max(0, Math.floor((NOW - new Date(d + 'T00:00:00Z').getTime()) / DAY)); }
+function apps() { return S.scn === 'new' ? [] : APPS; }
+function isOpen(a) { return COLS.indexOf(a.status) >= 0; }
+function isClosed(a) { return a.status === 'rejected' || a.status === 'passed'; }
+function find(id) { for (var i = 0; i < APPS.length; i++) if (APPS[i].id === id) return APPS[i]; return null; }
+function findIn(id) { for (var i = 0; i < INBOX.length; i++) if (INBOX[i].id === id) return INBOX[i]; return null; }
+function label(s) { return COL_LABEL[s] || (s === 'rejected' ? 'Closed · rejected' : s === 'passed' ? 'Closed · passed' : s); }
+function inbox() {
+  if (S.scn === 'new') return [];
+  return INBOX.filter(function (r) { return !S.dismissed[r.id] && !S.kept[r.id] && (S.scn !== 'quiet' || r.posted < LAST_VISIT); });
+}
+function announce(msg) { $('live').textContent = ''; setTimeout(function () { $('live').textContent = msg; }, 30); }
+var toastTimer = null;
+function toast(msg, undo) {
+  $('toast-t').textContent = msg; var u = $('toast-undo');
+  u.hidden = !undo; u.onclick = function () { $('toast').classList.remove('show'); if (undo) undo(); };
+  $('toast').classList.add('show'); clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { $('toast').classList.remove('show'); }, 6000);
+}
+function visibleById(id) {
+  var els = $('cc').querySelectorAll('[data-id="' + id + '"]');
+  for (var i = 0; i < els.length; i++) if (els[i].offsetParent !== null) return els[i];
+  return null;
+}
+
+function render() {
+  var ae = document.activeElement, fid = S.focus, fel = null, caret = null;
+  if (!fid && ae && $('cc').contains(ae) && !$('drawer').contains(ae)) {
+    if (ae.dataset && ae.dataset.id) fid = ae.dataset.id;
+    else if (ae.id) { fel = ae.id; caret = ae.selectionEnd; }
+  }
+  S.focus = null;
+  renderToday(); renderTabs(); renderBody();
+  if (fid) { var el = visibleById(fid); if (el) el.focus(); }
+  else if (fel && $(fel)) { $(fel).focus(); if (caret != null && $(fel).setSelectionRange) $(fel).setSelectionRange(caret, caret); }
+}
+
+function renderToday() {
+  var el = $('today'), items = [];
+  if (S.scn === 'real') {
+    var a = apps();
+    var fu = a.filter(function (x) { return x.followup && x.status === 'applied'; });
+    if (fu.length) {
+      var minD = Math.min.apply(null, fu.map(function (x) { return days(x.updated); }));
+      items.push({ ic: '⚠', tone: 'warning', t: fu.length + (fu.length === 1 ? ' application has' : ' applications have') + ' had no reply in ' + minD + '+ days', b: 'Review',
+                   go: function () { setTab('pipeline'); } });
+    }
+    a.filter(function (x) { return x.status === 'interviewing'; }).forEach(function (x) {
+      items.push({ ic: '●', tone: 'info', t: 'Interviewing: ' + x.role + ' @ ' + x.company + ' · prep not started', b: 'Prep', go: function () { openDrawer(x.id); } });
+    });
+    var nw = inbox().filter(function (r) { return r.posted > LAST_VISIT; }).length;
+    if (nw) items.push({ ic: '✦', tone: 'info', t: nw + ' new ' + (nw === 1 ? 'role' : 'roles') + ' since your last visit (18h ago)', b: 'Triage', go: function () { setTab('inbox'); } });
+    var nk = a.filter(function (x) { return x.status === 'saved' || x.status === 'preparing'; });
+    if (nk.length) items.push({ ic: '○', tone: 'neutral', t: nk.length + (nk.length === 1 ? ' saved role has' : ' saved or preparing roles have') + ' no apply kit yet', b: 'Build',
+                                go: function () { openDrawer(nk[0].id); } });
+  }
+  if (!items.length) { el.hidden = true; return; }
+  el.hidden = false;
+  var cap = S.w === 'rail' ? 2 : 3, shown = S.todayAll ? items : items.slice(0, cap), more = items.length - shown.length;
+  el.innerHTML = '<h3>Needs you today</h3>' + shown.map(function (it, i) {
+    return '<div class="trow"><span aria-hidden="true" style="color:var(--pl-color-status-' + (it.tone === 'neutral' ? 'info' : it.tone) + ')">' + it.ic + '</span>' +
+      '<span class="grow">' + esc(it.t) + '</span><button class="pl-btn pl-btn--sm" data-t="' + i + '">' + it.b + '</button></div>';
+  }).join('') + (more > 0 ? '<div class="trow"><button class="pl-btn pl-btn--ghost pl-btn--xs" id="today-more">+' + more + ' more</button></div>' : '');
+  el.querySelectorAll('[data-t]').forEach(function (b) { b.onclick = function () { shown[+b.dataset.t].go(); }; });
+  if ($('today-more')) $('today-more').onclick = function () { S.todayAll = true; renderToday(); };
+}
+
+function counts() {
+  var a = apps();
+  return { pipeline: a.filter(isOpen).length, inbox: inbox().length, closed: a.filter(isClosed).length };
+}
+function setTab(t) { S.tab = t; S.sel = {}; render(); var b = $('tab-' + t); if (b) b.focus(); }
+function renderTabs() {
+  var el = $('tabs');
+  if (S.scn === 'new') { el.hidden = true; return; }
+  el.hidden = false;
+  var c = counts(), T = [['pipeline', 'Pipeline'], ['inbox', 'Inbox'], ['closed', 'Closed']];
+  el.innerHTML = T.map(function (t) {
+    var n = c[t[0]], on = S.tab === t[0];
+    return '<button class="tab" role="tab" id="tab-' + t[0] + '" aria-controls="body" aria-selected="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-tab="' + t[0] + '"' +
+      ' aria-label="' + t[1] + (n ? ', ' + n : '') + '">' + t[1] + (n ? ' <span class="cnt" aria-hidden="true">' + n + '</span>' : '') + '</button>';
+  }).join('');
+  el.querySelectorAll('.tab').forEach(function (b, i) {
+    b.onclick = function () { setTab(b.dataset.tab); };
+    b.onkeydown = function (e) {
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return; e.preventDefault(); setTab(T[(i + d + T.length) % T.length][0]);
+    };
+  });
+  $('body').setAttribute('aria-labelledby', 'tab-' + S.tab);
+}
+function renderBody() {
+  var b = $('body');
+  if (S.scn === 'new') return renderNew(b);
+  if (S.tab === 'inbox') return renderInbox(b);
+  if (S.tab === 'closed') return renderClosed(b);
+  return renderPipeline(b);
+}
+function renderNew(b) {
+  b.innerHTML = '<div class="emptyc pl-empty"><div style="font-size:15px;font-weight:600">Your coach hasn\u2019t started a search yet</div>' +
+    '<p class="muted sm" style="max-width:360px;margin:0">Run /setup-coach in chat. It builds your profile, then a watch starts surfacing roles here.</p>' +
+    '<button class="pl-btn pl-btn--primary" id="setup">Start setup</button>' +
+    '<div class="sugs">' + ['Paste a posting and say /apply', 'Critique my CV', 'Run a mock interview'].map(function (s) {
+      return '<button class="pl-suggestion pl-btn pl-btn--sm" data-sug="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div></div>';
+  $('setup').onclick = function () { toast('Drafted \u201c/setup-coach\u201d into the chat composer. Nothing was sent.'); };
+  b.querySelectorAll('[data-sug]').forEach(function (x) { x.onclick = function () { toast('Drafted \u201c' + x.dataset.sug + '\u201d into the chat composer.'); }; });
+}
+function cardHtml(a) {
+  var n = days(a.updated), fit = a.fit_score > 0 ? ' · fit ' + a.fit_score : '';
+  return '<div class="pcard' + (S.lift === a.id ? ' lift' : '') + '" draggable="true" tabindex="0" data-id="' + a.id + '" role="button"' +
+    ' aria-label="' + esc(a.role + ' at ' + a.company + ', ' + label(a.status) + ', ' + n + ' days' + (a.followup ? ', no reply, follow up' : '') + (S.lift === a.id ? ', picked up' : '')) + '">' +
+    '<div class="r">' + esc(a.role) + '</div><div class="muted">' + esc(a.company) + '</div>' +
+    '<div class="muted sm" style="margin-top:3px">' + n + 'd' + fit + '</div>' +
+    (a.followup ? '<div class="nudge">\u26a0 No reply in ' + n + ' days</div>' : '') + '</div>';
+}
+function colApps(s) {
+  return apps().filter(function (a) { return a.status === s; }).sort(function (x, y) {
+    if (x.followup !== y.followup) return x.followup ? -1 : 1; return x.updated < y.updated ? -1 : 1; });
+}
+function renderPipeline(b) {
+  var nc = apps().filter(isClosed).length;
+  if (!apps().filter(isOpen).length) { b.innerHTML = '<div class="emptyc"><b>No live applications</b><p class="muted sm">Keep a role from Inbox, or paste a posting in chat.</p></div>'; return; }
+  var board = '<div class="board" role="list">' + COLS.map(function (s) {
+    var r = colApps(s);
+    return '<div class="col" data-col="' + s + '" role="listitem" aria-label="' + COL_LABEL[s] + ', ' + r.length + '"><h4>' + COL_LABEL[s] + '<span class="cnt">' + r.length + '</span></h4>' +
+      '<div class="list">' + (r.map(cardHtml).join('') || '<div class="muted sm" style="padding:4px">\u2014</div>') + '</div></div>';
+  }).join('') + '<div class="col stub" data-col="closed" role="listitem"><span>Closed</span><b>' + nc + '</b><span>Drop here to close</span>' +
+    '<button class="pl-btn pl-btn--ghost pl-btn--xs" id="to-closed">View all</button></div></div>';
+  var stages = '<div class="stages">' + COLS.map(function (s) {
+    var r = colApps(s), open = S.stage[s] != null ? S.stage[s] : r.length > 0;
+    return '<details class="grp" data-stage="' + s + '"' + (open ? ' open' : '') + '><summary><span class="chev">\u203a</span><span class="grow">' + COL_LABEL[s] + '</span><span class="cnt">' + r.length + '</span></summary>' +
+      r.map(function (a) { return '<div class="row" tabindex="0" data-id="' + a.id + '"><div class="main"><div class="ti">' + esc(a.role) + '</div><div class="meta">' + esc(a.company) + ' · ' + days(a.updated) + 'd' +
+        (a.followup ? ' · <span style="color:var(--pl-color-status-warning)">\u26a0 no reply</span>' : '') + '</div></div></div>'; }).join('') + '</details>';
+  }).join('') + '<div class="row" tabindex="0" id="to-closed2"><div class="main"><div class="ti">Closed \u00b7 ' + nc + '</div><div class="meta">Open the Closed tab</div></div></div></div>';
+  b.innerHTML = '<p class="muted sm" style="margin:0 0 8px">Drag a card, or focus it and press <span class="pl-kbd">Space</span> to pick up, <span class="pl-kbd">\u2190</span><span class="pl-kbd">\u2192</span> to move, <span class="pl-kbd">Space</span> to drop.</p>' + board + stages;
+  $('to-closed').onclick = function () { setTab('closed'); };
+  $('to-closed2').onclick = function () { setTab('closed'); };
+  b.querySelectorAll('details[data-stage]').forEach(function (d) { d.ontoggle = function () { S.stage[d.dataset.stage] = d.open; }; });
+  b.querySelectorAll('.stages .row[data-id]').forEach(function (r) { r.onclick = function () { openDrawer(r.dataset.id); };
+    r.onkeydown = function (e) { if (e.key === 'Enter') openDrawer(r.dataset.id); }; });
+  wireBoard(b);
+}
+function wireBoard(b) {
+  var drag = null;
+  b.querySelectorAll('.pcard').forEach(function (c) {
+    c.ondragstart = function (e) { drag = c.dataset.id; try { e.dataTransfer.setData('text/plain', drag); } catch (x) {} };
+    c.onclick = function () { if (!S.lift) openDrawer(c.dataset.id); };
+    c.onkeydown = function (e) {
+      var id = c.dataset.id, a = find(id);
+      if (e.key === ' ') { e.preventDefault();
+        if (S.lift === id) { var to = S.liftCol; S.lift = null; S.liftCol = null; S.focus = id; requestMove(id, to); }
+        else { S.lift = id; S.liftCol = a.status; S.focus = id; render(); announce('Picked up ' + a.role + '. Use left and right arrows to move, Space to drop, Escape to cancel.'); }
+      } else if (S.lift === id && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { e.preventDefault();
+        var all = COLS.concat(['closed']), i = all.indexOf(S.liftCol === 'rejected' || S.liftCol === 'passed' ? 'closed' : S.liftCol);
+        S.liftCol = all[Math.max(0, Math.min(all.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)))];
+        announce('Over ' + (S.liftCol === 'closed' ? 'Closed' : COL_LABEL[S.liftCol]));
+        var col = b.querySelector('.col[data-col="' + S.liftCol + '"]'); b.querySelectorAll('.col').forEach(function (x) { x.classList.toggle('over', x === col); });
+      } else if (e.key === 'Escape' && S.lift === id) { S.lift = null; S.focus = id; render(); announce('Move cancelled.'); }
+      else if (e.key === 'Enter' && !S.lift) openDrawer(id);
+    };
+  });
+  b.querySelectorAll('.col[data-col]').forEach(function (col) {
+    col.ondragover = function (e) { e.preventDefault(); col.classList.add('over'); };
+    col.ondragleave = function () { col.classList.remove('over'); };
+    col.ondrop = function (e) { e.preventDefault(); col.classList.remove('over'); if (drag) requestMove(drag, col.dataset.col); drag = null; };
+  });
+}
+function requestMove(id, col) {
+  var a = find(id); if (!a) return;
+  if (col === 'closed') { if (isClosed(a)) return render();
+    return askDialog('Close ' + a.role + ' at ' + a.company + ' as rejected, or passed on?', [['passed', 'Mark passed', true], ['rejected', 'Mark rejected'], [null, 'Cancel']],
+      function (v) { if (v) doMove(a, v); else render(); }); }
+  if (a.status === col) return render();
+  doMove(a, col);
+}
+function doMove(a, to) {
+  var prev = a.status, pf = a.followup; a.status = to; if (to !== 'applied') a.followup = false;
+  render(); refreshDrawer();
+  var msg = a.role + ' moved to ' + label(to); announce(msg);
+  toast(msg + '.', function () { a.status = prev; a.followup = pf; render(); refreshDrawer(); announce('Move undone.'); });
+}
+function bucket(r) {
+  if (!r.score) return 'miss';
+  var h = (NOW - r.posted) / HOUR; return h < 24 ? 'today' : h < 168 ? 'week' : 'older';
+}
+var GRP = [['today', 'Today'], ['week', 'This week'], ['older', 'Older'], ['miss', 'Title didn\u2019t match']];
+function renderInbox(b) {
+  var all = inbox(), ghosts = all.filter(function (r) { return r.ghost; }).length;
+  var rows = all.filter(function (r) { return !(S.hideGhost && r.ghost); });
+  if (!all.length) { b.innerHTML = '<div class="emptyc"><b>All caught up</b><p class="muted sm">Your watch last ran 2h ago. New roles land here.</p></div>'; return; }
+  rows.sort(function (x, y) { return S.sort === 'newest' ? y.posted - x.posted : x.posted - y.posted; });
+  var nsel = Object.keys(S.sel).length;
+  var tb = nsel
+    ? '<div class="toolbar"><strong>' + nsel + ' selected</strong><button class="pl-btn pl-btn--sm" id="b-keep">Keep</button><button class="pl-btn pl-btn--sm" id="b-dis">Dismiss</button><button class="pl-btn pl-btn--ghost pl-btn--sm" id="b-clr">Clear</button></div>'
+    : '<div class="toolbar"><label class="muted" for="sort">Sort</label><select id="sort" class="pl-select"><option value="newest"' + (S.sort === 'newest' ? ' selected' : '') + '>Newest</option><option value="oldest"' + (S.sort === 'oldest' ? ' selected' : '') + '>Oldest</option></select>' +
+      (ghosts ? '<button class="pl-chip" id="ghost" aria-pressed="' + S.hideGhost + '">' + (S.hideGhost ? '\u2713 ' : '') + 'Hide likely ghost jobs \u00b7 ' + ghosts + '</button>' : '') +
+      '<span class="grow"></span><span class="muted"><span class="pl-kbd">\u2191\u2193</span> move <span class="pl-kbd">K</span> keep <span class="pl-kbd">D</span> dismiss <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span></div>';
+  var html = GRP.map(function (g) {
+    var r = rows.filter(function (x) { return bucket(x) === g[0]; }); if (!r.length) return '';
+    return '<details class="grp" data-g="' + g[0] + '"' + (S.open[g[0]] ? ' open' : '') + '><summary><span class="chev" aria-hidden="true">\u203a</span><span class="grow">' + g[1] + '</span>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--xs" data-all="' + g[0] + '">Select all</button><span class="cnt">' + r.length + '</span></summary>' +
+      '<div role="listbox" aria-multiselectable="true" aria-label="' + g[1] + '">' + r.map(rowHtml).join('') + '</div></details>';
+  }).join('');
+  b.innerHTML = tb + '<div class="' + (nsel ? 'multi' : '') + '">' + html + '</div>';
+  if ($('sort')) $('sort').onchange = function () { S.sort = $('sort').value; render(); };
+  if ($('ghost')) $('ghost').onclick = function () { S.hideGhost = !S.hideGhost; render(); };
+  if ($('b-keep')) { $('b-keep').onclick = function () { bulk('keep'); }; $('b-dis').onclick = function () { bulk('dismiss'); }; $('b-clr').onclick = function () { S.sel = {}; render(); }; }
+  b.querySelectorAll('details[data-g]').forEach(function (d) { d.ontoggle = function () { S.open[d.dataset.g] = d.open; }; });
+  b.querySelectorAll('[data-all]').forEach(function (x) { x.onclick = function (e) { e.preventDefault(); e.stopPropagation();
+    rows.filter(function (r) { return bucket(r) === x.dataset.all; }).forEach(function (r) { S.sel[r.id] = 1; }); render(); }; });
+  wireRows(b);
+}
+function rowHtml(r) {
+  var isNew = r.posted > LAST_VISIT, sel = !!S.sel[r.id];
+  var reason = r.score ? 'Title matches <em>' + esc(r.matched) + '</em>' : 'Title doesn\u2019t match your targets';
+  return '<div class="row' + (sel ? ' sel' : '') + '" role="option" aria-selected="' + sel + '" tabindex="0" data-id="' + r.id + '">' +
+    '<input type="checkbox" class="pl-checkbox ck" tabindex="-1" aria-label="Select ' + esc(r.title) + '"' + (sel ? ' checked' : '') + '>' +
+    '<div class="main"><div class="ti">' + (isNew ? '<span class="newdot"><span class="pl-dot pl-dot--info" aria-hidden="true"></span>New</span> ' : '') + esc(r.title) + '</div>' +
+    '<div class="meta">' + esc(r.company) + ' \u00b7 ' + ago(r.posted) + ' \u00b7 ' + reason + '</div>' +
+    (r.ghost ? '<div style="margin-top:4px"><span class="pl-badge pl-badge--warning" title="' + esc(r.ghost) + '">Possible ghost job</span> <span class="muted sm">' + esc(r.ghost) + '</span></div>' : '') + '</div>' +
+    '<div class="acts"><button class="pl-btn pl-btn--ghost pl-btn--xs" data-a="open" tabindex="-1">View posting</button><button class="pl-btn pl-btn--xs" data-a="dismiss" tabindex="-1">Dismiss</button><button class="pl-btn pl-btn--primary pl-btn--xs" data-a="keep" tabindex="-1">Keep</button></div></div>';
+}
+function wireRows(b) {
+  var list = Array.prototype.slice.call(b.querySelectorAll('.row[data-id]'));
+  list.forEach(function (row, i) {
+    var id = row.dataset.id;
+    row.onclick = function (e) {
+      var a = e.target.closest('[data-a]'), ck = e.target.closest('.ck');
+      if (ck) { if (S.sel[id]) delete S.sel[id]; else S.sel[id] = 1; S.focus = id; return render(); }
+      if (a) { e.stopPropagation(); return a.dataset.a === 'open' ? toast('Opens the posting in a new tab (preview: no real link).') : inboxAct(id, a.dataset.a); }
+      openDrawer(id, 'inbox');
+    };
+    row.onkeydown = function (e) {
+      if (e.target !== row) return;
+      var k = e.key.toLowerCase();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); var n = list[i + (e.key === 'ArrowDown' ? 1 : -1)]; if (n) n.focus(); }
+      else if (k === 'k') inboxAct(id, 'keep', list[i + 1] || list[i - 1]);
+      else if (k === 'd') inboxAct(id, 'dismiss', list[i + 1] || list[i - 1]);
+      else if (k === 'o') toast('Opens the posting in a new tab (preview: no real link).');
+      else if (k === 'x' || e.key === ' ') { e.preventDefault(); if (S.sel[id]) delete S.sel[id]; else S.sel[id] = 1; S.focus = id; render(); }
+      else if (e.key === 'Enter') openDrawer(id, 'inbox');
+    };
+  });
+}
+function inboxAct(id, act, next) {
+  var r = findIn(id); if (!r) return;
+  if (next) S.focus = next.dataset.id;
+  if (act === 'keep') {
+    S.kept[id] = 1; var a = app('saved', r.title, 0, { company: r.company }); render();
+    toast('Kept \u2014 in Saved.', function () { delete S.kept[id]; APPS.splice(APPS.indexOf(a), 1); render(); });
+  } else {
+    S.dismissed[id] = 1; render();
+    toast('Dismissed ' + r.title + '.', function () { delete S.dismissed[id]; render(); });
+  }
+  announce(act === 'keep' ? 'Kept, moved to Saved' : 'Dismissed');
+}
+function bulk(act) {
+  var ids = Object.keys(S.sel), made = [];
+  ids.forEach(function (id) { var r = findIn(id); if (act === 'keep') { S.kept[id] = 1; made.push(app('saved', r.title, 0, { company: r.company })); } else S.dismissed[id] = 1; });
+  S.sel = {}; render();
+  toast((act === 'keep' ? 'Kept ' : 'Dismissed ') + ids.length + ' roles.', function () {
+    ids.forEach(function (id) { delete S.kept[id]; delete S.dismissed[id]; });
+    made.forEach(function (a) { APPS.splice(APPS.indexOf(a), 1); }); render(); });
+}
+function renderClosed(b) {
+  var all = apps().filter(isClosed).sort(function (x, y) { return x.updated < y.updated ? 1 : -1; });
+  var nr = all.filter(function (a) { return a.status === 'rejected'; }).length, np = all.length - nr;
+  var q = S.closedQ.toLowerCase();
+  var rows = all.filter(function (a) { return (S.closedOut === 'all' || a.status === S.closedOut) && (!q || (a.role + ' ' + a.company).toLowerCase().indexOf(q) >= 0); });
+  var per = 25, pages = Math.max(1, Math.ceil(rows.length / per)); S.closedPage = Math.min(S.closedPage, pages - 1);
+  var page = rows.slice(S.closedPage * per, S.closedPage * per + per);
+  var seg = [['all', 'All'], ['rejected', 'Rejected'], ['passed', 'Passed']].map(function (o) {
+    return '<button class="pl-seg' + (S.closedOut === o[0] ? ' pl-seg--active' : '') + '" aria-pressed="' + (S.closedOut === o[0]) + '" data-out="' + o[0] + '">' + o[1] + '</button>'; }).join('');
+  b.innerHTML = '<p class="muted sm" style="margin:0 0 8px">' + all.length + ' closed \u00b7 ' + nr + ' rejected \u00b7 ' + np + ' passed</p>' +
+    '<div class="toolbar"><label class="sr" for="cq">Search closed roles</label><input id="cq" class="pl-input" placeholder="Search role or company" value="' + esc(S.closedQ) + '" style="max-width:240px">' +
+    '<div class="pl-segmented" role="group" aria-label="Outcome">' + seg + '</div></div>' +
+    (page.length ? '<table class="pl-table"><thead><tr><th>Role</th><th class="c-co">Company</th><th>Outcome</th><th class="c-dt">Closed on</th></tr></thead><tbody>' +
+      page.map(function (a) { return '<tr class="pl-tr--interactive tr" tabindex="0" data-id="' + a.id + '"><td>' + esc(a.role) + '<div class="sub2">' + esc(a.company) + ' \u00b7 ' + a.updated + '</div></td>' +
+        '<td class="c-co">' + esc(a.company) + '</td><td><span class="pl-badge' + (a.status === 'rejected' ? '' : ' pl-badge--info') + '">' + (a.status === 'rejected' ? 'Rejected' : 'Passed') + '</span></td>' +
+        '<td class="c-dt muted">' + a.updated + '</td></tr>'; }).join('') + '</tbody></table>'
+      : '<div class="emptyc"><b>No closed roles match</b></div>') +
+    '<div class="pager"><span class="muted">' + (rows.length ? (S.closedPage * per + 1) + '\u2013' + (S.closedPage * per + page.length) + ' of ' + rows.length : '0') + '</span>' +
+    '<button class="pl-btn pl-btn--sm" id="pg-prev"' + (S.closedPage ? '' : ' disabled') + '>Previous</button><button class="pl-btn pl-btn--sm" id="pg-next"' + (S.closedPage < pages - 1 ? '' : ' disabled') + '>Next</button></div>';
+  $('cq').oninput = function () { S.closedQ = $('cq').value; S.closedPage = 0; render(); };
+  b.querySelectorAll('[data-out]').forEach(function (x) { x.onclick = function () { S.closedOut = x.dataset.out; S.closedPage = 0; render(); }; });
+  $('pg-prev').onclick = function () { S.closedPage--; render(); };
+  $('pg-next').onclick = function () { S.closedPage++; render(); };
+  b.querySelectorAll('.tr').forEach(function (r) { r.onclick = function () { openDrawer(r.dataset.id); }; r.onkeydown = function (e) { if (e.key === 'Enter') openDrawer(r.dataset.id); }; });
+}
+function askDialog(q, opts, cb) {
+  var d = $('dlg'), prev = document.activeElement; $('dlg-q').textContent = q;
+  $('dlg-btns').innerHTML = opts.map(function (o, i) { return '<button class="pl-btn' + (o[2] ? ' pl-btn--primary' : '') + '" data-i="' + i + '">' + o[1] + (o[2] ? ' (default)' : '') + '</button>'; }).join('');
+  d.classList.add('show');
+  function done(v) { d.classList.remove('show'); d.onkeydown = null; cb(v); if (prev && prev.isConnected) prev.focus(); }
+  $('dlg-btns').querySelectorAll('button').forEach(function (b) { b.onclick = function () { done(opts[+b.dataset.i][0]); }; });
+  d.onkeydown = function (e) { if (e.key === 'Escape') { e.stopPropagation(); done(null); } trap(e, d); };
+  $('dlg-btns').querySelector('button').focus();
+}
+function trap(e, root) {
+  if (e.key !== 'Tab') return;
+  var f = root.querySelectorAll('button:not([disabled]),select,textarea,input,[tabindex="0"]'); if (!f.length) return;
+  var first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+function closeDrawer() {
+  $('cc').classList.remove('dopen'); S.dOpen = null;
+  var r = S.dReturn; S.dReturn = null;
+  if (r) { var el = visibleById(r) || (r === 'about' ? $('about-btn') : null); if (el) el.focus(); }
+}
+function showDrawer(title, head, body, ret) {
+  $('d-head').innerHTML = '<div id="d-title" style="font-size:16px;font-weight:600">' + title + '</div>' + head;
+  $('d-body').innerHTML = body;
+  if (!$('cc').classList.contains('dopen')) S.dReturn = ret;
+  $('cc').classList.add('dopen'); $('d-close').focus();
+}
+function refreshDrawer() { if (S.dOpen && S.dOpen !== 'about') openDrawer(S.dOpen, S.dFrom, true); }
+function openDrawer(id, from, keep) {
+  var r = from === 'inbox' ? findIn(id) : null, a = r ? null : find(id);
+  if (!r && !a) return;
+  S.dOpen = id; S.dFrom = from;
+  if (r) return drawerInbox(r);
+  var closed = isClosed(a);
+  var opts = COLS.concat(['rejected', 'passed']).map(function (s) { return '<option value="' + s + '"' + (a.status === s ? ' selected' : '') + '>' + label(s) + '</option>'; }).join('');
+  var head = '<div class="muted sm">' + esc(a.company) + '</div><div class="toolbar" style="margin:8px 0 0">' +
+    '<label class="sr" for="d-status">Status</label><select id="d-status" class="pl-select" aria-label="Status">' + opts + '</select>' +
+    '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="d-post">View posting</button></div>';
+  var next = closed ? ['reopen', 'Reopen (move to Saved)'] : a.status === 'interviewing' ? ['prep', 'Prep me for this interview'] : a.status === 'offer' ? ['offer', 'Weigh this offer'] :
+             (a.status === 'saved' || a.status === 'preparing') ? ['kit', 'Build apply kit'] : ['follow', a.followup ? 'Draft a follow-up' : 'Ask coach about this role'];
+  var body = '<section class="dsec"><h5>Next step</h5><div class="toolbar"><button class="pl-btn pl-btn--primary" id="d-next" data-k="' + next[0] + '">' + next[1] + '</button>' +
+    (closed ? '' : '<div style="position:relative"><button class="pl-btn pl-btn--sm" id="d-more" aria-haspopup="menu" aria-expanded="false">Ask your coach \u25be</button>' +
+    '<div class="pl-menu" id="d-menu" role="menu" hidden style="position:absolute;z-index:3;top:100%;left:0;min-width:200px;background:var(--pl-color-bg-raised);border:1px solid var(--pl-color-border);border-radius:var(--pl-radius);padding:4px">' +
+    ['Tailor my résumé', 'Prep me for this interview', 'Draft a follow-up'].map(function (t) { return '<button role="menuitem" class="pl-btn pl-btn--ghost pl-btn--sm" style="display:block;width:100%;text-align:left" data-m="' + t + '">' + t + '</button>'; }).join('') + '</div></div>') +
+    '</div>' + (a.followup ? '<p class="sm" style="margin:6px 0 0;color:var(--pl-color-status-warning)">\u26a0 No reply in ' + days(a.updated) + ' days.</p>' : '') + '</section>';
+  if (!closed) body += kitHtml(a);
+  if (a.fit_score > 0) body += '<section class="dsec"><h5>Fit</h5><div style="display:flex;gap:10px;align-items:baseline"><span style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">' + a.fit_score + '</span>' +
+    '<span class="muted sm">' + (a.fit_score >= 75 ? 'Strong fit' : a.fit_score >= 50 ? 'Moderate fit' : 'Poor fit') + ' \u00b7 scored by your coach against your rubric</span></div></section>';
+  body += '<section class="dsec"><h5><label for="d-notes">Notes</label></h5><textarea id="d-notes" class="pl-textarea" rows="3" style="width:100%;box-sizing:border-box" placeholder="Your notes on this role">' + esc(a.notes) + '</textarea>' +
+    '<div class="muted sm" id="d-saved" role="status" aria-live="polite" style="min-height:1.2em"></div></section>';
+  body += '<details class="grp"><summary><span class="chev">\u203a</span><span class="grow">Timeline</span></summary><div style="padding:0 12px 10px" class="sm">' +
+    '<div>' + a.date + ' \u00b7 Saved from watch</div>' + (a.status !== 'saved' ? '<div>' + a.updated + ' \u00b7 Status \u2192 ' + label(a.status) + '</div>' : '') + '</div></details>';
+  showDrawer(esc(a.role), head, body, id);
+  $('d-status').onchange = function () { var v = $('d-status').value;
+    if (v === 'rejected' || v === 'passed' || COLS.indexOf(v) >= 0) doMove(a, v); };
+  $('d-post').onclick = function () { toast('Opens the posting in a new tab (preview: no real link).'); };
+  $('d-next').onclick = function () {
+    var k = $('d-next').dataset.k;
+    if (k === 'reopen') return doMove(a, 'saved');
+    toast('Drafted \u201c' + next[1] + ': ' + a.role + ' at ' + a.company + '\u201d into the chat composer. Nothing was sent.');
+  };
+  if ($('d-more')) {
+    $('d-more').onclick = function () { var m = $('d-menu'); m.hidden = !m.hidden; $('d-more').setAttribute('aria-expanded', !m.hidden); if (!m.hidden) m.querySelector('button').focus(); };
+    $('d-menu').querySelectorAll('[data-m]').forEach(function (x) { x.onclick = function () { $('d-menu').hidden = true; $('d-more').setAttribute('aria-expanded', 'false'); $('d-more').focus();
+      toast('Drafted \u201c' + x.dataset.m + '\u201d into the chat composer. Nothing was sent.'); }; });
+  }
+  if ($('d-applied')) $('d-applied').onclick = function () { askDialog('Mark ' + a.role + ' at ' + a.company + ' as applied?', [['y', 'Yes', true], [null, 'Cancel']], function (v) { if (v) doMove(a, 'applied'); }); };
+  $('d-notes').onblur = function () { if (a.notes !== $('d-notes').value) { a.notes = $('d-notes').value; $('d-saved').textContent = 'Saved'; } };
+}
+function kitHtml(a) {
+  var steps = [['Résumé', 'Tailors your résumé to this posting\u2019s title and requirements.'],
+               ['Cover letter', 'Writes one if the posting asks for it, or marks it not needed.'],
+               ['Form answers', SAVED_ANSWERS + ' saved answers will be reused; it drafts any new questions for you to confirm.']];
+  var open = a.status === 'saved' || a.status === 'preparing';
+  return '<details class="grp"' + (open ? ' open' : '') + '><summary><span class="chev">\u203a</span><span class="grow">Apply kit</span><span class="pl-badge">Not started</span></summary>' +
+    '<div style="padding:0 12px 12px"><div class="pl-steps">' + steps.map(function (s, i) {
+      return '<div class="step pl-step"><span class="n" aria-hidden="true">' + (i + 1) + '</span><div><div style="font-weight:600">' + s[0] + ' <span class="muted sm" style="font-weight:400">\u00b7 Not started</span></div>' +
+        '<div class="muted sm">' + s[1] + '</div></div></div>'; }).join('') + '</div>' +
+    (open ? '<p class="muted sm" style="margin:8px 0 0">Your coach builds all three in chat. You review each before anything is sent.</p>' : '') +
+    (a.status !== 'applied' ? '<div class="toolbar" style="margin:10px 0 0"><button class="pl-btn pl-btn--sm" id="d-applied">I applied already \u2014 mark applied</button></div>' : '') + '</div></details>';
+}
+function drawerInbox(r) {
+  var head = '<div class="muted sm">' + esc(r.company) + ' \u00b7 posted ' + ago(r.posted) + '</div>';
+  var body = '<section class="dsec"><h5>Next step</h5><div class="toolbar"><button class="pl-btn pl-btn--primary" id="d-keep">Keep (move to Saved)</button><button class="pl-btn" id="d-dis">Dismiss</button>' +
+    '<button class="pl-btn pl-btn--ghost" id="d-post">View posting</button></div></section>' +
+    '<section class="dsec"><h5>Why it surfaced</h5><p class="sm" style="margin:0">' + (r.score ? 'Title matches <em>' + esc(r.matched) + '</em>, one of your target roles.' : 'The title doesn\u2019t match your target roles. The watch kept it because the company is on your list.') + '</p>' +
+    (r.ghost ? '<p style="margin:8px 0 0"><span class="pl-badge pl-badge--warning">Possible ghost job</span> <span class="muted sm">' + esc(r.ghost) + '</span></p>' : '') + '</section>' +
+    '<section class="dsec"><h5>Posting</h5><p class="muted sm" style="margin:0">Invented snippet: you\u2019ll own the platform that runs every service, from build to deploy to observability. Remote within two time zones of UTC.</p></section>';
+  showDrawer(esc(r.title), head, body, r.id);
+  var nxt = function () { var ids = inbox().map(function (x) { return x.id; }), i = ids.indexOf(r.id); return ids[i + 1] || ids[i - 1]; };
+  $('d-keep').onclick = function () { S.dReturn = nxt(); closeDrawer(); inboxAct(r.id, 'keep'); };
+  $('d-dis').onclick = function () { S.dReturn = nxt(); closeDrawer(); inboxAct(r.id, 'dismiss'); };
+  $('d-post').onclick = function () { toast('Opens the posting in a new tab (preview: no real link).'); };
+}
+function openAbout() {
+  S.dOpen = 'about';
+  var prof = S.scn === 'new' ? null : [['Name', 'Alex Example'], ['Target roles', 'Staff / Senior Platform Engineer'], ['Location', 'Remote, UTC\u00b12'], ['Salary floor', 'not recorded'], ['Work history', '8 roles recorded']];
+  var body = '<p class="muted sm" style="margin:0">A read-only view. To change anything, tell your coach in chat. Settings live in Settings \u203a Career Coach.</p>' +
+    '<details class="grp" open><summary><span class="chev">\u203a</span><span class="grow">What your coach knows about you</span></summary><div style="padding:0 12px 10px" class="sm">' +
+    (prof ? prof.map(function (p) { return '<div style="display:flex;gap:12px;padding:3px 0"><span class="muted" style="width:110px;flex:none">' + p[0] + '</span><span' + (p[1] === 'not recorded' ? ' class="muted"><em>' : '>') + p[1] + (p[1] === 'not recorded' ? '</em>' : '') + '</span></div>'; }).join('')
+      : '<p class="muted">Nothing recorded yet. Run /setup-coach in chat and it will build this with you.</p>') + '</div></details>' +
+    '<details class="grp"><summary><span class="chev">\u203a</span><span class="grow">Fit rubric: how a role is scored</span></summary><div style="padding:0 12px 10px" class="sm">' +
+    [['Role match', 35], ['Seniority', 25], ['Location', 20], ['Compensation', 20]].map(function (w) { return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0"><span class="muted" style="width:110px">' + w[0] + '</span><progress class="pl-progress" max="100" value="' + w[1] + '" style="flex:1" aria-label="' + w[0] + ' weight"></progress><span>' + w[1] + '</span></div>'; }).join('') + '</div></details>' +
+    '<details class="grp"><summary><span class="chev">\u203a</span><span class="grow">Exactly what it\u2019s told each turn</span></summary><pre class="pl-code-block sm" style="margin:0 12px 12px;white-space:pre-wrap">Candidate: Alex Example (invented)\nTargets: Staff / Senior Platform Engineer, remote</pre></details>';
+  showDrawer('About you', '', body, 'about');
+}
+$('about-btn').onclick = openAbout;
+$('d-close').onclick = closeDrawer;
+$('scrim').onclick = closeDrawer;
+$('drawer').onkeydown = function (e) { if (e.key === 'Escape') { var m = $('d-menu'); if (m && !m.hidden) { m.hidden = true; $('d-more').focus(); } else closeDrawer(); } trap(e, $('drawer')); };
+$('pv-scn').onchange = function () { S.scn = $('pv-scn').value; S.tab = 'pipeline'; S.todayAll = false; closeDrawer(); render(); };
+$('pv-w').onchange = function () { S.w = $('pv-w').value; var c = $('cc'); c.classList.toggle('rail', S.w === 'rail'); c.classList.toggle('mid', S.w === 'mid'); render(); };
+$('pv-th').onchange = function () { var v = $('pv-th').value, r = document.documentElement; if (v) r.setAttribute('data-theme', v); else r.removeAttribute('data-theme'); };
+render();
+</script>
