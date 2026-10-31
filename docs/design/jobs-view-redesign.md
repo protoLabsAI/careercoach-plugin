@@ -11,6 +11,8 @@ Data facts the design rests on (owner's live instance, rev 2):
 - There is no interview-date field. An application has company, role, status, date, updated, history, fit_score, notes, source, posting, id, and `followup` from the server.
 - Ghost-job warnings are rare.
 
+**How to read this.** The spec wins where the spec and preview differ. Where the spec is silent, follow the preview. "+N more" expands the Today band in place to show every item. Block a slice only for something that can't be built, not for a small gap these rules settle.
+
 ## 1. Principles
 1. **State first, list second.** The first screen answers "what needs me today?" and "where does everything stand?". Nobody should scroll to reach the pipeline.
 2. **One question per surface.** Triage lives in Inbox, standing lives in Pipeline, sending lives in the drawer. They are tabs, not one stack.
@@ -23,7 +25,7 @@ Data facts the design rests on (owner's live instance, rev 2):
 ## 2. Information architecture
 ```
 ┌ Header: Career Coach / Jobs · "Targeting: …" ··························· [About you] ┐
-├ TODAY band (only items that need the operator; max 3 rows, then "+N more")         ┤
+├ TODAY band (only items that need the operator; max 3 rows, "+N more" expands)   ┤
 │  ⚠ 3 applications have had no reply in 10+ days — follow up      [Review]          │
 │  ● Interviewing: Staff Engineer @ Northwind, prep not started    [Prep]            │
 │  ✦ 7 new roles since your last visit                             [Triage]          │
@@ -35,7 +37,7 @@ Data facts the design rests on (owner's live instance, rev 2):
 
 | Region | Contents | Shows when |
 |---|---|---|
-| Header | eyebrow `Career Coach`, title `Jobs`, target-roles subline, **About you** ghost button | always |
+| Header | eyebrow `Career Coach`, title `Jobs`, target-roles subline (hidden below 600px), **About you** ghost button | always |
 | Today band | follow-ups due (server `followup`), roles in Interviewing (needs prep; no date exists), offers awaiting a decision, Saved/Preparing roles with no kit, count of inbox roles new since the last visit (fallback: last 24h) | at least one item exists; hidden otherwise |
 | Tabs | Pipeline (default), Inbox, Closed, each with a `Count` | always (counts hide at 0) |
 | Pipeline tab | board: Saved · Preparing · Applied · Interviewing · Offer, plus a collapsed **Closed** drop target | default tab |
@@ -137,6 +139,7 @@ The layout reads the view root's width through a container query, not the viewpo
   - The Pipeline tab changes from a board to a **stacked list grouped by stage**: Saved, Preparing, Applied, Interviewing, Offer, each an `Accordion` item with its `Count`. Stages with items open; empty stages collapse to one line. Drag is off, and moving goes through the drawer Status select or keyboard pick-up (↑/↓ between stages).
   - Tabs use `responsive`, collapsing to a menu trigger if the counts don't fit.
   - The Today band caps at 2 rows plus "+N more".
+  - The header's target-roles subline is hidden.
   - The Closed table drops the Company and Closed-on columns; both move under the role as one muted line.
   - The drawer becomes `side="bottom"` at 85dvh.
 
