@@ -149,7 +149,7 @@ def test_keep_promotes_the_card_with_its_evidence(stores, track):
     assert "Kept Frontend Engineer @ Acme" in out
     assert wl.inbox_for_view() == []
     row = state.load_applications()[0]
-    assert (row["status"], row["fit_score"], row["source"]) == ("considering", 80, "https://example.com/jobs/one")
+    assert (row["status"], row["fit_score"], row["source"]) == ("considering", 0, "https://example.com/jobs/one")
     assert "careercoach.application_tracked" in [topic for topic, _ in reg.emitted]
 
 

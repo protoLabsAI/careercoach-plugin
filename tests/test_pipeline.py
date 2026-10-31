@@ -153,7 +153,7 @@ def test_keep_promotes_inbox_item_and_removes_it(plugin, client):
     assert len(rows) == 1
     row = rows[0]
     assert row["status"] == "considering"
-    assert row["fit_score"] == 92  # score kept
+    assert row["fit_score"] == 0  # a title match is not a fit evaluation
     assert row["source"] == "https://acme.example/jobs/j1"  # url kept as source
     assert row["posting"]["title"] == "AI Engineer"  # posting evidence stored
     assert row["posting"]["snippet"] == "Build useful AI systems."
