@@ -54,6 +54,8 @@ Never scrape LinkedIn or Indeed, and never automate submissions in bulk.
    (Offer to schedule it daily, e.g. weekdays 8am, with the scheduler tools if present.)
 2. Triage the new roles with the operator — a quick read of each, not a full evaluation. Drop ghosts
    (open 45+ days, reposted, thin text) unless something specific says otherwise.
+   `careercoach_track(action="inbox")` lists what's waiting; `action="keep"` or `"dismiss"` with its
+   `inbox_id` decides a card. Tracking a role clears its card on its own.
 3. For each keeper, ask who the operator knows there (or use the optional referral lookup below).
    If they know someone, draft the
    referral ask (3-5 sentences: the role link, why it fits in one line, one piece of proof of work)

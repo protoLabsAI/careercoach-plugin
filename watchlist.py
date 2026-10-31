@@ -19,8 +19,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import profile as _store
+from . import state
 from .boards import age_days
-from .companies import company_key
+from .companies import company_key, role_key
 
 StoreUnreadable = _store.StoreUnreadable
 
@@ -176,6 +177,30 @@ def _dismissed(job: dict, dismissed: dict) -> bool:
     )
 
 
+def _url_key(url: str) -> str:
+    return (url or "").strip().rstrip("/")
+
+
+def _pipeline_keys() -> set[tuple[str, str]]:
+    """What the pipeline already holds: (company, role) and (company, posting URL) pairs. An unreadable
+    pipeline reads as empty, so the inbox shows a card rather than hide one it can't check."""
+    keys = set()
+    for row in state.load_applications():
+        ck = company_key(row.get("company", ""))
+        keys.add((ck, role_key(row.get("role", ""))))
+        if _url_key(row.get("source")):
+            keys.add((ck, _url_key(row.get("source"))))
+    return keys
+
+
+def _tracked(job: dict, keys: set[tuple[str, str]]) -> bool:
+    """A card is settled once its role is in the pipeline, whatever status that row has. The URL
+    catches a role tracked under a different title; it never crosses companies."""
+    ck = company_key(job.get("company", ""))
+    url = _url_key(job.get("url"))
+    return (ck, role_key(job.get("title", ""))) in keys or bool(url and (ck, url) in keys)
+
+
 def _newest(jobs) -> list[dict]:
     return sorted(jobs, key=lambda j: j.get("posted") or j.get("first_seen") or "", reverse=True)
 
@@ -215,10 +240,27 @@ def add_to_inbox(jobs: list[dict]) -> int:
 
 
 def inbox_for_view() -> list[dict]:
-    """Actionable items, including those already digested, newest posting first."""
+    """Actionable items, including those already digested, newest posting first. Read before the
+    inbox lock: the pipeline has its own lock, and tracking a role never needs this one."""
+    tracked = _pipeline_keys()
     with _store._locked("inbox"):
         dismissed = _load(DISMISSED, {})
-        return _newest(j for j in _load(INBOX, []) if not j.get("kept") and not _dismissed(j, dismissed))
+        return _newest(
+            j
+            for j in _load(INBOX, [])
+            if not j.get("kept") and not _dismissed(j, dismissed) and not _tracked(j, tracked)
+        )
+
+
+def inbox_item(id: str) -> dict | None:
+    """One undecided card by id, tracked or not, so Keep from a view rendered before the role was
+    tracked still lands on the existing row instead of failing."""
+    with _store._locked("inbox"):
+        dismissed = _load(DISMISSED, {})
+        return next(
+            (j for j in _load(INBOX, []) if j.get("id") == id and not j.get("kept") and not _dismissed(j, dismissed)),
+            None,
+        )
 
 
 def peek_inbox() -> list[dict]:
@@ -241,10 +283,15 @@ def drop_from_inbox(ids) -> None:
 
 def take_inbox() -> list[dict]:
     """Consume all pending digest items, retaining their rows."""
+    tracked = _pipeline_keys()
     with _store._locked("inbox"):
         rows = _load(INBOX, [])
         dismissed = _load(DISMISSED, {})
-        box = _newest(j for j in rows if not j.get("digested") and not j.get("kept") and not _dismissed(j, dismissed))
+        box = _newest(
+            j
+            for j in rows
+            if not j.get("digested") and not j.get("kept") and not _dismissed(j, dismissed) and not _tracked(j, tracked)
+        )
         result = [dict(j) for j in box]
         for j in box:
             j["digested"] = _now()
