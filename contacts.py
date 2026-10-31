@@ -112,6 +112,19 @@ def at_company(company: str, rows: list[dict] | None = None) -> list[dict]:
     return [c for c in (load_contacts() if rows is None else rows) if company_hint_key(c.get("company", "")) == key]
 
 
+def _match(rows: list[dict], name: str, company: str = "") -> dict | None:
+    nkey = name.strip().lower()
+    ckey = company_key(company)
+    return next(
+        (
+            r
+            for r in rows
+            if r.get("name", "").lower() == nkey and (not ckey or company_key(r.get("company", "")) == ckey)
+        ),
+        None,
+    )
+
+
 def log_touch(name: str, company: str = "", *, note: str = "", next_action: str = "", due: str = "",
               title: str = "", url: str = "") -> dict:  # fmt: skip
     """Record a touch (message sent, call, intro asked) on a contact, creating them if new, and
@@ -121,16 +134,7 @@ def log_touch(name: str, company: str = "", *, note: str = "", next_action: str 
     today = datetime.now(UTC).date().isoformat()
     with _store._locked("contacts"):
         rows = load_contacts()
-        nkey = name.strip().lower()
-        ckey = company_key(company)
-        cur = next(
-            (
-                r
-                for r in rows
-                if r.get("name", "").lower() == nkey and (not ckey or company_key(r.get("company", "")) == ckey)
-            ),
-            None,
-        )
+        cur = _match(rows, name, company)
         if cur is None:
             cur = {"name": name.strip(), "company": company.strip(), "title": title, "url": url, "email": "",
                    "connected_on": "", "source": "manual", "touches": [], "next_action": "", "due": ""}  # fmt: skip
@@ -142,6 +146,23 @@ def log_touch(name: str, company: str = "", *, note: str = "", next_action: str 
             cur["due"] = due
         _save(rows)
         return cur
+
+
+def close_followup(name: str, company: str = "", *, note: str = "") -> tuple[dict | None, bool]:
+    """Clear a contact's next action and due date, optionally logging a last touch. Returns
+    ``(row, was_open)``; ``row`` is None for an unknown contact, and none is created."""
+    today = datetime.now(UTC).date().isoformat()
+    with _store._locked("contacts"):
+        rows = load_contacts()
+        cur = _match(rows, name, company)
+        if cur is None:
+            return None, False
+        was_open = bool(cur.get("next_action") or cur.get("due"))
+        if note:
+            cur.setdefault("touches", []).append({"date": today, "note": note})
+        cur["next_action"], cur["due"] = "", ""
+        _save(rows)
+        return cur, was_open
 
 
 def due_followups(rows: list[dict] | None = None, today: date | None = None) -> list[dict]:

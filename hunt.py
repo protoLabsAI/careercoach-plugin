@@ -330,9 +330,21 @@ def register_hunt_tools(registry, cfg, extended: bool):
     @tool
     @_guarded
     def careercoach_log_contact(name: str, company: str = "", note: str = "", next_action: str = "", due: str = "",
-                                title: str = "", url: str = "") -> str:  # fmt: skip
+                                title: str = "", url: str = "", close: bool = False) -> str:  # fmt: skip
         """Log a networking touch and the next step; `due` (YYYY-MM-DD) puts the follow-up in the digest. Creates the
-        contact if new."""
+        contact if new. `close=True` ends the open follow-up. Blank fields leave what's stored unchanged."""
+        if close:
+            if next_action or due:
+                return "Either close the follow-up or set a new next step, not both. Nothing changed."
+            try:
+                c, was_open = contacts.close_followup(name, company, note=note)
+            except contacts.StoreUnreadable as e:
+                return f"Not closed: {e}"
+            if c is None:
+                return f"No contact named {name} to close a follow-up for."
+            if not was_open:
+                return f"{c['name']} has no open follow-up." + (" Note logged." if note else "")
+            return f"Closed the follow-up with {c['name']}."
         try:
             c = contacts.log_touch(name, company, note=note, next_action=next_action, due=due, title=title, url=url)
         except ValueError:
