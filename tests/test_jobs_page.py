@@ -393,6 +393,35 @@ def test_about_drawer_dismissal_clears_scrim_state_and_returns_focus(plugin, dis
     assert ctx.eval("document.activeElement.id") == "about-btn"
 
 
+def test_about_focus_trap_keeps_accordion_summaries_reachable(plugin):
+    """The drawer's focus trap must count the three accordion toggles (``<summary>`` elements) as
+    focusable, not just the ✕ button. Otherwise Tab/Shift+Tab bounce off the ✕ and the collapsed
+    'Fit rubric' / 'Exactly what it's told each turn' accordions can never be opened by keyboard —
+    a regression against the keyboard-reachable page-foot disclosures this drawer replaced."""
+    ctx = _view_ctx(plugin)
+    # A drawer whose focusables are, in DOM order, the ✕ button then the three <summary> toggles.
+    # __root.querySelectorAll resolves the trap's real selector against these nodes by tag name.
+    ctx.eval(r"""
+      var __nodes = [
+        {id: 'about-close', tag: 'button'},
+        {id: 's0', tag: 'summary'}, {id: 's1', tag: 'summary'}, {id: 's2', tag: 'summary'}
+      ];
+      __nodes.forEach(function (n) { n.focus = function () { document.activeElement = this; }; });
+      var __root = { querySelectorAll: function (sel) {
+        var tags = sel.toLowerCase().split(',').map(function (p) { return p.split(':')[0].split('[')[0].trim(); });
+        return __nodes.filter(function (n) { return tags.indexOf(n.tag) !== -1; });
+      }};
+    """)
+    # Forward Tab from the LAST focusable wraps to the first — only true if the summaries are counted.
+    ctx.eval("document.activeElement = __nodes[3];")
+    ctx.eval("trap({key: 'Tab', shiftKey: false, preventDefault: function () {}}, __root);")
+    assert ctx.eval("document.activeElement.id") == "about-close"
+    # Shift+Tab from the ✕ wraps back to the last summary (the third accordion toggle).
+    ctx.eval("document.activeElement = __nodes[0];")
+    ctx.eval("trap({key: 'Tab', shiftKey: true, preventDefault: function () {}}, __root);")
+    assert ctx.eval("document.activeElement.id") == "s2"
+
+
 def test_page_foot_disclosures_are_gone(plugin):
     html = plugin._DASHBOARD_HTML
     assert 'class="coach"' not in html  # the coaching-tips paragraph left the page foot

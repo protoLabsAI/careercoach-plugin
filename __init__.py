@@ -3465,7 +3465,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   }
   function trap(e, root) {
     if (e.key !== 'Tab') return;
-    var f = root.querySelectorAll('button:not([disabled]),select,textarea,input,a[href],[tabindex="0"]'); if (!f.length) return;
+    var f = root.querySelectorAll('button:not([disabled]),summary,select,textarea,input,a[href],[tabindex="0"]'); if (!f.length) return;
     var first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
