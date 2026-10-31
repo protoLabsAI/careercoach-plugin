@@ -20,9 +20,9 @@ forking core.
 - **`/setup-coach`** — works out what it already knows about you, asks only about the real gaps, and records
   the result as a profile it carries into every future turn. It harvests first (memory, saved artifacts, any
   CV in your workspace, a resume PDF you've shared) so it never asks for what it already has.
-- **See what it knows.** The **Career Coach** console panel lists every field the coach holds, every one
-  still missing, and — behind a disclosure — the exact block it's told each turn. Your record, visible to you,
-  not a file you have to go find. The panel is read-only: to change anything, tell the coach in chat.
+- **See what it knows.** The **Career Coach** view lists every field the coach holds, every one still missing,
+  and — behind a disclosure — the exact block it's told each turn. Your record, visible to you, not a file you
+  have to go find. That part is read-only: to change anything, tell the coach in chat.
 
 **Coaching (the default):**
 - **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
@@ -31,17 +31,17 @@ forking core.
 - **Upskilling** — turns the jobs you're chasing into a prioritized gap heatmap + a learning plan with real resources (skill: `strategy`).
 
 **Execution (when you ask):**
-- **Find fresh roles** (skill: `job-hunt`) — keep a **company watchlist** and `careercoach_scan_boards` reads
+- **Find fresh roles** (skill: `job-hunt`) — keep a **company watchlist** and `careercoach_find_roles` reads
   those companies' own Ashby / Greenhouse / Lever job boards (keyless, with the date each role first went up),
   filtered to your target roles, locations and max age, marking what's **new**, what you've **already tracked
-  or applied to**, and **ghost-job warnings** (long-open, reposted, thin). `careercoach_search_jobs` sweeps the
+  or applied to**, and **ghost-job warnings** (long-open, reposted, thin). `careercoach_find_roles(source="market")` sweeps the
   wider market: the keyless **Himalayas** remote board, this month's **Hacker News "Who is hiring?"**, or
   JSearch (Google-for-Jobs) with an API key.
-- **Go in through people** — import your LinkedIn Connections export, and `careercoach_find_referrals` tells
-  you who you know at each company before you apply; `careercoach_log_contact` keeps follow-ups from slipping.
+- **Go in through people** — with `extended_tools` on, import your LinkedIn Connections export and the coach
+  tells you who you know at each company before you apply; `careercoach_log_contact` keeps follow-ups from slipping.
 - **A morning digest** — `careercoach_digest`: new roles from the last few days, follow-ups due, applications
-  gone quiet. `careercoach_import_history` brings past applications kept elsewhere into the tracker so sweeps
-  never re-suggest them; the tracker dedups by posting URL and normalized company ("Arize AI" = "Arize") and
+  gone quiet. Past applications kept elsewhere can be imported into the tracker so sweeps never re-suggest
+  them; the tracker dedups by posting URL and normalized company ("Arize AI" = "Arize") and
   warns past 3 live applications at one company.
 - **Evaluate fit** against a weighted, tunable rubric, with sourced company research.
 - **Tailor a CV + cover letter** — reframing emphasis, never fabricating (the interview-backtrack test).
@@ -61,7 +61,9 @@ boards and sweeps the job source for your target roles, queues postings it has n
 the digest (it never writes your pipeline), and lights the rail icon — or arm a **WATCH**
 on your pipeline yourself via the `careercoach:new_matches` verifier.
 
-Track it all on the **Career Coach dashboard** (a console rail view): your pipeline, fit scores, the rubric.
+Work it all from the **Career Coach view** (a console rail view): triage new roles with Keep or Dismiss, drag
+applications through a pipeline board, and open a role for its apply kit, with a copy button on every answer.
+You file the application yourself. **Nothing ever auto-submits.**
 
 ---
 
@@ -77,12 +79,12 @@ Every protoAgent extension surface, in one plugin:
 | **Gated, filed pipeline** (skill-driven) | `skills/apply-form/packet-flow.md` + `packet.py` + `templates/` | the role-packet flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
 | **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → build & save apply kit` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated role-packet flow) |
 | **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
-| **Agent tools** | `register_tools` | `careercoach_track_application`, `careercoach_list_applications`, `careercoach_search_jobs` (live search), `careercoach_get_profile` / `careercoach_update_profile` / `careercoach_import_experience` / `careercoach_export_experience` (the operator profile) / `careercoach_read_profile` / `careercoach_write_profile` (the story bank) |
+| **Agent tools** | `register_tools` | 12 by default, built around the core loop and measured with a tool-selection eval (`evals/tool_selection/`): `careercoach_find_roles`, `careercoach_watchlist`, `careercoach_track` (pipeline and inbox), `careercoach_digest`, `careercoach_log_contact`, `careercoach_profile`, `careercoach_answers`, `careercoach_read_sources`, `careercoach_save_apply_kit`, `careercoach_render_resume`, `careercoach_role_packet`, `careercoach_prepare_application`. Every older tool name still works behind the `extended_tools` setting |
 | **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, delivered on every model call as an ephemeral context frame (`wrap_model_call`, the host's ADR 0108 D2 contract) |
 | **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
 | **Background surface + watchdog** (ADR 0018) | `register_surface` + `graph.sdk.supervise` | the opt-in job-watch — a supervised loop that scans, records new matches, and emits an event |
 | **Goal verifier** (ADR 0028/0067) | `register_goal_verifier` | `careercoach:new_matches` — arm a **WATCH** on your pipeline with `create_watch` |
-| **Console rail view** (ADR 0026) | `register_router` + manifest `views:` | the dashboard — public page + a **gated** `/api/plugins/careercoach/state`, fleet-proxy-safe fetch |
+| **Console rail view** (ADR 0026) | `register_router` + manifest `views:` | the Jobs view — public page + **gated** `/api/plugins/careercoach` data routes, fleet-proxy-safe fetch |
 | **Config / secrets / Settings** (ADR 0019) | manifest + `registry.config` | profile + `render_format` + the job-watch knobs in Settings; `jobs_api_key` → `secrets.yaml` |
 | **Event bus** (ADR 0039) | `registry.emit` | `careercoach.application_tracked` / `careercoach.new_matches` light the rail icon |
 | **Consumption SDK** (ADR 0043) | lazy `graph.sdk` imports | `Knobs` / `make_knob_tools` / `supervise`, kept lazy + guarded so it loads and tests host-free |
@@ -96,7 +98,7 @@ plugin loads and its suite runs with **no protoAgent present**.
 careercoach-plugin/
 ├─ protoagent.plugin.yaml     # manifest: config/secrets/settings, views, emits, provenance
 ├─ SOUL.md                    # recommended agent persona — copy into your agent's SOUL.md
-├─ __init__.py                # register(): tools + knobs + crew + dashboard + the job-watch
+├─ __init__.py                # register(): tools + knobs + crew + Jobs view + the job-watch
 ├─ rubric.py                  # the weighted fit rubric — pure, tested
 ├─ state.py                   # the application tracker — instance-scoped JSON, tested
 ├─ profile.py                 # the operator profile + the shared store (instance root, lock, atomic write)
@@ -107,6 +109,10 @@ careercoach-plugin/
 ├─ companies.py               # company/role normalization ("Arize AI" = "Arize") for every dedup
 ├─ contacts.py                # LinkedIn Connections import, referrals, follow-ups — tested
 ├─ hunt.py                    # the job-hunt tools (watchlist, scan, history, contacts, digest)
+├─ answers.py                 # standard form answers with draft and confirmed states — tested
+├─ resume.py                  # resume rendering — tested
+├─ ats.py + formfill.py       # the opt-in browser-fill beta — per-ATS planning and read-back, tested
+├─ submitgate.py              # the consent gate for a submit click — tested
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
 ├─ skills/                         # 5 skills; directory names kept, frontmatter name in parens
 │  ├─ apply-form/                  # name: apply — evaluate fit, CV/cover-letter + writing-style / job-evaluation, the gated packet-flow, and the opt-in browser-fill beta
@@ -122,6 +128,11 @@ careercoach-plugin/
 ---
 
 ## Quick start
+
+**Fastest:** in the protoAgent desktop app (v0.221.0 or later), create a new agent and pick **Career Coach**.
+It installs the plugin and the coach persona for you. Paste your resume or a LinkedIn PDF and it builds your
+profile, then runs a first scan from keyless job sources. Steps 1 to 5 below are the manual route for an
+agent you already have.
 
 1. **Install it.** In a running protoAgent: **Console → Plugins → Discover → _Career Coach_ → Install**. Or from the shell:
    ```sh
@@ -233,11 +244,11 @@ careercoach-plugin/
   holds — a real first run was abandoned partway through for exactly that reason, because a recall tool
   can't help an agent that doesn't already suspect there's something to recall.
 - **One rule for the career record: the profile is the single source of truth.** Everything that reads
-  your history — the always-on block, `careercoach_read_profile("experience")`, the drafting and scoring
+  your history — the always-on block, `careercoach_profile(action="read", doc="experience")`, the drafting and scoring
   crew — reads the profile, and nothing reads `Resume/Experience.md` as a source. That file takes part in
-  two explicit, one-way moves: **import** and **export** (`careercoach_export_experience` writes a snapshot
+  two explicit, one-way moves: **import** and **export** (`careercoach_profile(action="export_experience")` writes a snapshot
   to `Resume/Experience (profile export).md`). The coach never writes `Experience.md` itself.
-- **The import is previewed, then bound to that preview.** `careercoach_import_experience` parses what you
+- **The import is previewed, then bound to that preview.** `careercoach_profile(action="import_experience")` parses what you
   wrote (by its headings, skipping the template's hint text and anything already recorded), shows the exact
   lines it would add or remove, and hands back a `preview_id`. Applying takes that id and is refused if the
   file, the profile or the options changed since — so what you approve is what gets written. It writes
@@ -271,7 +282,7 @@ careercoach-plugin/
   deliverable at 16 em-dashes per 1000 words against the operator's stated limit of 3, carrying a phrase
   they'd explicitly retired. A rule that only binds when you enter through the front door isn't a rule, so
   it now rides in the always-on block alongside the `do_not_claim` guardrails.
-- **The agent can't rewrite its own guardrails.** `careercoach_write_profile` accepts only `story-bank`
+- **The agent can't rewrite its own guardrails.** `careercoach_profile(action="write")` accepts only `story-bank`
   (`Experience.md` is the operator's own, and reaches the profile by import). The discipline files it's
   *bound by* (experience-reviewer,
   Humanize, the improvements log) are read-only to the agent by design, and the profile's `do_not_claim`
@@ -324,7 +335,7 @@ one deterministic loop (the `apply-form` skill is the doctrine; the pieces this 
 tested, host-free):
 
 1. **Confirm the standard answers.** Only values the operator has CONFIRMED
-   (`careercoach_get_answers` / `careercoach_confirm_answers`) ever fill a form — a draft never does.
+   (`careercoach_answers`, actions `get` and `confirm`) ever fill a form — a draft never does.
 2. **Render + capture the résumé.** `careercoach_render_resume` → `browser_open` → `browser_pdf`,
    so an upload-able PDF lands in the browser's capture folder.
 3. **Prepare, then read the live form.** On Greenhouse, `careercoach_prepare_application` fetches the
@@ -344,7 +355,7 @@ tested, host-free):
    any submit.
 8. **Submit once, behind the gate.** `careercoach_request_submit` → the operator approves → exactly
    one `browser_click` on submit. Then confirm the confirmation page and
-   `careercoach_track_application` with status `applied`.
+   `careercoach_track` with status `applied`.
 
 **Support scope.** **Greenhouse** (public schema prep + live form) and **Ashby** (live form; no public
 per-job schema, so a résumé upload leads and every field is re-read after autofill) are supported.
