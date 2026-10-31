@@ -217,7 +217,7 @@ def test_inbox_routes_accept_market_search_ids(plugin, client, action, encoded):
 
 
 @pytest.mark.parametrize("body_route", [False, True])
-@pytest.mark.parametrize("operation", ["inbox_for_view", "mark_kept", "track_application", "dismiss"])
+@pytest.mark.parametrize("operation", ["inbox_item", "mark_kept", "track_application", "dismiss"])
 def test_inbox_routes_unreadable_store_returns_conflict(plugin, client, monkeypatch, operation, body_route):
     tc, _reg = client
     wl = importlib.import_module(plugin.__name__ + ".watchlist")

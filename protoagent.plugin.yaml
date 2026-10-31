@@ -89,3 +89,4 @@ emits:
   - application_tracked
   - documents_generated
   - new_matches
+  - inbox_changed
