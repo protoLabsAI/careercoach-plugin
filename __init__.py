@@ -4122,10 +4122,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     // Rail stage-list (§8): the same live roles as a stacked set of stage accordions, one per open
     // column. Rendered always; CSS hides it until <600px, where the board is hidden instead. A stage
     // opens when it has cards and collapses to one line when empty, unless the operator toggled it.
-    // Legacy "Other" rows aren't a named stage, so (as on the board, where they get the "Other"
-    // column) they aren't mirrored here — the five spec stages plus a Closed link row is the list.
-    var stageItems = openNames.map(function (col) {
-      var rows = sortCards(buckets[col]);
+    // Preserve the legacy-status fallback (§7) at rail widths too. Like the board's Other column,
+    // this group is only present when needed and is not a move destination.
+    var stageItems = displayCols.map(function (col) {
+      var rows = sortCards(col === null ? other : buckets[col]);
+      col = col === null ? 'Other statuses' : col;
       var open = (STAGE_OPEN[col] != null) ? STAGE_OPEN[col] : rows.length > 0;
       var inner = rows.map(stageRowHtml).join('') ||
         '<p class="empty" style="padding:8px 12px;font-size:12px">Nothing here yet.</p>';
@@ -4659,11 +4660,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     el.setAttribute('aria-hidden', 'true');
     DETAIL = null; DETAIL_ID = null; DETAIL_REQUEST++;
     var opener = DETAIL_RETURN; DETAIL_RETURN = null;
-    if (opener && !opener.isConnected && opener.getAttribute) {
+    if (opener && (!opener.isConnected || opener.offsetParent === null) && opener.getAttribute) {
       var id = opener.getAttribute('data-id');
-      opener = Array.prototype.slice.call(document.querySelectorAll('#body [data-id]')).find(function (el) { return el.getAttribute('data-id') === id; });
+      opener = id ? visibleInBody(id) : null;
     }
-    if (!opener || !opener.isConnected) opener = document.getElementById('tab-' + TAB);
+    if (!opener || !opener.isConnected || opener.offsetParent === null) {
+      opener = document.getElementById('tabs-trigger') || document.getElementById('tab-' + TAB);
+    }
     if (opener && opener.focus) opener.focus();
   }
   // Fetch one application through the gated apiFetch and render the drawer. A bad id / error toasts

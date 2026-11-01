@@ -111,10 +111,10 @@ def test_board_shows_open_columns_other_and_closed_stub(plugin, status):
     assert 'Other statuses<span class="pl-count">2</span>' in board
     for app in apps:
         assert board.count('data-id="' + app["id"] + '"') == 1  # once on the board, no duplication
-    # the rail stage-list mirrors the live role under its stage; legacy "Other" rows are not a named
-    # stage, so (as the board gives them the "Other" column) they aren't mirrored there (§8)
-    assert stages.count('data-id="known"') == 1
-    assert 'data-id="unknown"' not in stages and 'data-id="missing"' not in stages
+    # Every live role remains accessible on the rail, including legacy statuses (§7).
+    for app in apps:
+        assert stages.count('data-id="' + app["id"] + '"') == 1
+    assert 'data-stage="Other statuses" open>' in stages
     # the six-column contract holds as a narrow Closed stub, not a stack of dead cards
     assert 'class="col stub"' in board
     assert 'data-col="Closed"' in board
@@ -1357,3 +1357,81 @@ def test_width_change_re_evaluates_today_cap_tabs_and_drawer_side(plugin):
     # the drawer goes bottom-side below 600px (§8)
     assert "var bottom = document.getElementById('cc').clientWidth < 600;" in html
     assert "panel.classList.toggle('pl-drawer--bottom', bottom);" in html
+
+
+@pytest.mark.parametrize("known", [False, True])
+def test_rail_legacy_roles_remain_openable(plugin, known):
+    ctx = _view_ctx(plugin, width=420)
+    apps = [{"id": "old", "role": "Legacy role", "status": "legacy"}]
+    if known:
+        apps.append({"id": "new", "status": "applied"})
+    stages = _render_pipeline(ctx, apps, COLUMNS).partition('<div class="stages"')[2]
+    assert 'data-stage="Other statuses" open>' in stages
+    assert 'data-id="old"' in stages
+    assert 'draggable="true"' not in stages
+    assert 'data-col="Other statuses"' not in stages
+    ctx.eval("""
+      var row = __mkEl('legacy-row');
+      row.setAttribute('data-id', 'old');
+      row.addEventListener = function (name, fn) { this[name] = fn; };
+      var opened = [];
+      openDetail = function (id) { opened.push(id); };
+      wireStages({querySelectorAll: function () { return [row]; }});
+      row.click();
+      row.keydown({key: 'Enter', preventDefault: function () {}});
+    """)
+    assert json.loads(ctx.eval("JSON.stringify(opened)")) == ["old", "old"]
+
+
+@pytest.mark.parametrize("rail", [False, True])
+@pytest.mark.parametrize("connected", [False, True])
+def test_drawer_close_returns_to_visible_role_copy(plugin, rail, connected):
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      function card(name, visible) {
+        var el = __mkEl(name);
+        el.isConnected = true;
+        el.offsetParent = visible ? {} : null;
+        el.setAttribute('data-id', 'role');
+        el.focus = function () { document.activeElement = this; };
+        return el;
+      }
+    """)
+    ctx.eval("var board = card('board', %s), stage = card('stage', %s);" % (json.dumps(not rail), json.dumps(rail)))
+    ctx.eval("DETAIL_RETURN = " + ("stage" if not rail else "board") + ";")
+    if not connected:
+        ctx.eval("DETAIL_RETURN = card('removed', true); DETAIL_RETURN.isConnected = false;")
+    ctx.eval("""
+      document.getElementById('body').querySelectorAll = function () { return [board, stage]; };
+      closeDetail();
+    """)
+    assert ctx.eval("document.activeElement.id") == ("stage" if rail else "board")
+    assert ctx.eval("DETAIL_RETURN") is None
+
+
+@pytest.mark.parametrize("collapsed", [False, True])
+@pytest.mark.parametrize("hidden_role", [False, True])
+def test_drawer_close_falls_back_to_current_tab_control(plugin, collapsed, hidden_role):
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      DETAIL_RETURN = __mkEl('removed');
+      DETAIL_RETURN.setAttribute('data-id', 'gone');
+      DETAIL_RETURN.isConnected = false;
+      var hidden = __mkEl('hidden');
+      hidden.setAttribute('data-id', 'gone');
+      hidden.isConnected = true; hidden.offsetParent = null;
+      var control = __mkEl('tab-control');
+      control.focus = function () { document.activeElement = this; };
+      var get = document.getElementById;
+    """)
+    ctx.eval("var collapsed = %s, hiddenRole = %s;" % (json.dumps(collapsed), json.dumps(hidden_role)))
+    ctx.eval("""
+      document.getElementById('body').querySelectorAll = function () { return hiddenRole ? [hidden] : []; };
+      document.getElementById = function (id) {
+        if (id === 'tabs-trigger') return collapsed ? control : null;
+        if (id === 'tab-pipeline') return collapsed ? null : control;
+        return get(id);
+      };
+      closeDetail();
+    """)
+    assert ctx.eval("document.activeElement === control") is True
