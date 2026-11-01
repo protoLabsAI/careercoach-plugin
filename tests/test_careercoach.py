@@ -69,8 +69,8 @@ def test_dashboard_cover_letter_unset_reads_as_not_written(plugin):
     html = plugin._DASHBOARD_HTML
     assert "cl.needed === false" in html  # only an explicit false clears the letter
     assert "} else if (cl.needed) {" not in html  # the truthy gate that mishandled unset (null)
-    # The "Not written yet" copy is the default (else) branch, so an unset kit reads as needing one.
-    assert "Not written yet." in html and "Not needed for this posting." in html
+    # The approved no-kit copy is the default branch; an unset kit still needs a letter.
+    assert "Not started" in html and "Not needed for this posting." in html
 
 
 # ── epic #85 R1: the view is the "Jobs" shell, not the old single scroll ──────

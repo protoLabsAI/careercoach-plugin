@@ -104,7 +104,7 @@ def test_answer_rows_copy_control_and_draft_badge(plugin):
     # one copy control per answer
     assert out.count("Copy</button>") == 2
     # the draft carries the visible badge and distinct styling; the confirmed one does not
-    assert out.count("Draft — confirm before using") == 1
+    assert out.count("Draft: confirm before using") == 1
     assert 'class="answer draft"' in out
     assert out.count('class="answer"') == 1  # the confirmed row is plain
     # labels + values both present
@@ -141,7 +141,7 @@ def test_kit_resume_shows_version_built_path_with_copy(plugin):
 def test_kit_without_a_resume_says_so(plugin):
     ctx = _pure_ctx(plugin)
     out = _call(ctx, "renderKit", {"resume": {"path": "", "version": "", "built": ""}, "cover_letter": {}}, [])
-    assert "No resume built yet." in out
+    assert "Not started" in out
     assert "data-copy-path" not in out
 
 
@@ -152,7 +152,7 @@ def test_kit_cover_letter_branches(plugin):
     not_needed = _call(ctx, "renderKit", {"cover_letter": {"needed": False}}, [])
     assert "Not needed for this posting." in not_needed
     not_written = _call(ctx, "renderKit", {"cover_letter": {"needed": True}}, [])
-    assert "Not written yet." in not_written
+    assert "Not started" in not_written
 
 
 # ── r3: the three action buttons post protoagent:chat:compose with a role/company/id template ─
@@ -299,7 +299,7 @@ def test_drawer_status_select_lists_destinations_and_preserves_legacy_status(plu
     ctx.eval('renderDetail({application: {id: "a", status: "legacy<&"}});')
     header = _inner(ctx, "detail-title")
     assert '<label for="detail-status">Status</label>' in header
-    assert 'class="pl-select" aria-label="Status"' in header
+    assert 'class="pl-select pl-dropselect" aria-label="Status"' in header
     assert '<option value="legacy&lt;&amp;" selected>legacy&lt;&amp;</option>' in header
     for status in [s for statuses in COLUMNS.values() for s in statuses]:
         assert f'<option value="{status}"' in header
@@ -343,3 +343,221 @@ def test_drawer_status_change_uses_move_undo_and_failure_rollback(plugin):
     assert ctx.eval("select.value") == "interviewing"
     assert ctx.eval('findApp("a").status') == "interviewing"
     assert ctx.eval("feedback.error") is True
+
+
+def _drawer(plugin, status="considering", **data):
+    from test_jobs_page import COLUMNS, _view_ctx
+
+    ctx = _view_ctx(plugin)
+    app = {"id": "a", "status": status, "role": "Dev", "company": "Acme", **data.pop("application", {})}
+    payload = {"application": app, **data}
+    ctx.eval(
+        "JOBS.columns = "
+        + json.dumps(COLUMNS)
+        + "; DETAIL = "
+        + json.dumps(payload)
+        + "; DETAIL_ID = 'a'; renderDetail(DETAIL);"
+    )
+    return ctx
+
+
+def test_drawer_no_kit_order_and_disclosures(plugin):
+    from test_jobs_page import _inner
+
+    ctx = _drawer(plugin, answers=[{"key": "email", "value": "a@b", "status": "confirmed"}])
+    out = _inner(ctx, "detail-body")
+    assert (
+        out.index("detail-actions") < out.index("detail-kit") < out.index("detail-notes") < out.index("detail-timeline")
+    )
+    assert 'id="detail-kit" class="pl-card pl-accordion" open' in out
+    assert out.count("Not started") == 3
+    assert 'class="pl-steps"' in out and out.count('pl-step"') == 3
+    assert "1 saved answers will be reused" in out
+    assert "Your coach builds all three in chat. You review each before anything is sent." in out
+    assert "I applied already: mark applied" in out
+    assert 'id="detail-fit"' not in out
+    assert 'id="detail-contacts"' not in out
+    assert 'id="detail-timeline" class="pl-accordion"><summary>' in out
+    assert "Save notes" not in out
+    assert 'role="menu" hidden' in out
+
+
+def test_drawer_state_specific_next_step_and_fit(plugin):
+    from test_jobs_page import _inner
+
+    cases = [
+        ("considering", {}, "Build apply kit"),
+        ("preparing", {"status": "complete"}, "Mark applied"),
+        ("interviewing", {}, "Prep me for this interview"),
+    ]
+    for status, kit_data, label in cases:
+        ctx = _drawer(
+            plugin,
+            status,
+            kit=kit_data,
+            application={"fit_score": 82, "notes": "Matches platform experience"},
+            contacts=[{"name": "Ada"}],
+        )
+        out = _inner(ctx, "detail-body")
+        next_step = out.split("</section>", 1)[0].split('id="detail-more"', 1)[0]
+        assert label in next_step
+        assert out.index("detail-kit") < out.index("detail-fit") < out.index("detail-notes")
+        assert "Strong fit" in out and "Matches platform experience" in out
+        assert 'id="detail-contacts" class="pl-accordion"><summary>' in out
+        if status == "interviewing":
+            assert 'id="detail-kit" class="pl-card pl-accordion"><summary>' in out
+
+
+def test_closed_drawer_read_only_reopen_uses_saved_route_status(plugin):
+    from test_jobs_page import _inner
+
+    ctx = _drawer(plugin, "rejected")
+    out = _inner(ctx, "detail-body")
+    assert 'id="detail-reopen">Reopen' in out
+    assert 'aria-label="Status" disabled' in _inner(ctx, "detail-title")
+    assert 'class="pl-textarea notes-ta" readonly' in out
+    assert "data-act=" not in out and "data-applied" not in out
+    ctx.eval(
+        "var moved; moveApp = function (id, status) { moved = [id, status]; }; document.getElementById('detail-reopen').onclick();"
+    )
+    assert json.loads(ctx.eval("JSON.stringify(moved)")) == ["a", "considering"]
+
+
+def test_notes_autosave_serializes_writes_and_reports_failure(plugin):
+    ctx = _drawer(plugin)
+    ctx.eval("""
+      var requests = [], completions = [];
+      var kit = {apiFetch: function (path, options) {
+        requests.push([path, JSON.parse(options.body)]);
+        return new Promise(function (resolve) { completions.push(resolve); });
+      }};
+      toast = function () {};
+      var ta = document.getElementById('detail-notes-text');
+      ta.value = 'first'; saveNotes();
+      ta.value = 'second'; saveNotes();
+    """)
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("requests.length") == 1
+    ctx.eval("completions[0]({ok: true});")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("requests.length") == 2
+    assert ctx.eval("document.getElementById('detail-notes-status').textContent") != "Saved"
+    ctx.eval("completions[1]({ok: false, status: 500});")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("NOTE_DRAFTS.a") == "second"
+    assert "Could not save" in ctx.eval("document.getElementById('detail-notes-status').textContent")
+    ctx.eval("saveNotes();")
+    while ctx.execute_pending_job():
+        pass
+    ctx.eval("completions[2]({ok: true});")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("DETAIL.application.notes") == "second"
+    assert ctx.eval("document.getElementById('detail-notes-status').textContent") == "Saved"
+    assert ctx.eval("Object.prototype.hasOwnProperty.call(NOTE_DRAFTS, 'a')") is False
+    assert json.loads(ctx.eval("JSON.stringify(requests[0])")) == [
+        "/api/plugins/careercoach/applications/a/notes",
+        {"notes": "first"},
+    ]
+    ctx.eval("DETAIL.application.status = 'passed'; ta.value = 'forbidden'; saveNotes();")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("requests.length") == 3
+
+
+def test_focus_trap_skips_collapsed_and_hidden_controls(plugin):
+    from test_jobs_page import _view_ctx
+
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      var nodes = ['first', 'collapsed', 'last', 'menu'].map(function (id) {
+        return {id: id, getClientRects: function () { return id === 'collapsed' ? [] : [1]; },
+          closest: function () { return id === 'menu' ? {} : null; },
+          focus: function () { document.activeElement = this; }};
+      });
+      var root = {contains: function () { return true; }, querySelectorAll: function () { return nodes; }};
+      document.activeElement = nodes[2];
+      trap({key: 'Tab', preventDefault: function () {}}, root);
+    """)
+    assert ctx.eval("document.activeElement.id") == "first"
+    ctx.eval("trap({key: 'Tab', shiftKey: true, preventDefault: function () {}}, root);")
+    assert ctx.eval("document.activeElement.id") == "last"
+
+
+def test_notes_reverting_to_original_while_save_pending_is_not_lost(plugin):
+    ctx = _drawer(plugin, application={"notes": "original"})
+    ctx.eval("""
+      var writes = [], resolveFirst;
+      var kit = {apiFetch: function (path, opts) {
+        writes.push(JSON.parse(opts.body).notes);
+        return writes.length === 1 ? new Promise(function (resolve) { resolveFirst = resolve; }) : Promise.resolve({ok: true});
+      }};
+      var ta = document.getElementById('detail-notes-text');
+      ta.value = 'change'; saveNotes();
+      ta.value = 'original'; saveNotes();
+    """)
+    while ctx.execute_pending_job():
+        pass
+    ctx.eval("resolveFirst({ok: true});")
+    while ctx.execute_pending_job():
+        pass
+    assert json.loads(ctx.eval("JSON.stringify(writes)")) == ["change", "original"]
+    assert ctx.eval("DETAIL.application.notes") == "original"
+
+
+def test_same_id_late_fetch_cannot_replace_newer_drawer(plugin):
+    from test_jobs_page import _view_ctx
+
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      var resolves = [], rendered = [];
+      api = function () { return new Promise(function (resolve) { resolves.push(resolve); }); };
+      renderDetail = function (d) { rendered.push(d.application.role); };
+      showDetail = function () {};
+      openDetail('a'); openDetail('a');
+      resolves[1]({application: {id: 'a', role: 'New'}});
+    """)
+    while ctx.execute_pending_job():
+        pass
+    ctx.eval("resolves[0]({application: {id: 'a', role: 'Stale'}});")
+    while ctx.execute_pending_job():
+        pass
+    assert json.loads(ctx.eval("JSON.stringify(rendered)")) == ["New"]
+    ctx.eval("openDetail('a'); closeDetail(); resolves[2]({application: {id: 'a', role: 'Closed'}});")
+    while ctx.execute_pending_job():
+        pass
+    assert json.loads(ctx.eval("JSON.stringify(rendered)")) == ["New"]
+
+
+def test_confirm_escape_cancels_and_returns_focus_without_closing_drawer(plugin):
+    from test_jobs_page import _view_ctx
+
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      var opener = {isConnected: true, focus: function () { document.activeElement = this; }};
+      document.activeElement = opener;
+      var result;
+      askConfirm('Mark applied?').then(function (ok) { result = ok; });
+      document.getElementById('confirm').onkeydown({key: 'Escape', preventDefault: function () {}, stopPropagation: function () {}});
+    """)
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("result") is False
+    assert ctx.eval("document.activeElement === opener") is True
+    assert ctx.eval("document.getElementById('confirm').style.display") == "none"
+
+
+def test_close_restores_replaced_opener_after_live_refresh(plugin):
+    from test_jobs_page import _view_ctx
+
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      DETAIL_RETURN = {isConnected: false, getAttribute: function () { return 'a'; }};
+      var replacement = {isConnected: true, getAttribute: function () { return 'a'; }, focus: function () { document.activeElement = this; }};
+      document.querySelectorAll = function () { return [replacement]; };
+      closeDetail();
+    """)
+    assert ctx.eval("document.activeElement === replacement") is True

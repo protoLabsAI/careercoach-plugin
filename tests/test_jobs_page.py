@@ -43,7 +43,7 @@ function __mkEl(id) {
     getAttribute: function (k) { return (k in this._a) ? this._a[k] : null; },
     classList: { _s: {}, add: function (c) { this._s[c] = 1; }, remove: function (c) { delete this._s[c]; },
                  contains: function (c) { return !!this._s[c]; } },
-    focus: function () {}, onclick: null, onkeydown: null,
+    contains: function () { return false; }, focus: function () {}, onclick: null, onkeydown: null,
     querySelectorAll: function () { return []; }, querySelector: function () { return null; },
     addEventListener: function () {} };
 }
@@ -66,6 +66,7 @@ def _view_ctx(plugin, width=1200):
     ctx.eval("var __W = %d;" % width + _STUB)
     html = plugin._DASHBOARD_HTML
     ctx.eval(html[html.index("  function esc(s)") : html.index("  // <<< view renderers")])
+    ctx.eval(html[html.index("  // >>> s2b pure renderers") : html.index("  // /jobs drives")])
     return ctx
 
 
@@ -132,8 +133,8 @@ def test_closed_leaves_the_board_and_lives_on_its_own_tab(plugin):
     assert '<b class="stub-n">2</b>' in board
     # the Closed tab renders those two roles (carried card markup), each a drawer target
     closed = _render_closed(ctx, apps, COLUMNS)
-    assert closed.count('class="pcard pl-board-card"') == 2
-    assert "2 closed roles" in closed
+    assert closed.count('class="pl-tr--interactive"') == 2
+    assert "2 closed ·" in closed
 
 
 def test_board_keeps_applications_visible_without_column_configuration(plugin):
@@ -408,8 +409,8 @@ def test_about_focus_trap_keeps_accordion_summaries_reachable(plugin):
         {id: 'about-close', tag: 'button'},
         {id: 's0', tag: 'summary'}, {id: 's1', tag: 'summary'}, {id: 's2', tag: 'summary'}
       ];
-      __nodes.forEach(function (n) { n.focus = function () { document.activeElement = this; }; });
-      var __root = { querySelectorAll: function (sel) {
+      __nodes.forEach(function (n) { n.focus = function () { document.activeElement = this; }; n.getClientRects = function () { return [1]; }; n.closest = function () { return null; }; });
+      var __root = { contains: function () { return true; }, querySelectorAll: function (sel) {
         var tags = sel.toLowerCase().split(',').map(function (p) { return p.split(':')[0].split('[')[0].trim(); });
         return __nodes.filter(function (n) { return tags.indexOf(n.tag) !== -1; });
       }};
@@ -663,14 +664,12 @@ def test_every_move_offers_a_six_second_undo_calling_undo_move(plugin):
     assert "Couldn’t undo that. The role stayed where you moved it." in html
 
 
-def test_closed_tab_keeps_its_carried_reopen_select(plugin):
-    """The Closed tab's §3 table + drawer Reopen are R4; until then its carried card keeps the
-    Move-to select as the only reopen path. The board itself has no select (see above)."""
+def test_closed_tab_opens_read_only_drawer_instead_of_inline_move_select(plugin):
     ctx = _view_ctx(plugin)
     apps = [{"id": "r", "role": "Old role", "company": "C", "status": "rejected"}]
     closed = _render_closed(ctx, apps, COLUMNS)
-    assert '<select class="movesel pl-select"' in closed
-    assert "Move to…" in closed
+    assert '<select class="movesel pl-select"' not in closed
+    assert 'class="pl-tr--interactive"' in closed
 
 
 # ── live refresh — subscribe to careercoach.# and reload in place on an event (§7) ──────
@@ -1105,3 +1104,60 @@ def test_keyboard_closed_drop_keeps_modal_focus(plugin, drop_key, choice):
     assert ctx.eval("document.getElementById('chooser').style.display") == "none"
     expected = [] if choice in ("cancel", "escape") else [["a", choice]]
     assert json.loads(ctx.eval("JSON.stringify(moves)")) == expected
+
+
+def test_closed_table_pages_filters_and_keeps_global_summary(plugin):
+    ctx = _view_ctx(plugin)
+    apps = [
+        {
+            "id": str(i),
+            "role": f"Role {i:02}",
+            "company": "Acme" if i % 2 else "Other",
+            "status": "rejected" if i % 2 else "passed",
+            "updated": f"2026-10-{i + 1:02}",
+            "fit_score": 90,
+        }
+        for i in range(30)
+    ]
+    out = _render_closed(ctx, apps, COLUMNS)
+    assert "30 closed · 15 rejected · 15 passed" in out
+    assert out.count('class="pl-tr--interactive"') == 25
+    assert out.index("Role 29") < out.index("Role 28")
+    assert "Role 04" not in out
+    assert "<th>Fit" not in out and "fit 90" not in out
+    assert 'class="pl-tabs pl-tabs--segmented"' in out
+    ctx.eval("document.getElementById('closed-next').onclick();")
+    out = ctx.eval("__B.innerHTML")
+    assert out.count('class="pl-tr--interactive"') == 5
+    assert "26–30 of 30" in out
+    ctx.eval("CLOSED_Q = 'ACME'; CLOSED_OUT = 'rejected';")
+    out = _render_closed(ctx, apps, COLUMNS)
+    assert ctx.eval("CLOSED_PAGE") == 0  # clamp after filtering or refresh removes a page
+    assert out.count('class="pl-tr--interactive"') == 15
+    assert "30 closed · 15 rejected · 15 passed" in out
+    ctx.eval("CLOSED_Q = 'role 29';")
+    out = _render_closed(ctx, apps, COLUMNS)
+    assert out.count('class="pl-tr--interactive"') == 1
+    ctx.eval("CLOSED_OUT = 'passed';")
+    assert "No closed roles match" in _render_closed(ctx, apps, COLUMNS)
+
+
+def test_closed_date_uses_last_move_not_later_note_update(plugin):
+    ctx = _view_ctx(plugin)
+    out = _render_closed(
+        ctx,
+        [
+            {
+                "id": "a",
+                "role": "Earlier",
+                "status": "passed",
+                "updated": "2026-10-31",
+                "history": [{"date": "2026-10-01"}],
+            },
+            {"id": "b", "role": "Later", "status": "rejected", "updated": "2026-10-02"},
+        ],
+        COLUMNS,
+    )
+    assert out.index("Later") < out.index("Earlier")
+    assert "2026-10-31" not in out
+    assert "2026-10-01" in out

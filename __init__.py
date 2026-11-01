@@ -2954,7 +2954,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   #chooser p, #confirm p { margin: 0 0 14px; font-size: 14px; }
   #chooser .choices, #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* Job detail drawer (carried; §4 redesign is later). */
+  /* Job detail drawer (§4). */
   #detail { position: fixed; inset: 0; z-index: 40; display: none; }
   #detail.open { display: block; }
   #detail .detail-backdrop { position: absolute; inset: 0; background: var(--pl-color-overlay); }
@@ -3000,7 +3000,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   #detail .action-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
   #detail .hint { color: var(--pl-color-fg-muted); font-size: 12px; margin: 6px 0 0; }
 
+  .closed-sub { display: none; }
+  @container cc (max-width: 899px) { #detail .detail-panel { width: 100%; } }
   @container cc (max-width: 599px) {
+    .closed-company, .closed-date { display: none; }
+    .closed-sub { display: block; }
+    #detail .detail-panel { top: auto; bottom: 0; height: 85dvh; }
     .hd .s { display: none; }
     #about, #detail .detail-panel { width: 100%; }
   }
@@ -3060,7 +3065,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     </div>
   </div>
 
-  <!-- The job detail drawer (carried): opened by a board/closed card; GET /applications/{id}. -->
+  <!-- Job drawer: Inbox rows, board cards and Closed history share this surface. -->
   <div id="detail" aria-hidden="true">
     <div class="detail-backdrop"></div>
     <aside class="detail-panel pl-drawer pl-drawer--right" role="dialog" aria-modal="true" aria-label="Job detail">
@@ -3099,7 +3104,9 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
   var STATE = null, STATE_FAILED = false, JOBS_FAILED = false, LOADING = true;
   var TAB = 'pipeline', TODAY_ALL = false, LAST_VISIT = 0;
-  var DRAG_ID = null, DETAIL = null, DETAIL_ID = null;
+  var DRAG_ID = null, DETAIL = null, DETAIL_ID = null, DETAIL_RETURN = null, DETAIL_REQUEST = 0;
+  var CLOSED_Q = '', CLOSED_OUT = 'all', CLOSED_PAGE = 0;
+  var NOTE_DRAFTS = Object.create(null), NOTE_WRITES = Object.create(null), NOTE_PENDING = Object.create(null);
   // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
   // the arrow keys are hovering. Both null at rest. A pointer drag never touches these.
   var LIFT_ID = null, LIFT_COL = null;
@@ -3232,12 +3239,15 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       var q = document.getElementById('confirm-q');
       var ok = document.getElementById('confirm-ok');
       var cancel = document.getElementById('confirm-cancel');
+      var previous = document.activeElement;
       q.textContent = message;
       function done(v) {
         ov.style.display = 'none';
-        ok.onclick = cancel.onclick = null;
+        ok.onclick = cancel.onclick = null; ov.onkeydown = null;
+        if (previous && previous.isConnected) previous.focus();
         resolve(v);
       }
+      ov.onkeydown = function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else trap(e, ov); };
       ok.onclick = function () { done(true); };
       cancel.onclick = function () { done(false); };
       ov.style.display = 'flex';
@@ -3248,6 +3258,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function syncDetailStatus() {
     var sel = document.getElementById('detail-status'), app = findApp(DETAIL_ID);
     if (sel && app) sel.value = app.status;
+    if (DETAIL && app && DETAIL.application.status !== app.status) {
+      DETAIL.application.status = app.status;
+      refreshDetailMarkup(DETAIL);
+    }
   }
   function detailStatusHtml(app) {
     var statuses = [], labels = {};
@@ -3258,7 +3272,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       });
     });
     if (app.status && statuses.indexOf(app.status) === -1) statuses.unshift(app.status);
-    return '<label for="detail-status">Status</label> <select id="detail-status" class="pl-select" aria-label="Status">' +
+    return '<label for="detail-status">Status</label> <select id="detail-status" class="pl-select pl-dropselect" aria-label="Status"' + (isClosedApp(app) ? ' disabled' : '') + '>' +
       statuses.map(function (status) {
         return '<option value="' + esc(status) + '"' + (status === app.status ? ' selected' : '') + '>' +
           esc(labels[status] || status) + '</option>';
@@ -3721,20 +3735,24 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function openInboxDetail(id) {
     var it = findInbox(id);
     if (!it) return;
+    rememberDetailOpener(); DETAIL_ID = null; DETAIL_REQUEST++;
+    DETAIL = { application: { role: it.title, company: it.company, source: it.url } };
     var when = it.posted || it.first_seen || '', ghost = ghostText(it);
     document.getElementById('detail-title').innerHTML =
       '<div class="detail-role">' + esc(it.title || 'This role') + '</div>' +
-      '<div class="detail-co">' + esc(it.company || '') + (when ? ' · posted ' + esc(relAge(when)) : '') + '</div>';
+      '<div class="detail-co">' + esc(it.company || '') + (when ? ' · posted ' + esc(relAge(when)) : '') + '</div>' +
+      '<label>Status <select class="pl-select pl-dropselect" disabled><option>Inbox</option></select></label>' +
+      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '');
     var html = '<section class="dsec"><h4>Next step</h4><div class="action-btns">' +
       '<button class="pl-btn pl-btn--primary" type="button" id="ibx-d-keep">Keep (move to Saved)</button>' +
       '<button class="pl-btn" type="button" id="ibx-d-dismiss">Dismiss</button>' +
-      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '') +
-      '</div></section>' +
+      coachMenu() + '</div></section>' +
       '<section class="dsec"><h4>Why it surfaced</h4><p class="sm">' + reasonSentence(it) + '</p>' +
       (ghost ? '<p style="margin-top:8px"><span class="pl-badge pl-badge--warning">Possible ghost job</span> ' +
         '<span class="muted sm">' + esc(ghost) + '</span></p>' : '') + '</section>';
     if (it.snippet) html += '<section class="dsec"><h4>Posting</h4><div class="snippet">' + esc(it.snippet) + '</div></section>';
     document.getElementById('detail-body').innerHTML = html;
+    wireDetail();
     var keep = document.getElementById('ibx-d-keep'); if (keep) keep.onclick = function () { closeDetail(); inboxKeep([id]); };
     var dis = document.getElementById('ibx-d-dismiss'); if (dis) dis.onclick = function () { closeDetail(); inboxDismiss([id]); };
     showDetail();
@@ -3924,15 +3942,57 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var tc = document.getElementById('to-closed'); if (tc) tc.onclick = function () { setTab('closed'); };
     wireBoard(b);
   }
-  // Closed tab (§2/§3): the dead roles, off the working board. The full searchable table is R4;
-  // for now the carried card (with its move menu, so a role can be reopened) opens the drawer.
+  // Closed history: filters never change the overall summary counts.
   function renderClosedTab(b) {
-    var rows = closedApps().slice().sort(function (x, y) { return lastMoveDate(x) < lastMoveDate(y) ? 1 : -1; });
-    if (!rows.length) { b.innerHTML = '<div class="emptyc"><div class="empty-title">No closed roles</div><p class="muted sm emptyc-desc">Roles you reject or pass on land here, out of the working board.</p></div>'; return; }
-    var selOpts = colSelOpts();
-    b.innerHTML = '<p class="muted sm">' + rows.length + ' closed ' + (rows.length === 1 ? 'role' : 'roles') + ' — open one to review, or move it back with its menu.</p>' +
-      '<div class="closed-list">' + rows.map(function (a) { return closedCardHtml(a, selOpts); }).join('') + '</div>';
-    wireCards(b);
+    var all = closedApps().slice().sort(function (x, y) { return lastMoveDate(y).localeCompare(lastMoveDate(x)); });
+    var rejected = all.filter(function (a) { return a.status === 'rejected'; }).length;
+    var passed = all.filter(function (a) { return a.status === 'passed'; }).length;
+    var q = CLOSED_Q.toLowerCase();
+    var rows = all.filter(function (a) {
+      return (CLOSED_OUT === 'all' || a.status === CLOSED_OUT) &&
+        (String(a.role || '') + ' ' + String(a.company || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    var pages = Math.max(1, Math.ceil(rows.length / 25));
+    CLOSED_PAGE = Math.max(0, Math.min(CLOSED_PAGE, pages - 1));
+    var page = rows.slice(CLOSED_PAGE * 25, CLOSED_PAGE * 25 + 25);
+    b.innerHTML = '<p class="muted sm">' + all.length + ' closed · ' + rejected + ' rejected · ' + passed + ' passed</p>' +
+      '<div class="toolbar"><label for="closed-search">Search closed roles</label>' +
+      '<input id="closed-search" class="pl-input" placeholder="Search role or company" value="' + esc(CLOSED_Q) + '">' +
+      '<div class="pl-tabs pl-tabs--segmented" role="tablist" aria-label="Outcome">' +
+      [['all', 'All'], ['rejected', 'Rejected'], ['passed', 'Passed']].map(function (o) {
+        return '<button class="pl-tab" role="tab" aria-controls="closed-results" aria-selected="' + (CLOSED_OUT === o[0]) +
+          '" tabindex="' + (CLOSED_OUT === o[0] ? '0' : '-1') + '" data-out="' + o[0] + '">' + o[1] + '</button>';
+      }).join('') + '</div></div><div id="closed-results" role="tabpanel" aria-label="Closed roles">' +
+      '<table class="pl-table"><thead><tr><th>Role</th><th class="closed-company">Company</th><th>Outcome</th><th class="closed-date">Closed on</th></tr></thead><tbody>' +
+      page.map(function (a) {
+        var date = lastMoveDate(a);
+        return '<tr class="pl-tr--interactive" tabindex="0" data-id="' + esc(a.id) + '"><td>' + esc(a.role) +
+          '<div class="closed-sub muted sm">' + esc(a.company) + ' · ' + esc(date) + '</div></td>' +
+          '<td class="closed-company">' + esc(a.company) + '</td><td><span class="pl-badge">' +
+          (a.status === 'rejected' ? 'Rejected' : 'Passed') + '</span></td><td class="closed-date">' + esc(date) + '</td></tr>';
+      }).join('') + '</tbody></table>' + (page.length ? '' : '<p class="pl-empty">No closed roles match</p>') +
+      '</div><div class="toolbar"><span class="muted">' + (rows.length ? (CLOSED_PAGE * 25 + 1) + '–' + (CLOSED_PAGE * 25 + page.length) + ' of ' + rows.length : '0') + '</span>' +
+      '<button class="pl-btn pl-btn--sm" id="closed-prev"' + (CLOSED_PAGE ? '' : ' disabled') + '>Previous</button>' +
+      '<button class="pl-btn pl-btn--sm" id="closed-next"' + (CLOSED_PAGE < pages - 1 ? '' : ' disabled') + '>Next</button></div>';
+    document.getElementById('closed-search').oninput = function () {
+      CLOSED_Q = this.value; CLOSED_PAGE = 0; var caret = this.selectionStart;
+      renderClosedTab(b);
+      var input = document.getElementById('closed-search'); input.focus(); input.setSelectionRange(caret, caret);
+    };
+    var tabs = b.querySelectorAll('[data-out]');
+    tabs.forEach(function (tab, i) {
+      tab.onclick = function () { CLOSED_OUT = tab.getAttribute('data-out'); CLOSED_PAGE = 0; renderClosedTab(b); b.querySelectorAll('[data-out]')[i].focus(); };
+      tab.onkeydown = function (e) {
+        var n = e.key === 'ArrowRight' ? (i + 1) % 3 : e.key === 'ArrowLeft' ? (i + 2) % 3 : e.key === 'Home' ? 0 : e.key === 'End' ? 2 : -1;
+        if (n !== -1) { e.preventDefault(); tabs[n].onclick(); }
+      };
+    });
+    document.getElementById('closed-prev').onclick = function () { CLOSED_PAGE--; renderClosedTab(b); document.getElementById('closed-next').focus(); };
+    document.getElementById('closed-next').onclick = function () { CLOSED_PAGE++; renderClosedTab(b); document.getElementById('closed-prev').focus(); };
+    b.querySelectorAll('tr[data-id]').forEach(function (row) {
+      row.onclick = function () { row.focus(); openDetail(row.getAttribute('data-id')); };
+      row.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.onclick(); } };
+    });
   }
   // About-you drawer content (§5): three read-only accordions. /state failure shows a warning callout.
   function accordion(title, open, inner) {
@@ -3991,10 +4051,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   }
   function trap(e, root) {
     if (e.key !== 'Tab') return;
-    var f = root.querySelectorAll('button:not([disabled]),summary,select,textarea,input,a[href],[tabindex="0"]'); if (!f.length) return;
+    var f = Array.prototype.slice.call(root.querySelectorAll('button:not([disabled]),summary,select:not([disabled]),textarea,input,a[href],[tabindex="0"]')).filter(function (el) { return el.getClientRects().length > 0 && !el.closest('[hidden]'); }); if (!f.length) return;
     var first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
   }
   // Live refresh (§7): re-render in place, keep the active tab, the body scroll and the focused row.
   function render() {
@@ -4002,11 +4062,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var scroll = body ? body.scrollTop : 0;
     var ae = document.activeElement;
     var fid = ae && ae.getAttribute ? ae.getAttribute('data-id') : null;
+    var fieldId = ae && ae.id && body.contains(ae) ? ae.id : null, caret = ae && ae.selectionStart;
     renderBanner(); renderHeader(); renderToday(); renderTabs(); renderBody();
     syncDetailStatus();
     if (aboutIsOpen()) renderAboutBody();
     body = document.getElementById('body'); if (body) body.scrollTop = scroll;
     if (fid) { try { var el = document.querySelector('#body [data-id="' + fid + '"]'); if (el && el.focus) el.focus(); } catch (e) {} }
+    else if (fieldId) { var field = document.getElementById(fieldId); if (field) { field.focus(); if (caret != null && field.setSelectionRange) field.setSelectionRange(caret, caret); } }
   }
   // <<< view renderers
   // >>> s2b pure renderers — self-contained markup builders (depend only on esc), unit-tested.
@@ -4024,7 +4086,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function answerRow(a) {
     a = a || {};
     var isDraft = a.status === 'draft';
-    var badge = isDraft ? '<span class="pl-badge pl-badge--warning">Draft — confirm before using</span>' : '';
+    var badge = isDraft ? '<span class="pl-badge pl-badge--warning">Draft: confirm before using</span>' : '';
     return '<div class="answer' + (isDraft ? ' draft' : '') + '">' +
       '<div class="answer-head">' +
         '<span class="answer-key">' + esc(a.label || a.key || '') + '</span>' + badge +
@@ -4046,9 +4108,9 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 
   function renderKit(kit, answers) {
     kit = kit || {};
-    var out = '';
+    var out = '<div class="pl-steps">';
     var r = kit.resume || {};
-    out += '<div class="kit-block"><h5>Resume</h5>';
+    out += '<div class="kit-block pl-step"><h5>Résumé</h5>';
     if (r.path || r.version || r.built) {
       if (r.version) out += '<div class="kv"><span class="k">Version</span><span>' + esc(r.version) + '</span></div>';
       if (r.built) out += '<div class="kv"><span class="k">Built</span><span>' + esc(r.built) + '</span></div>';
@@ -4057,12 +4119,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
           '<button class="pl-btn pl-btn--sm copy" type="button" data-copy-path>Copy path</button></div>';
       }
     } else {
-      out += '<p class="empty">No resume built yet.</p>';
+      out += '<p class="muted">Not started</p><p class="muted sm">Tailors your résumé to this posting’s title and requirements.</p>';
     }
     out += '</div>';
 
     var cl = kit.cover_letter || {};
-    out += '<div class="kit-block"><h5>Cover letter</h5>';
+    out += '<div class="kit-block pl-step"><h5>Cover letter</h5>';
     if (cl.text) {
       out += '<div class="dsec-actions"><button class="pl-btn pl-btn--sm copy" type="button" data-copy-cover>' +
         'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
@@ -4072,11 +4134,19 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       // has needed:null, so JS must not treat that as "not needed".
       out += '<p class="empty">Not needed for this posting.</p>';
     } else {
-      out += '<p class="empty">Not written yet.</p>';
+      out += '<p class="muted">Not started</p><p class="muted sm">Writes one if the posting asks for it, or marks it not needed.</p>';
     }
     out += '</div>';
 
-    out += '<div class="kit-block"><h5>Answers</h5>' + renderAnswers(kitAnswers(kit, answers)) + '</div>';
+    out += '<div class="kit-block pl-step"><h5>Form answers</h5>';
+    if ((kit.answers || []).length || kit.no_form_questions) {
+      out += kit.no_form_questions ? '<p class="muted sm">No form questions for this posting.</p>' : '';
+      out += renderAnswers(kitAnswers(kit, answers));
+    } else {
+      out += '<p class="muted">Not started</p><p class="muted sm">Drafts any new questions for you to confirm.</p>';
+      if ((answers || []).length) out += '<p class="muted sm">' + answers.length + ' saved answers will be reused</p>' + renderAnswers(answers);
+    }
+    out += '</div></div>';
     return out;
   }
 
@@ -4120,6 +4190,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         'If no letter is needed, pass cover_letter="" and cover_letter_needed=false; ' +
         'set no_form_questions=true only if there genuinely are no form questions. ' +
         'If the reply says DRAFT, fill in the listed missing parts and save again with all three; report blockers.';
+    } else if (kind === 'follow') {
+      text = 'Draft a follow-up for ' + role + ' at ' + company + ' ' + ref + '.';
+    } else if (kind === 'offer') {
+      text = 'Help me weigh the offer for ' + role + ' at ' + company + ' ' + ref + '.';
+    } else if (kind === 'discuss') {
+      text = 'Help me with ' + role + ' at ' + company + ' ' + ref + '.';
     } else if (kind === 'tailor') {
       text = 'Tailor my resume for ' + role + ' at ' + company + ' ' + ref + '.';
     } else {
@@ -4159,9 +4235,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     copyFallback(text); flash();
   }
 
-  // Draft a message for the coach (never auto-send) — the three action buttons.
+  // Draft a message for the coach; Next step and the menu never auto-send.
   function composeAction(kind) {
     if (!DETAIL) return;
+    if (isClosedApp(DETAIL.application || {})) return;
     var text = composeText(kind, DETAIL.application || {});
     try { parent.postMessage({ type: 'protoagent:chat:compose', text: text }, '*'); } catch (e) {}
     toast('Drafted a message for your coach — review and send it in chat.');
@@ -4174,6 +4251,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function markApplied() {
     if (!DETAIL) return;
     var app = DETAIL.application || {};
+    if (isClosedApp(app)) return;
     var id = app.id;
     if (!id) return;
     askConfirm('Mark ' + (app.role || 'this role') + ' @ ' + (app.company || 'this company') + ' as applied?')
@@ -4182,6 +4260,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         write('/applications/' + encodeURIComponent(id) + '/applied', {})
           .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (DETAIL_ID !== id) return;
             return openDetail(id);
           })
           .then(function () { load(); })
@@ -4194,18 +4273,32 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (!DETAIL) return;
     var app = DETAIL.application || {};
     var ta = document.getElementById('detail-notes-text');
-    if (!app.id || !ta) return;
+    if (!app.id || !ta || isClosedApp(app)) return;
     var notes = ta.value;
-    kit.apiFetch('/api/plugins/careercoach/applications/' + encodeURIComponent(app.id) + '/notes', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: notes })
+    if (notes === (app.notes || '') && !NOTE_PENDING[app.id]) return;
+    var status = document.getElementById('detail-notes-status');
+    status.textContent = 'Saving…';
+    NOTE_DRAFTS[app.id] = notes;
+    NOTE_PENDING[app.id] = (NOTE_PENDING[app.id] || 0) + 1;
+    NOTE_WRITES[app.id] = (NOTE_WRITES[app.id] || Promise.resolve()).then(function () {
+      return kit.apiFetch('/api/plugins/careercoach/applications/' + encodeURIComponent(app.id) + '/notes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: notes })
+      });
     }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       app.notes = notes;
-      toast('Notes saved.');
-      load();
-    }).catch(function () { toast('Could not save your notes — try again.'); });
+      if (NOTE_DRAFTS[app.id] === notes) delete NOTE_DRAFTS[app.id];
+      if (DETAIL && DETAIL.application.id === app.id) {
+        DETAIL.application.notes = notes;
+        var current = document.getElementById('detail-notes-text');
+        if (current && current.value === notes) document.getElementById('detail-notes-status').textContent = 'Saved';
+      }
+    }).catch(function () {
+      if (DETAIL_ID === app.id) document.getElementById('detail-notes-status').textContent = 'Could not save — blur to retry';
+      toast('Could not save your notes — try again.');
+    }).then(function () { NOTE_PENDING[app.id]--; });
   }
 
   function wireDetail() {
@@ -4224,117 +4317,156 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       if (btn && val) btn.addEventListener('click', function () { copyText(val.textContent, btn); });
     });
     body.querySelectorAll('.act').forEach(function (b) {
-      b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); });
+      b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); var menu = document.getElementById('detail-menu'); if (menu) { menu.hidden = true; var more = document.getElementById('detail-more'); more.setAttribute('aria-expanded', 'false'); more.focus(); } });
     });
     var status = document.getElementById('detail-status');
     if (status) status.addEventListener('change', function () {
-      if (DETAIL_ID) moveApp(DETAIL_ID, status.value);
+      if (DETAIL_ID && (!DETAIL || !isClosedApp(DETAIL.application))) { if (status.value === 'applied') { syncDetailStatus(); markApplied(); } else moveApp(DETAIL_ID, status.value); }
     });
     var applied = document.getElementById('detail-applied');
     if (applied) applied.addEventListener('click', markApplied);
-    var save = document.getElementById('detail-notes-save');
-    if (save) save.addEventListener('click', saveNotes);
+    body.querySelectorAll('[data-applied]').forEach(function (b) { b.onclick = markApplied; });
+    var notes = document.getElementById('detail-notes-text');
+    if (notes && !notes.readOnly) {
+      notes.addEventListener('blur', saveNotes);
+      notes.oninput = function () { if (DETAIL_ID) NOTE_DRAFTS[DETAIL_ID] = notes.value; document.getElementById('detail-notes-status').textContent = '';  };
+    }
+    var reopen = document.getElementById('detail-reopen');
+    if (reopen) reopen.onclick = function () { if (DETAIL_ID) moveApp(DETAIL_ID, ((JOBS.columns || {}).Saved || ['considering'])[0]); };
+    var more = document.getElementById('detail-more'), menu = document.getElementById('detail-menu');
+    if (more && menu) {
+      more.onclick = function () { menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden)); if (!menu.hidden) menu.querySelector('button').focus(); };
+      menu.onkeydown = function (e) {
+        var items = Array.prototype.slice.call(menu.querySelectorAll('button'));
+        var i = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') { e.stopPropagation(); menu.hidden = true; more.setAttribute('aria-expanded', 'false'); more.focus(); }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+      };
+    }
   }
 
+  function coachMenu() {
+    return '<button class="pl-btn" id="detail-more" aria-haspopup="menu" aria-expanded="false">Ask your coach</button>' +
+      '<div class="pl-menu" id="detail-menu" role="menu" hidden>' +
+      '<button class="pl-btn act" role="menuitem" data-act="kit">Build apply kit</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="tailor">Tailor resume</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="prep">Prep me for this interview</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="follow">Draft a follow-up</button></div>';
+  }
   function renderDetail(d) {
-    var app = (d && d.application) || {};
-    var kitData = (d && d.kit) || {};
-    var posting = app.posting || {};
-    var title = posting.title || app.role || '';
-    var url = app.source || posting.url || '';
+    var app = (d && d.application) || {}, kitData = (d && d.kit) || {};
+    var posting = app.posting || {}, title = posting.title || app.role || '';
+    var url = app.source || posting.url || '', closed = isClosedApp(app);
+    var early = ['considering', 'saved', 'preparing'].indexOf(app.status) !== -1;
     document.getElementById('detail-title').innerHTML =
       '<div class="detail-role">' + esc(app.role || title || 'This role') + '</div>' +
-      '<div class="detail-co">' + esc(app.company || '') +
-        (app.status ? ' · <span class="pl-badge">' + esc(app.status) + '</span>' : '') + '</div>' +
-      detailStatusHtml(app);
-
-    var html = '';
-    // posting
-    html += '<section id="detail-posting" class="dsec"><h4>Posting</h4>';
-    html += '<div class="kv"><span class="k">Role</span><span>' + esc(title) + '</span></div>';
-    html += '<div class="kv"><span class="k">Company</span><span>' + esc(app.company || '') + '</span></div>';
-    if (posting.location) {
-      html += '<div class="kv"><span class="k">Location</span><span>' + esc(posting.location) + '</span></div>';
-    }
-    if (url) {
-      html += '<div class="kv"><span class="k">Link</span>' +
-        '<a class="plink" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + '</a></div>';
-    }
-    if (posting.snippet) html += '<div class="snippet">' + esc(posting.snippet) + '</div>';
-    html += '</section>';
-
-    // fit
-    html += '<section id="detail-fit" class="dsec"><h4>Fit</h4>' +
-      '<div class="fitline"><span class="fit big">' + Number(app.fit_score || 0) + '</span>' +
-      '<span class="verdict">' + esc(fitVerdict(app.fit_score)) + '</span></div></section>';
-
-    // notes (editable, saved via PATCH — holds the fit reason + anything the operator adds)
-    html += '<section id="detail-notes" class="dsec"><h4>Notes</h4>' +
-      '<textarea id="detail-notes-text" class="notes-ta" ' +
-      'placeholder="Your notes on this role — the fit reason, next steps, anything.">' +
-      esc(app.notes || '') + '</textarea>' +
-      '<div class="dsec-actions"><button class="pl-btn pl-btn--sm" type="button" id="detail-notes-save">Save notes</button></div>' +
-      '</section>';
-
-    // apply kit
-    html += '<section id="detail-kit" class="dsec"><h4>Apply kit</h4>' +
-      renderKit(kitData, (d && d.answers) || []) + '</section>';
-
-    // timeline
-    html += '<section id="detail-timeline" class="dsec"><h4>Timeline</h4>' +
-      renderTimeline(d && d.timeline) + '</section>';
-
-    // contacts — the whole section is hidden when the list is empty
+      '<div class="detail-co">' + esc(app.company || '') + '</div>' + detailStatusHtml(app) +
+      (url ? ' <a class="pl-btn pl-btn--ghost" href="' + esc(url) + '" target="_blank" rel="noopener">View posting</a>' : '') +
+      '<details class="pl-accordion" id="detail-posting"><summary>Posting</summary>' +
+      '<p>' + esc(title) + '</p>' + (posting.location ? '<p>' + esc(posting.location) + '</p>' : '') +
+      (posting.snippet ? '<div class="snippet">' + esc(posting.snippet) + '</div>' : '') + '</details>';
+    var next;
+    if (closed) next = '<button class="pl-btn pl-btn--primary" id="detail-reopen">Reopen</button>';
+    else if (app.status === 'interviewing') next = '<button class="pl-btn pl-btn--primary act" data-act="prep">Prep me for this interview</button>';
+    else if (early && kitData.status === 'complete') next = '<button class="pl-btn pl-btn--primary" type="button" id="detail-applied">Mark applied</button>';
+    else if (early) next = '<button class="pl-btn pl-btn--primary act" data-act="kit">Build apply kit</button>';
+    else next = '<button class="pl-btn pl-btn--primary act" data-act="' + (app.status === 'offer' ? 'offer' : app.followup ? 'follow' : 'discuss') + '">' +
+      (app.status === 'offer' ? 'Weigh this offer' : app.followup ? 'Draft a follow-up' : 'Ask coach about this role') + '</button>';
+    var html = '<section id="detail-actions" class="dsec"><h4>Next step</h4>' + next + (closed ? '' : coachMenu()) + '</section>';
+    html += '<details id="detail-kit" class="pl-card pl-accordion"' + (early ? ' open' : '') + '><summary>Apply kit</summary>' +
+      (kitData.status === 'draft' && kitData.updated ? '<span class="pl-badge pl-badge--warning">Draft: confirm before using</span>' : '') +
+      renderKit(kitData, (d && d.answers) || []) +
+      (closed ? '' : '<button class="pl-btn pl-btn--primary act" data-act="kit">Build apply kit</button>' +
+        '<p class="muted sm">Your coach builds all three in chat. You review each before anything is sent.</p>' +
+        (app.status !== 'applied' ? '<button class="pl-btn" data-applied>I applied already: mark applied</button>' : '')) + '</details>';
+    if (Number(app.fit_score) > 0) html += '<section id="detail-fit" class="dsec"><h4>Fit</h4>' +
+      '<div class="fitline"><span class="fit big">' + Number(app.fit_score) + '</span><span class="verdict">' +
+      esc(fitVerdict(app.fit_score)) + '</span></div><p>' + esc(app.notes || '') + '</p></section>';
+    html += '<section id="detail-notes" class="dsec"><h4><label for="detail-notes-text">Notes</label></h4>' +
+      '<textarea id="detail-notes-text" class="pl-textarea notes-ta"' + (closed ? ' readonly' : '') +
+      ' placeholder="Your notes on this role — the fit reason, next steps, anything.">' + esc(Object.prototype.hasOwnProperty.call(NOTE_DRAFTS, app.id) ? NOTE_DRAFTS[app.id] : app.notes || '') + '</textarea>' +
+      '<div id="detail-notes-status" class="muted sm" role="status"></div></section>';
+    html += '<details id="detail-timeline" class="pl-accordion"><summary>Timeline</summary>' + renderTimeline(d && d.timeline) + '</details>';
     var contacts = (d && d.contacts) || [];
-    if (contacts.length) {
-      html += '<section id="detail-contacts" class="dsec"><h4>Contacts at ' +
-        esc(app.company || 'this company') + '</h4>' + renderContacts(contacts) + '</section>';
-    }
-
-    // actions — each drafts a chat message; Mark applied posts /applied behind an inline confirm
-    html += '<section id="detail-actions" class="dsec"><h4>Ask your coach</h4>' +
-      '<div class="action-btns">' +
-        '<button class="pl-btn act" type="button" data-act="kit">Build apply kit</button>' +
-        '<button class="pl-btn act" type="button" data-act="tailor">Tailor resume</button>' +
-        '<button class="pl-btn act" type="button" data-act="prep">Prep me for this interview</button>' +
-      '</div>' +
-      '<div class="action-btns"><button class="pl-btn pl-btn--primary" type="button" id="detail-applied">Mark applied</button></div>' +
-      '<p class="hint">The buttons above draft a message for your coach — you review and send it. ' +
-      'Nothing is sent automatically.</p></section>';
-
+    if (contacts.length) html += '<details id="detail-contacts" class="pl-accordion"><summary>Contacts at ' + esc(app.company || 'this company') + '</summary>' + renderContacts(contacts) + '</details>';
     document.getElementById('detail-body').innerHTML = html;
     wireDetail();
   }
 
+  function refreshDetailMarkup(d) {
+    var root = document.getElementById('detail'), active = document.activeElement;
+    var inside = active && root.contains(active), focusId = inside ? active.id : null;
+    var controls = Array.prototype.slice.call(root.querySelectorAll('button,select,textarea,input,a,summary'));
+    var focusIndex = inside ? controls.indexOf(active) : -1;
+    var menu = document.getElementById('detail-menu'), menuOpen = menu && !menu.hidden;
+    var ta = document.getElementById('detail-notes-text');
+    var caret = ta && active === ta ? ta.selectionStart : null;
+    var panel = document.querySelector('#detail .detail-panel'), scroll = panel ? panel.scrollTop : 0;
+    var open = {};
+    root.querySelectorAll('details[id]').forEach(function (el) { open[el.id] = el.open; });
+    renderDetail(d);
+    root.querySelectorAll('details[id]').forEach(function (el) { if (el.id in open) el.open = open[el.id]; });
+    if (panel) panel.scrollTop = scroll;
+    menu = document.getElementById('detail-menu');
+    if (menu && menuOpen) { menu.hidden = false; document.getElementById('detail-more').setAttribute('aria-expanded', 'true'); }
+    var target = focusId ? document.getElementById(focusId) : (focusIndex >= 0 ? root.querySelectorAll('button,select,textarea,input,a,summary')[focusIndex] : null);
+    if (!target && inside) target = document.getElementById('detail-close');
+    if (target && target.disabled) target = document.getElementById('detail-close');
+    if (target) { target.focus(); if (caret != null && target.setSelectionRange) target.setSelectionRange(caret, caret); }
+  }
+  function rememberDetailOpener() {
+    if (!document.getElementById('detail').classList.contains('open')) DETAIL_RETURN = document.activeElement;
+  }
+  function sizeDetail() {
+    var panel = document.querySelector('#detail .detail-panel');
+    if (!panel) return;
+    var bottom = document.getElementById('cc').clientWidth < 600;
+    panel.classList.toggle('pl-drawer--bottom', bottom);
+    panel.classList.toggle('pl-drawer--right', !bottom);
+  }
   function showDetail() {
+    sizeDetail();
     var el = document.getElementById('detail');
+    var wasOpen = el.classList.contains('open');
     el.classList.add('open');
     el.setAttribute('aria-hidden', 'false');
     var close = document.getElementById('detail-close');
-    if (close && close.focus) close.focus();
+    if (!wasOpen && close && close.focus) close.focus();
   }
   function closeDetail() {
+    saveNotes();
     var el = document.getElementById('detail');
     el.classList.remove('open');
     el.setAttribute('aria-hidden', 'true');
-    DETAIL = null; DETAIL_ID = null;
+    DETAIL = null; DETAIL_ID = null; DETAIL_REQUEST++;
+    var opener = DETAIL_RETURN; DETAIL_RETURN = null;
+    if (opener && !opener.isConnected && opener.getAttribute) {
+      var id = opener.getAttribute('data-id');
+      opener = Array.prototype.slice.call(document.querySelectorAll('#body [data-id]')).find(function (el) { return el.getAttribute('data-id') === id; });
+    }
+    if (!opener || !opener.isConnected) opener = document.getElementById('tab-' + TAB);
+    if (opener && opener.focus) opener.focus();
   }
   // Fetch one application through the gated apiFetch and render the drawer. A bad id / error toasts
   // and leaves the drawer closed.
   function openDetail(id) {
     if (!id) return Promise.resolve();
+    rememberDetailOpener();
     DETAIL_ID = id;
+    var request = ++DETAIL_REQUEST;
     return api('/applications/' + encodeURIComponent(id)).then(function (d) {
       // Drop a response the user has moved on from: a slow fetch for a card they've since closed
       // (Esc/✕ null DETAIL_ID) or clicked past (DETAIL_ID points at a newer id) must not reopen or
       // overwrite the drawer with stale data.
       if (DETAIL_ID !== id) return;
+      if (DETAIL_REQUEST !== request) return;
       if (!d || d.error) { toast('Could not open that role — try again.'); return; }
       DETAIL = d;
-      renderDetail(d);
+      if (document.getElementById('detail').classList.contains('open')) refreshDetailMarkup(d); else renderDetail(d);
       showDetail();
     }, function () {
       if (DETAIL_ID !== id) return;
+      if (DETAIL_REQUEST !== request) return;
       toast('Could not open that role — try again.');
     });
   }
@@ -4351,6 +4483,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
                                function () { STATE = null; STATE_FAILED = true; });
     }, function () { JOBS_FAILED = true; STATE = null; STATE_FAILED = false; }).then(function () {
       LOADING = false; render();
+      if (DETAIL_ID && document.getElementById('detail').classList.contains('open')) return openDetail(DETAIL_ID);
     });
   }
 
@@ -4371,14 +4504,17 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (e.key === 'Escape') { e.stopPropagation(); closeAbout(); } else { trap(e, document.getElementById('about')); }
   });
 
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sizeDetail).observe(document.getElementById('cc'));
+
   // The job detail drawer dismisses on the ✕, the backdrop, and Esc.
   (function () {
     var close = document.getElementById('detail-close');
     if (close) close.addEventListener('click', closeDetail);
     var backdrop = document.querySelector('#detail .detail-backdrop');
     if (backdrop) backdrop.addEventListener('click', closeDetail);
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' || e.keyCode === 27) closeDetail();
+    document.getElementById('detail').addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' || e.keyCode === 27) { e.stopPropagation(); closeDetail(); }
+      else trap(e, document.querySelector('#detail .detail-panel'));
     });
   })();
 
