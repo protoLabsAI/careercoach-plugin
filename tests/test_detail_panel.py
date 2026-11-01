@@ -42,6 +42,13 @@ def test_card_click_fetches_the_application_through_apifetch(plugin):
     assert "kit.apiFetch('/api/plugins/careercoach' + path)" in html  # `api` goes through apiFetch
 
 
+def test_board_card_click_opens_drawer_only_when_not_picked_up(plugin):
+    """A board card opens the detail drawer on a plain click, but not while it is picked up for a
+    keyboard move (LIFT_ID set) — so Space-to-drop can't also fire a drawer-opening click (R2 §3)."""
+    html = plugin._DASHBOARD_HTML
+    assert "if (!LIFT_ID) openDetail(card.getAttribute('data-id'))" in html
+
+
 def test_detail_renders_all_sections(plugin):
     html = plugin._DASHBOARD_HTML
     for marker in (
@@ -280,3 +287,59 @@ def test_carried_drawer_uses_kit_classes(plugin):
     assert 'class="pl-btn act"' in html  # the "Ask your coach" action buttons
     assert 'class="pl-btn pl-btn--primary" type="button" id="detail-applied"' in html  # Mark applied
     assert 'class="btn' not in html and 'class="pill"' not in html
+
+
+def test_drawer_status_select_lists_destinations_and_preserves_legacy_status(plugin):
+    from test_jobs_page import COLUMNS, _inner, _view_ctx
+
+    ctx = _view_ctx(plugin)
+    html = plugin._DASHBOARD_HTML
+    ctx.eval(html[html.index("  // >>> s2b pure renderers") : html.index("  // /jobs drives")])
+    ctx.eval("JOBS.columns = " + json.dumps(COLUMNS) + ";")
+    ctx.eval('renderDetail({application: {id: "a", status: "legacy<&"}});')
+    header = _inner(ctx, "detail-title")
+    assert '<label for="detail-status">Status</label>' in header
+    assert 'class="pl-select" aria-label="Status"' in header
+    assert '<option value="legacy&lt;&amp;" selected>legacy&lt;&amp;</option>' in header
+    for status in [s for statuses in COLUMNS.values() for s in statuses]:
+        assert f'<option value="{status}"' in header
+
+
+def test_drawer_status_change_uses_move_undo_and_failure_rollback(plugin):
+    from test_jobs_page import COLUMNS, _view_ctx
+
+    ctx = _view_ctx(plugin)
+    html = plugin._DASHBOARD_HTML
+    ctx.eval(html[html.index("  // >>> s2b pure renderers") : html.index("  // /jobs drives")])
+    ctx.eval(
+        "JOBS = "
+        + json.dumps({"columns": COLUMNS, "applications": [{"id": "a", "status": "considering", "role": "Dev"}]})
+        + ";"
+    )
+    ctx.eval("""
+      DETAIL_ID = 'a';
+      var select = document.getElementById('detail-status');
+      select.addEventListener = function (event, fn) { if (event === 'change') this.change = fn; };
+      var requests = [], ok = true, feedback;
+      write = function (path, body) { requests.push([path, body]); return Promise.resolve({ok: ok, status: 500}); };
+      renderBody = function () {};
+      load = function () { syncDetailStatus(); };
+      announce = function () {};
+      toast = function (msg, opts) { feedback = opts; };
+      wireDetail();
+      select.value = 'interviewing'; select.change();
+    """)
+    assert ctx.eval('findApp("a").status') == "interviewing"
+    while ctx.execute_pending_job():
+        pass
+    assert json.loads(ctx.eval("JSON.stringify(requests[0])")) == ["/applications/a/move", {"status": "interviewing"}]
+    ctx.eval("feedback.undo();")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("requests[1][0]") == "/applications/a/undo-move"
+    ctx.eval("ok = false; select.value = 'offer'; select.change();")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("select.value") == "interviewing"
+    assert ctx.eval('findApp("a").status') == "interviewing"
+    assert ctx.eval("feedback.error") is True

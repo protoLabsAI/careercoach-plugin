@@ -37,7 +37,7 @@ COLUMNS = {
 _STUB = r"""
 var __els = {};
 function __mkEl(id) {
-  return { id: id, innerHTML: '', hidden: false, value: '', _a: {},
+  return { id: id, innerHTML: '', hidden: false, value: '', _a: {}, style: {},
     clientWidth: (id === 'cc' ? __W : 0),
     setAttribute: function (k, v) { this._a[k] = String(v); },
     getAttribute: function (k) { return (k in this._a) ? this._a[k] : null; },
@@ -122,8 +122,8 @@ def test_closed_leaves_the_board_and_lives_on_its_own_tab(plugin):
     ctx = _view_ctx(plugin)
     apps = [{"id": s, "status": s} for statuses in COLUMNS.values() for s in statuses]
     board = _render_pipeline(ctx, apps, COLUMNS)
-    # five live columns on the board; no legacy column; the dead cards are gone from the board
-    assert board.count('class="col"') == 5
+    # five live pl-board-col columns on the board; no legacy column; dead cards are off the board
+    assert board.count('class="col pl-board-col"') == 5  # the kit board-column class (§9)
     assert "Other statuses" not in board
     assert board.count('class="pcard pl-board-card"') == 5
     assert ">rejected<" not in board and ">passed<" not in board
@@ -188,6 +188,7 @@ def test_page_target_routes_exist_on_the_gated_router(plugin):
     for action in ("keep", "dismiss"):
         assert ordered_paths.index(f"/inbox/{action}") < ordered_paths.index("/inbox/{item_id:path}/" + action)
     assert any(p.startswith("/applications/") and p.endswith("/move") for p in paths)
+    assert any(p.startswith("/applications/") and p.endswith("/undo-move") for p in paths)  # the move Undo (§7)
 
 
 # ── header: eyebrow, title Jobs, target-roles subline, About-you ghost button (§2) ─────
@@ -459,7 +460,7 @@ def test_about_drawer_shows_warning_callout_on_partial_failure(plugin):
     assert "Couldn’t load your profile" in about
 
 
-# ── draggable cards + a non-drag Move-to select per card (carried) ─────────────────────
+# ── R2 board card (§3): role/company/age, conditional fit, no pill, pl-chip--warning line ──
 def test_cards_are_draggable_with_dragover_and_drop_handlers(plugin):
     html = plugin._DASHBOARD_HTML
     assert 'draggable="true"' in html
@@ -470,13 +471,160 @@ def test_cards_are_draggable_with_dragover_and_drop_handlers(plugin):
     assert "moveToColumn(" in html
 
 
-def test_every_card_has_a_keyboard_touch_move_select(plugin):
+def test_board_card_has_no_select_no_pill_and_keyboard_attrs(plugin):
+    """§3/§6: the per-card 'Move to…' select and the status pill are gone from the board; a card is
+    a keyboard-movable button (role=button, tabindex 0, aria-pressed) as well as draggable."""
+    ctx = _view_ctx(plugin)
+    html = _render_pipeline(ctx, [{"id": "x", "role": "Dev", "company": "Acme", "status": "applied"}], COLUMNS)
+    assert "<select" not in html and "movesel" not in html  # no per-card select on the board
+    assert 'role="button"' in html and 'tabindex="0"' in html and 'draggable="true"' in html
+    assert 'aria-pressed="false"' in html  # the pick-up state is exposed to AT
+    assert "pl-badge" not in html and ">applied<" not in html  # no status pill — the column says it
+
+
+def test_board_card_shows_fit_only_when_scored(plugin):
+    """§3: fit shows only when fit_score > 0 — a card never shows a 0."""
+    ctx = _view_ctx(plugin)
+    scored = [{"id": "s", "role": "R", "company": "C", "status": "applied", "fit_score": 82}]
+    assert '<span class="fit">fit 82</span>' in _render_pipeline(ctx, scored, COLUMNS)
+    unscored = [{"id": "u", "role": "R", "company": "C", "status": "applied", "fit_score": 0}]
+    assert 'class="fit"' not in _render_pipeline(ctx, unscored, COLUMNS)  # no fit span, never a 0
+
+
+def test_board_followup_adds_one_pl_chip_warning_line(plugin):
+    """§3/§10: a server-flagged follow-up adds exactly ONE pl-chip--warning line carrying text; an
+    unflagged card has none."""
+    ctx = _view_ctx(plugin)
+    flagged = [
+        {
+            "id": "f",
+            "role": "R",
+            "company": "C",
+            "status": "applied",
+            "followup": True,
+            "history": [{"status": "applied", "date": "2020-01-01"}],
+        }
+    ]
+    out = _render_pipeline(ctx, flagged, COLUMNS)
+    assert out.count("pl-chip--warning") == 1  # exactly one follow-up line, carrying a tone...
+    assert "No reply in" in out and "days" in out  # ...and text, never colour alone
+    assert "follow up?" not in out  # the old board-card copy is gone
+    plain = [{"id": "p", "role": "R", "company": "C", "status": "applied", "followup": False}]
+    assert "pl-chip--warning" not in _render_pipeline(ctx, plain, COLUMNS)  # gated on the flag
+
+
+def test_columns_sort_followups_first_then_oldest_move(plugin):
+    """§3: each column sorts flagged follow-ups first, then oldest move (earliest last-move date)."""
+    ctx = _view_ctx(plugin)
+    apps = [
+        {
+            "id": "new",
+            "role": "N",
+            "company": "C",
+            "status": "applied",
+            "history": [{"status": "applied", "date": "2026-02-01"}],
+        },
+        {
+            "id": "old",
+            "role": "O",
+            "company": "C",
+            "status": "applied",
+            "history": [{"status": "applied", "date": "2025-01-01"}],
+        },
+        {
+            "id": "flag",
+            "role": "F",
+            "company": "C",
+            "status": "applied",
+            "followup": True,
+            "history": [{"status": "applied", "date": "2026-03-01"}],
+        },
+    ]
+    out = _render_pipeline(ctx, apps, COLUMNS)
+    order = [out.index('data-id="flag"'), out.index('data-id="old"'), out.index('data-id="new"')]
+    assert order == sorted(order)  # flagged, then oldest move, then newest
+
+
+def test_applied_column_scrolls_inside_itself_not_the_page(plugin):
+    """§3: Applied (and any tall column) scrolls inside the column — no paging — so the board stays
+    one viewport. Cards live in a bounded, scrollable col-list."""
     html = plugin._DASHBOARD_HTML
-    assert '<select class="movesel pl-select"' in html  # kit-class select, built in the card template
-    assert "Move to…" in html
-    assert '''aria-label="Move ' + esc(a.role) + ' to another column"''' in html
-    assert ".movesel').forEach" in html
-    assert "addEventListener('change'" in html
+    css = html.split("</style>")[0]
+    assert ".col-list { display: grid; gap: 8px; max-height: 62vh; overflow: auto; }" in css
+    ctx = _view_ctx(plugin)
+    out = _render_pipeline(ctx, [{"id": "a", "role": "R", "company": "C", "status": "applied"}], COLUMNS)
+    assert 'class="col-list"' in out
+
+
+def test_pipeline_hint_describes_keyboard_pickup_not_a_select(plugin):
+    ctx = _view_ctx(plugin)
+    out = _render_pipeline(ctx, [{"id": "a", "role": "R", "company": "C", "status": "applied"}], COLUMNS)
+    assert "pl-kbd" in out and "to pick up" in out and "to drop" in out
+    assert "Move to…" not in out  # the hint no longer points at a select
+
+
+def test_pipeline_empty_state_when_no_live_roles(plugin):
+    """§7 'Profile set, watch not run' Pipeline Empty: only closed roles (which never count) → no
+    board, just the empty copy."""
+    ctx = _view_ctx(plugin)
+    out = _render_pipeline(ctx, [{"id": "r", "status": "rejected"}, {"id": "p", "status": "passed"}], COLUMNS)
+    assert "No live applications" in out
+    assert "Keep a role from Inbox, or paste a posting in chat." in out
+    assert "pl-board" not in out  # the board isn't drawn when there are no live roles
+
+
+# ── R2 keyboard pick-up (WCAG 2.5.7): Space / ←→ / Space-Enter, announced in one status region ──
+def test_keyboard_pickup_arrow_drop_and_cancel(plugin):
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      function setTimeout(fn, ms) { if (fn) fn(); return 0; }
+      var __moves = [];
+      moveToColumn = function (id, col) { __moves.push([id, col]); };
+      var __cols = ['Saved', 'Preparing', 'Applied', 'Interviewing', 'Offer', 'Closed'].map(function (name) {
+        return { getAttribute: function (k) { return k === 'data-col' ? name : null; },
+          classList: { toggle: function () {}, remove: function () {} } };
+      });
+      var __board = { querySelectorAll: function () { return __cols; }, querySelector: function () { return null; } };
+      function mkCard(id) {
+        return { _attr: {}, getAttribute: function (k) { return k === 'data-id' ? id : (this._attr[k] || null); },
+          setAttribute: function (k, v) { this._attr[k] = String(v); },
+          classList: { add: function () {}, remove: function () {} }, focus: function () {} };
+      }
+    """)
+    jobs = {
+        "applications": [{"id": "ap1", "role": "SRE", "company": "Acme", "status": "applied"}],
+        "columns": COLUMNS,
+        "inbox": [],
+        "followup_days": 10,
+    }
+    ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + "; var __card = mkCard('ap1');")
+    # Space picks the card up, starting in its own column, and announces in the live region
+    ctx.eval("boardKey({key: ' ', preventDefault: function () {}}, __board, __card);")
+    assert ctx.eval("LIFT_ID") == "ap1"
+    assert ctx.eval("LIFT_COL") == "Applied"
+    assert ctx.eval("__card._attr['aria-pressed']") == "true"
+    assert "Picked up SRE" in ctx.eval("document.getElementById('live').textContent")
+    # ArrowRight walks the target column toward Closed
+    ctx.eval("boardKey({key: 'ArrowRight', preventDefault: function () {}}, __board, __card);")
+    assert ctx.eval("LIFT_COL") == "Interviewing"
+    # Space drops: routes the move through moveToColumn and clears the lift
+    ctx.eval("boardKey({key: ' ', preventDefault: function () {}}, __board, __card);")
+    assert ctx.eval("JSON.stringify(__moves)") == '[["ap1","Interviewing"]]'
+    assert ctx.eval("LIFT_ID") is None
+    # A fresh pick-up then Escape cancels with no further move
+    ctx.eval("boardKey({key: ' ', preventDefault: function () {}}, __board, __card);")
+    ctx.eval("boardKey({key: 'Escape', preventDefault: function () {}}, __board, __card);")
+    assert ctx.eval("LIFT_ID") is None
+    assert ctx.eval("__moves.length") == 1  # Escape did not move anything
+    assert "Move cancelled." in ctx.eval("document.getElementById('live').textContent")
+
+
+def test_moves_are_announced_in_a_single_status_region(plugin):
+    html = plugin._DASHBOARD_HTML
+    assert '<div id="live" class="sr-only" role="status" aria-live="polite"></div>' in html
+    assert "function announce(msg)" in html
+    assert "document.getElementById('live')" in html
+    assert "announce(role + ' moved to ' + dest" in html  # every move funnels through announce
 
 
 def test_dropping_on_closed_asks_rejected_or_passed_default_passed(plugin):
@@ -496,6 +644,34 @@ def test_move_is_optimistic_and_rolls_back_with_a_toast(plugin):
     assert "toast(" in html
 
 
+def test_move_failure_rolls_back_with_the_section7_error_toast(plugin):
+    html = plugin._DASHBOARD_HTML
+    assert "Couldn’t move that role. It’s back where it was." in html  # §7 copy
+    assert "{ error: true }" in html  # the pl-toast--error variant
+    assert "pl-toast--error" in html
+
+
+def test_every_move_offers_a_six_second_undo_calling_undo_move(plugin):
+    """§7: the move toast carries a 6s Undo that calls POST /undo-move — never a second move. An
+    undo failure reloads the board and shows the §7 error toast."""
+    html = plugin._DASHBOARD_HTML
+    assert "{ undo: function () { undoMove(id); } }" in html
+    assert "function undoMove(id)" in html
+    assert "'/applications/' + encodeURIComponent(id) + '/undo-move'" in html
+    assert "opts.undo ? 6000 : 4000" in html  # 6s while an Undo is offered
+    assert "Couldn’t undo that. The role stayed where you moved it." in html
+
+
+def test_closed_tab_keeps_its_carried_reopen_select(plugin):
+    """The Closed tab's §3 table + drawer Reopen are R4; until then its carried card keeps the
+    Move-to select as the only reopen path. The board itself has no select (see above)."""
+    ctx = _view_ctx(plugin)
+    apps = [{"id": "r", "role": "Old role", "company": "C", "status": "rejected"}]
+    closed = _render_closed(ctx, apps, COLUMNS)
+    assert '<select class="movesel pl-select"' in closed
+    assert "Move to…" in closed
+
+
 # ── live refresh — subscribe to careercoach.# and reload in place on an event (§7) ──────
 def test_page_subscribes_to_careercoach_events_and_reloads(plugin):
     html = plugin._DASHBOARD_HTML
@@ -509,13 +685,11 @@ def test_page_subscribes_to_careercoach_events_and_reloads(plugin):
     assert "if (body) body.scrollTop = scroll;" in html
 
 
-# ── the follow-up nudge renders ONLY for cards flagged followup (carried) ──────────────
-def test_followup_nudge_is_gated_on_the_followup_flag(plugin):
+# ── the board follow-up line renders ONLY for flagged cards, in exactly one gated branch ──
+def test_board_followup_line_is_one_gated_pl_chip_warning(plugin):
     html = plugin._DASHBOARD_HTML
-    assert "follow up?" in html
-    assert "No reply in " in html
-    assert "var nudge = a.followup" in html
-    assert html.count('class="nudge"') == 1  # emitted in exactly one place — the gated branch
+    assert "var nudge = a.followup" in html  # gated on the server follow-up flag
+    assert html.count('pl-chip--warning">No reply in ') == 1  # one board branch, not duplicated
 
 
 # ── the inbox list: title, company, score, reason, posting link, keep/dismiss (carried) ─
@@ -620,3 +794,40 @@ def test_dynamic_path_ids_are_fleet_safe(plugin, state, tmp_path, monkeypatch):
 def test_dynamic_path_scan_detects_encoded_and_raw_ids(source):
     expected = "inbox" if "/inbox/" in source else "new_resource"
     assert _dynamic_id_resources(source) == {expected}
+
+
+@pytest.mark.parametrize("drop_key", [" ", "Enter"])
+@pytest.mark.parametrize("choice", ["passed", "rejected", "cancel", "escape"])
+def test_keyboard_closed_drop_keeps_modal_focus(plugin, drop_key, choice):
+    ctx = _view_ctx(plugin)
+    ctx.eval("JOBS = " + json.dumps({"columns": COLUMNS, "applications": [{"id": "a", "status": "offer"}]}) + ";")
+    ctx.eval("""
+      var card = __mkEl('card');
+      card.setAttribute('data-id', 'a'); card.isConnected = true;
+      card.focus = function () { document.activeElement = card; };
+      document.querySelector = function () { return card; };
+      var board = { querySelectorAll: function () { return []; } };
+      ['choose-passed', 'choose-rejected', 'choose-cancel'].forEach(function (id) {
+        var el = document.getElementById(id);
+        el.focus = function () { document.activeElement = el; };
+      });
+      var moves = [];
+      moveApp = function (id, status) { moves.push([id, status]); };
+      card.focus(); LIFT_ID = 'a'; LIFT_COL = 'Closed';
+    """)
+    ctx.eval("boardKey({key: " + json.dumps(drop_key) + ", preventDefault: function () {}}, board, card);")
+    assert ctx.eval("document.activeElement.id") == "choose-passed"
+    assert ctx.eval("LIFT_ID") is None
+    assert ctx.eval("moves.length") == 0
+    if choice == "escape":
+        ctx.eval(
+            "document.getElementById('chooser').onkeydown({key: 'Escape', preventDefault: function () {}, stopPropagation: function () {}});"
+        )
+    else:
+        ctx.eval("document.getElementById('choose-" + choice + "').onclick();")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("document.activeElement.id") == "card"
+    assert ctx.eval("document.getElementById('chooser').style.display") == "none"
+    expected = [] if choice in ("cancel", "escape") else [["a", choice]]
+    assert json.loads(ctx.eval("JSON.stringify(moves)")) == expected
