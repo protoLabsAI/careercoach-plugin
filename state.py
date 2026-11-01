@@ -208,9 +208,10 @@ def active_at_company(company: str, rows: list[dict] | None = None) -> list[dict
 
 def move(app_id: str, status: str) -> dict:
     """Move one application (by its stable ``id``) to ``status``: set status + ``updated`` and append
-    a ``{status, date}`` history entry, in one locked, atomic write. Raises ``StoreUnreadable`` on an
-    unreadable file, ``ValueError`` on an unknown status, and ``KeyError`` on an unknown id — each
-    before any write, so a bad move leaves the pipeline untouched."""
+    a ``{status, date}`` history entry, in one locked, atomic write. Keeps what the move replaced in
+    ``last_move`` so ``undo_move`` can put it back. Raises ``StoreUnreadable`` on an unreadable file,
+    ``ValueError`` on an unknown status, and ``KeyError`` on an unknown id — each before any write,
+    so a bad move leaves the pipeline untouched."""
     if status not in STATUSES:
         raise ValueError(f"unknown status {status!r}; valid: {', '.join(STATUSES)}")
     today = _today()
@@ -221,9 +222,40 @@ def move(app_id: str, status: str) -> dict:
         r = next((x for x in rows if x.get("id") == app_id), None)
         if r is None:
             raise KeyError(f"no application with id {app_id!r}")
+        r["last_move"] = {"from": r.get("status", ""), "to": status, "updated": r.get("updated")}
         r.setdefault("history", []).append({"status": status, "date": today})
         r["status"] = status
         r["updated"] = today
+        _save(rows)
+        return r
+
+
+def undo_move(app_id: str) -> dict:
+    """Take back the last ``move()`` on one application, as if it never happened: the prior status
+    (an unknown legacy status included), the prior ``updated``, and the history entry goes. A plain
+    move back would not do: it rejects legacy statuses, and its fresh history date resets the
+    follow-up clock (``needs_followup``). Raises ``StoreUnreadable`` on an unreadable file,
+    ``KeyError`` on an unknown id, and ``ValueError`` when there is no move to undo or the row has
+    changed status since — each before any write."""
+    with _store._locked("applications"):
+        rows, err = _read_rows()
+        if err:
+            raise StoreUnreadable(_path(), err)
+        r = next((x for x in rows if x.get("id") == app_id), None)
+        if r is None:
+            raise KeyError(f"no application with id {app_id!r}")
+        last = r.get("last_move") or {}
+        if not last or r.get("status") != last.get("to"):
+            raise ValueError(f"no move to undo on {app_id!r}")
+        history = r.get("history") or []
+        if history and history[-1].get("status") == last["to"]:
+            history.pop()
+        r["status"] = last.get("from", "")
+        if last.get("updated") is None:
+            r.pop("updated", None)
+        else:
+            r["updated"] = last["updated"]
+        del r["last_move"]
         _save(rows)
         return r
 
@@ -368,6 +400,7 @@ def mark_applied(app_id: str, answers_used: list[dict] | None = None) -> dict:
         r["status"] = "applied"
         r["updated"] = today
         r["applied_with"] = {"date": today, "resume_version": resume_version, "answers": snapshot}
+        r.pop("last_move", None)  # marking applied records a submission: it is not undoable
         _save(rows)
         return r
 

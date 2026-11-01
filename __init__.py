@@ -2431,7 +2431,8 @@ def _register_views(registry, cfg) -> None:
     @data.get("/jobs")
     async def _jobs():
         """The pipeline board: the watch inbox, the tracked applications (each flagged `followup`
-        when an applied role is overdue a nudge), the column mapping, and the follow-up window."""
+        when an applied role is overdue a nudge), the column mapping, the follow-up window, and
+        when the watch last ran ("" if never)."""
         days = _followup_days()
         today = state._today()
         try:
@@ -2439,7 +2440,15 @@ def _register_views(registry, cfg) -> None:
         except wl.StoreUnreadable:
             inbox = []  # an unreadable inbox reads as empty — the board still renders the pipeline
         apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
-        return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
+        return JSONResponse(
+            {
+                "inbox": inbox,
+                "applications": apps,
+                "columns": state.COLUMNS,
+                "followup_days": days,
+                "watch_last_run": wl.watch_last_run(),
+            }
+        )
 
     def _keep_inbox_item(item_id: str):
         """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its reason
@@ -2498,6 +2507,20 @@ def _register_views(registry, cfg) -> None:
         except state.StoreUnreadable as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
+
+    @data.post("/applications/{app_id}/undo-move")
+    async def _undo_move(app_id: str):
+        """Take back the last move, exactly: prior status, `updated` and history. The server holds
+        what to restore, so the client can't name a status. Nothing to undo is a 409; an unknown id
+        is a 400, as for a move."""
+        try:
+            row = state.undo_move(app_id)
+        except (state.StoreUnreadable, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        except KeyError as e:
             return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
@@ -2650,6 +2673,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         return []
     rows = state.load_applications()
     found: list[dict] = []
+    answered = False  # did any source answer? A pass where all failed didn't run, for the view
     # The watch keeps its OWN first-seen log (watch-seen.json) and records only what it handled:
     # a morning digest showing a role first must not make the watch skip it, and a role cut by
     # the per-scan cap must come back next scan.
@@ -2661,6 +2685,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 watched, roles=roles, exclude=f["exclude"], locations=f["locations"],
                 max_age_days=f["max_age_days"], tracker_rows=rows, log_name=wl.WATCH_SEEN, record=False,
             )  # fmt: skip
+            answered = True
             found += [j for j in res.new if not j["tracked"]]
     except Exception as e:  # noqa: BLE001
         log.info("[careercoach] watch board scan failed: %s", e)
@@ -2675,6 +2700,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         except Exception as e:  # noqa: BLE001
             log.info("[careercoach] watch market search failed for %r: %s", role, e)
             continue
+        answered = True
         for j in got.jobs:
             if boards.passes(
                 j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
@@ -2682,6 +2708,11 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 j["id"] = f"{j['source']}:{j['url']}"
                 j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
                 market[j["id"]] = j
+    if answered:
+        try:
+            wl.record_watch_run()
+        except OSError as e:  # the note is chrome: it must not cost this pass its results
+            log.info("[careercoach] watch run not recorded: %s", e)
     try:
         if market:
             index = scan.tracked_index(rows)
