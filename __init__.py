@@ -2835,11 +2835,21 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .tmark { flex: none; font-size: 12px; }
   .pl-chip--warning { color: var(--pl-color-status-warning); }
 
-  .tabs { display: flex; gap: 2px; padding: 8px 24px 0; border-bottom: 1px solid var(--pl-color-border); flex: none; }
+  .tabs { display: flex; gap: 2px; padding: 8px 24px 0; border-bottom: 1px solid var(--pl-color-border);
+          flex: none; position: relative; }
   .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted);
-         font: inherit; font-size: 13px; padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+         font: inherit; font-size: 13px; padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; white-space: nowrap; }
   .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
-  .tab:focus-visible, .body:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .tab:focus-visible, .body:focus-visible, .tab--menu:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  /* Responsive tabs (§8): when the three tabs + counts don't fit the container, the strip collapses to
+     a single menu trigger (fitTabs measures overflow) that opens this menu of the same tabs. */
+  .tab--menu { background: none; border: 0; color: var(--pl-color-fg); font: inherit; font-size: 13px;
+               padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  .tabs-menu { position: absolute; top: 100%; left: 24px; z-index: 30; min-width: 180px; padding: 4px;
+               background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong);
+               border-radius: var(--pl-radius, 10px); }
+  .tabs-menu[hidden] { display: none; }
+  .tabs-menu .tab { width: 100%; border-bottom: 0; justify-content: space-between; }
   .pl-count { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--pl-color-bg-subtle);
               color: var(--pl-color-fg-muted); font-variant-numeric: tabular-nums; }
 
@@ -2880,9 +2890,15 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .plink { color: var(--pl-color-accent); font-size: 12px; text-decoration: none; }
   .plink:hover { text-decoration: underline; }
 
-  /* Pipeline board (§3): five open columns + an "Other" column for legacy statuses + the Closed stub. */
-  .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) 140px; gap: 12px; align-items: start; }
-  @container cc (max-width: 899px) { .board { grid-template-columns: repeat(5, 220px) 140px; overflow-x: auto; } }
+  /* Pipeline board (§3): five open columns + an "Other" column for legacy statuses + the Closed stub.
+     Layout bands switch on a CONTAINER query on the view root (§8), never the viewport, so the rail
+     panel and split-screen both work. ≥900px: the five columns share the width, Closed stub 120px. */
+  .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 120px; gap: 12px; align-items: start; }
+  /* 600–899px (split-screen, §8): columns fix at 220px and the board scrolls sideways with scroll-snap. */
+  @container cc (max-width: 899px) {
+    .board { grid-template-columns: repeat(5, 220px) 110px; overflow-x: auto; scroll-snap-type: x mandatory; }
+    .col { scroll-snap-align: start; }
+  }
   .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: 10px;
          padding: 8px; min-height: 60px; }
   .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
@@ -2908,6 +2924,24 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .closed-list { display: grid; gap: 8px; max-width: 520px; }
   .closed-list .pcard { margin-bottom: 0; }
   .pipeline-hint { margin: 0 0 10px; }
+
+  /* Rail (<600px, §8): the board is swapped for a stacked list of stage accordions (Saved · Preparing
+     · Applied · Interviewing · Offer). Hidden at wider widths; the @container 599 rule toggles it on
+     and the board off. Drag is off here — a row opens the drawer, and the keyboard pick-up (↑/↓
+     between stages) highlights the lifted row (.lift) and the target stage (details[data-stage].over). */
+  .stages { display: none; }
+  .srow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+          border-top: 1px solid var(--pl-color-border); }
+  .srow:first-child { border-top: 0; }
+  .srow:hover { background: var(--pl-color-bg-hover); }
+  .srow:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .srow.lift { background: var(--pl-color-bg-hover); box-shadow: inset 2px 0 0 var(--pl-color-accent); }
+  .srow .srole { font-size: 13px; font-weight: 600; }
+  .srow .smeta { font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 2px; }
+  /* The follow-up marker carries text ("No reply"), never colour alone (§10). */
+  .srow .snudge { color: var(--pl-color-status-warning); }
+  details[data-stage].over > summary { outline: 2px dashed var(--pl-color-accent); outline-offset: -2px; }
+  .stage-closed .srole { font-weight: 600; }
 
   /* About-you drawer: three read-only accordions + the rubric bars (§5). */
   .arow { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-size: 13px; }
@@ -3001,15 +3035,22 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   #detail .hint { color: var(--pl-color-fg-muted); font-size: 12px; margin: 6px 0 0; }
 
   .closed-sub { display: none; }
-  @container cc (max-width: 899px) { #detail .detail-panel { width: 100%; } }
+  /* 600–899px (§8): the drawers go full width. */
+  @container cc (max-width: 899px) { #detail .detail-panel, #about { width: 100%; } }
   @container cc (max-width: 599px) {
+    /* Rail (§8): Pipeline becomes the stage-list (board off); the Closed table drops Company and
+       Closed-on, folding both under the role as one muted line; the drawer goes bottom-side at
+       85dvh; the header's target-roles subline is hidden. */
+    .board { display: none; }
+    .stages { display: block; }
     .closed-company, .closed-date { display: none; }
     .closed-sub { display: block; }
     #detail .detail-panel { top: auto; bottom: 0; height: 85dvh; }
     .hd .s { display: none; }
     #about, #detail .detail-panel { width: 100%; }
   }
-  @media (prefers-reduced-motion: reduce) { .grp > summary .chev { transition: none; } }
+  /* §10: honour reduced-motion — kill the chevron spin and the toast fade. */
+  @media (prefers-reduced-motion: reduce) { .grp > summary .chev { transition: none; } #toast { transition: none; } }
 </style></head>
 <body>
   <div class="cc" id="cc">
@@ -3108,8 +3149,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   var CLOSED_Q = '', CLOSED_OUT = 'all', CLOSED_PAGE = 0;
   var NOTE_DRAFTS = Object.create(null), NOTE_WRITES = Object.create(null), NOTE_PENDING = Object.create(null);
   // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
-  // the arrow keys are hovering. Both null at rest. A pointer drag never touches these.
+  // the arrow keys are hovering. Both null at rest. A pointer drag never touches these. The same two
+  // drive the rail stage-list pick-up (§8), where ↑/↓ walk LIFT_COL instead of ←/→.
   var LIFT_ID = null, LIFT_COL = null;
+  // Rail stage-list (§8): which stage accordions the operator has toggled (col -> bool). A stage
+  // defaults open when it has cards and collapses to one line when empty; an explicit toggle wins.
+  var STAGE_OPEN = {};
   // Inbox triage state (§3): sort order, the ghost filter toggle, the current multi-selection
   // (id -> 1), which freshness groups are open, rows removed optimistically (kept or dismissing,
   // id -> 1), the HELD dismiss timers (id -> handle; the write waits out the 6s Undo window), and
@@ -3139,7 +3184,14 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function itemTime(it) { var s = it.first_seen || it.posted || ''; if (!s) return 0; var t = new Date(s).getTime(); return isNaN(t) ? 0 : t; }
   function compose(text) { try { parent.postMessage({ type: 'protoagent:chat:compose', text: String(text).slice(0, 4000) }, '*'); } catch (e) {} }
   function skel(n) { var out = '<div class="skel" aria-hidden="true">'; for (var i = 0; i < n; i++) { out += '<div class="pl-skel"></div>'; } return out + '</div>'; }
-  function setTab(t) { TAB = t; renderTabs(); renderBody(); var b = document.getElementById('tab-' + t); if (b && b.focus) b.focus(); }
+  function setTab(t) {
+    TAB = t; renderTabs(); renderBody();
+    // When the strip has collapsed to the responsive menu trigger (§8) there is no tab-<t> button to
+    // return focus to, so land on the trigger instead.
+    var el = document.getElementById('tabs');
+    var b = (el && el.querySelector && el.querySelector('#tabs-trigger')) || document.getElementById('tab-' + t);
+    if (b && b.focus) b.focus();
+  }
   // Announce a board move / pick-up in the single role="status" live region (§10). Cleared then set
   // on a tick so the same message announced twice (e.g. two moves to the same column) still fires.
   function announce(msg) {
@@ -3430,6 +3482,44 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       };
     });
     var body = document.getElementById('body'); if (body) body.setAttribute('aria-labelledby', 'tab-' + TAB);
+    fitTabs();
+  }
+  // Responsive tabs (§8): the WAI-ARIA tablist above is the default. When the three tabs + counts
+  // don't fit the container (a very narrow rail or split-screen), the strip collapses to a single
+  // menu trigger (aria-haspopup) that opens a pl-menu of the same tabs, so the counts never overflow
+  // or clip. Reads layout only (scrollWidth vs clientWidth) and swaps #tabs markup — never the state.
+  // Re-run after every renderTabs and on resize; inert where the container reports no width.
+  function fitTabs() {
+    var el = document.getElementById('tabs');
+    if (!el || el.hidden) return;
+    if (!el.scrollWidth || el.scrollWidth <= el.clientWidth + 1) return;  // they fit → keep the tablist
+    var showCounts = !LOADING && !JOBS_FAILED, c = showCounts ? counts() : null;
+    var T = [['pipeline', 'Pipeline'], ['inbox', 'Inbox'], ['closed', 'Closed']];
+    function nameOf(t) { var n = c ? c[t[0]] : 0; return t[1] + (n ? ', ' + n : ''); }
+    function badge(t) { var n = c ? c[t[0]] : 0; return n ? ' <span class="pl-count" aria-hidden="true">' + n + '</span>' : ''; }
+    var active = T.filter(function (t) { return TAB === t[0]; })[0] || T[0];
+    el.innerHTML = '<button class="tab--menu" id="tabs-trigger" aria-haspopup="menu" aria-expanded="false"' +
+      ' aria-label="' + nameOf(active) + ', choose a view">' + active[1] + badge(active) +
+      ' <span aria-hidden="true">▾</span></button>' +
+      '<div class="tabs-menu" id="tabs-menu" role="menu" aria-label="Jobs" hidden>' + T.map(function (t) {
+        return '<button class="tab" role="menuitemradio" data-tab="' + t[0] + '" aria-checked="' + (TAB === t[0]) +
+          '" aria-label="' + nameOf(t) + '">' + t[1] + badge(t) + '</button>';
+      }).join('') + '</div>';
+    var trigger = document.getElementById('tabs-trigger'), menu = document.getElementById('tabs-menu');
+    function closeMenu(toTrigger) { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); if (toTrigger && trigger.focus) trigger.focus(); }
+    function openMenu() { menu.hidden = false; trigger.setAttribute('aria-expanded', 'true'); var f = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button'); if (f && f.focus) f.focus(); }
+    trigger.onclick = function () { if (menu.hidden) openMenu(); else closeMenu(false); };
+    trigger.onkeydown = function (e) { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); if (menu.hidden) openMenu(); } };
+    var items = Array.prototype.slice.call(menu.querySelectorAll('[data-tab]'));
+    items.forEach(function (it, i) {
+      it.onclick = function () { closeMenu(false); setTab(it.getAttribute('data-tab')); };
+      it.onkeydown = function (e) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+        else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); it.onclick(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+      };
+    });
+    var body = document.getElementById('body'); if (body) body.setAttribute('aria-labelledby', 'tabs-trigger');
   }
   function renderBody() {
     var b = document.getElementById('body');
@@ -3779,6 +3869,24 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       nudge +
     '</div>';
   }
+  // A rail stage-list row (§8): the same live role as a focusable list item under its stage accordion.
+  // Drag is off at this width, so the row opens the drawer on click/Enter and moves via the keyboard
+  // pick-up (↑/↓ between stages, stageKey) or the drawer Status select. The follow-up marker carries
+  // text ("No reply"), never colour alone (§10). Picked-up state mirrors the board card's lift.
+  function stageRowHtml(a) {
+    var n = daysSince(lastMoveDate(a));
+    var picked = LIFT_ID === a.id;
+    var meta = [];
+    if (a.company) meta.push(esc(a.company));
+    if (n != null) meta.push(n + 'd');
+    var nudge = a.followup ? ' · <span class="snudge">No reply</span>' : '';
+    var aria = (a.role || 'Role') + ' at ' + (a.company || '') + ', ' + (a.status || '') +
+      (n == null ? '' : ', ' + n + ' days') + (a.followup ? ', no reply, follow up' : '') + (picked ? ', picked up' : '');
+    return '<div class="srow' + (picked ? ' lift' : '') + '" tabindex="0" role="button" data-id="' + esc(a.id) + '"' +
+      ' aria-pressed="' + (picked ? 'true' : 'false') + '" aria-label="' + esc(aria) + '">' +
+      '<div class="grow"><div class="srole">' + esc(a.role) + '</div>' +
+      '<div class="smeta">' + meta.join(' · ') + nudge + '</div></div></div>';
+  }
   // The carried Closed-tab card: its §3 table and drawer Reopen are R4, so until then this keeps the
   // status pill and the Move-to select — the only reopen path. Board cards never use it.
   function closedCardHtml(a, selOpts) {
@@ -3802,6 +3910,20 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       var dx = lastMoveDate(x), dy = lastMoveDate(y);
       return dx === dy ? 0 : (dx < dy ? -1 : 1);
     });
+  }
+  // The visible element carrying a data-id inside #body. In rail mode the board is display:none and
+  // the stage-list is shown (and vice versa), so the same role renders twice (§8); focus restoration
+  // and the keyboard move must land on whichever copy is actually on screen, not the hidden one.
+  function visibleInBody(id) {
+    var body = document.getElementById('body');
+    if (!body || !body.querySelectorAll) return null;
+    var els = body.querySelectorAll('[data-id]'), first = null;
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].getAttribute && els[i].getAttribute('data-id') !== id) continue;
+      if (!first) first = els[i];
+      if (els[i].offsetParent !== null) return els[i];
+    }
+    return first;
   }
   // The board's navigable columns, in order: the five open columns + the Closed stub (each a
   // data-col drop target). The legacy "Other" column has no data-col and is never a move target.
@@ -3832,7 +3954,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         if (to) moveToColumn(id, to);
         // The chooser owns focus once opened; never focus a card behind its modal.
         if (document.getElementById('chooser').style.display !== 'flex') {
-          var moved = document.querySelector('#body [data-id="' + id + '"]');
+          var moved = visibleInBody(id);
           if (moved && moved.focus) moved.focus();
         }
         return;
@@ -3861,6 +3983,68 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       clearLift(b, card);
       announce('Move cancelled.');
     }
+  }
+  function overStage(b, col) {
+    b.querySelectorAll('details[data-stage]').forEach(function (d) { d.classList.toggle('over', d.getAttribute('data-stage') === col); });
+  }
+  function clearStageLift(b, row) {
+    LIFT_ID = null; LIFT_COL = null;
+    if (row) { row.classList.remove('lift'); row.setAttribute('aria-pressed', 'false'); }
+    b.querySelectorAll('details[data-stage]').forEach(function (d) { d.classList.remove('over'); });
+  }
+  // Rail stage-list keyboard move (§8, WCAG 2.5.7): drag is off at this width, so a focused row is
+  // picked up with Space, the target stage is chosen with ↑/↓ (the vertical analogue of the board's
+  // ←/→), and Space or Enter drops it — Escape cancels. Each step is announced in the single live
+  // region (§10). Enter on a row at rest opens its drawer; a drop routes through moveToColumn, so the
+  // Closed stage still asks rejected/passed and the move still offers Undo. Columns come from the
+  // (hidden) board, so pick-up targets stay identical across widths.
+  function stageKey(ev, b, row) {
+    var id = row.getAttribute('data-id'), app = findApp(id);
+    if (!app) return;
+    var k = ev.key;
+    if (k === ' ' || k === 'Spacebar' || k === 'Enter') {
+      if (LIFT_ID === id) {               // drop
+        ev.preventDefault();
+        var to = LIFT_COL;
+        clearStageLift(b, row);
+        if (to) moveToColumn(id, to);
+        if (document.getElementById('chooser').style.display !== 'flex') {
+          var moved = visibleInBody(id);
+          if (moved && moved.focus) moved.focus();
+        }
+        return;
+      }
+      if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }
+      ev.preventDefault();                // Space → pick up
+      LIFT_ID = id; LIFT_COL = statusToColumn()[app.status] || boardCols(b)[0] || null;
+      row.classList.add('lift'); row.setAttribute('aria-pressed', 'true');
+      overStage(b, LIFT_COL);
+      announce('Picked up ' + (app.role || 'this role') +
+        '. Use up and down arrows to choose a stage, then Space or Enter to drop, Escape to cancel.');
+      return;
+    }
+    if (LIFT_ID === id && (k === 'ArrowDown' || k === 'ArrowUp')) {
+      ev.preventDefault();
+      var cols = boardCols(b); if (!cols.length) return;
+      var i = cols.indexOf(LIFT_COL); if (i === -1) i = 0;
+      i = Math.max(0, Math.min(cols.length - 1, i + (k === 'ArrowDown' ? 1 : -1)));
+      LIFT_COL = cols[i];
+      overStage(b, LIFT_COL);
+      announce('Over ' + LIFT_COL);
+      return;
+    }
+    if (k === 'Escape' && LIFT_ID === id) {
+      ev.preventDefault();
+      clearStageLift(b, row);
+      announce('Move cancelled.');
+    }
+  }
+  // Rail stage-list wiring (§8): a click/Enter opens the drawer; keydown drives the pick-up move.
+  function wireStages(b) {
+    b.querySelectorAll('.srow[data-id]').forEach(function (row) {
+      row.addEventListener('click', function () { if (!LIFT_ID) openDetail(row.getAttribute('data-id')); });
+      row.addEventListener('keydown', function (ev) { stageKey(ev, b, row); });
+    });
   }
   // Board wiring: pointer drag (dragstart/over/drop) + keyboard pick-up + click-to-open. No select.
   function wireBoard(b) {
@@ -3935,11 +4119,42 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         '<span class="muted sm">Drop here to close</span>' +
         '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="to-closed">View all</button></div>';
     }
+    // Rail stage-list (§8): the same live roles as a stacked set of stage accordions, one per open
+    // column. Rendered always; CSS hides it until <600px, where the board is hidden instead. A stage
+    // opens when it has cards and collapses to one line when empty, unless the operator toggled it.
+    // Preserve the legacy-status fallback (§7) at rail widths too. Like the board's Other column,
+    // this group is only present when needed and is not a move destination.
+    var stageItems = displayCols.map(function (col) {
+      var rows = sortCards(col === null ? other : buckets[col]);
+      col = col === null ? 'Other statuses' : col;
+      var open = (STAGE_OPEN[col] != null) ? STAGE_OPEN[col] : rows.length > 0;
+      var inner = rows.map(stageRowHtml).join('') ||
+        '<p class="empty" style="padding:8px 12px;font-size:12px">Nothing here yet.</p>';
+      return '<details class="grp pl-accordion" data-stage="' + esc(col) + '"' + (open ? ' open' : '') + '>' +
+        '<summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(col) + '</span>' +
+        '<span class="pl-count">' + rows.length + '</span></summary>' +
+        '<div role="list">' + inner + '</div></details>';
+    }).join('');
+    var stageClosed = closedName ? '<div class="srow stage-closed" tabindex="0" role="button" id="to-closed2" ' +
+      'aria-label="Closed, ' + buckets[closedName].length + ', open the Closed tab"><div class="grow">' +
+      '<div class="srole">Closed · ' + buckets[closedName].length + '</div>' +
+      '<div class="smeta">Open the Closed tab</div></div></div>' : '';
+    var stages = '<div class="stages" aria-label="Pipeline by stage">' + stageItems + stageClosed + '</div>';
     b.innerHTML = '<p class="muted sm pipeline-hint">Drag a card, or focus it and press <span class="pl-kbd">Space</span> to pick up, ' +
       '<span class="pl-kbd">←</span><span class="pl-kbd">→</span> to choose a column, <span class="pl-kbd">Space</span> to drop. ' +
+      'On a narrow panel the board becomes a stage list — pick up and use <span class="pl-kbd">↑</span><span class="pl-kbd">↓</span>. ' +
       'Closed roles live on the Closed tab.</p>' +
-      '<div class="board pl-board" role="list">' + cards + stub + '</div>';
+      '<div class="board pl-board" role="list">' + cards + stub + '</div>' + stages;
     var tc = document.getElementById('to-closed'); if (tc) tc.onclick = function () { setTab('closed'); };
+    var tc2 = document.getElementById('to-closed2');
+    if (tc2) {
+      tc2.onclick = function () { setTab('closed'); };
+      tc2.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); setTab('closed'); } };
+    }
+    b.querySelectorAll('details[data-stage]').forEach(function (d) {
+      d.ontoggle = function () { STAGE_OPEN[d.getAttribute('data-stage')] = d.open; };
+    });
+    wireStages(b);
     wireBoard(b);
   }
   // Closed history: filters never change the overall summary counts.
@@ -4067,7 +4282,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     syncDetailStatus();
     if (aboutIsOpen()) renderAboutBody();
     body = document.getElementById('body'); if (body) body.scrollTop = scroll;
-    if (fid) { try { var el = document.querySelector('#body [data-id="' + fid + '"]'); if (el && el.focus) el.focus(); } catch (e) {} }
+    if (fid) { try { var el = visibleInBody(fid); if (el && el.focus) el.focus(); } catch (e) {} }
     else if (fieldId) { var field = document.getElementById(fieldId); if (field) { field.focus(); if (caret != null && field.setSelectionRange) field.setSelectionRange(caret, caret); } }
   }
   // <<< view renderers
@@ -4424,6 +4639,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     panel.classList.toggle('pl-drawer--bottom', bottom);
     panel.classList.toggle('pl-drawer--right', !bottom);
   }
+  // A width change (split-screen drag, rail) re-evaluates the width-dependent chrome without new
+  // data: the drawer side, the Today-band cap (§8, 2 rows on the rail / 3 otherwise) and the
+  // responsive tab collapse. The layout bands themselves are pure CSS container queries (§8); this
+  // only re-runs the JS that reads the container's clientWidth.
+  function onResize() { sizeDetail(); renderTabs(); renderToday(); }
   function showDetail() {
     sizeDetail();
     var el = document.getElementById('detail');
@@ -4440,11 +4660,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     el.setAttribute('aria-hidden', 'true');
     DETAIL = null; DETAIL_ID = null; DETAIL_REQUEST++;
     var opener = DETAIL_RETURN; DETAIL_RETURN = null;
-    if (opener && !opener.isConnected && opener.getAttribute) {
+    if (opener && (!opener.isConnected || opener.offsetParent === null) && opener.getAttribute) {
       var id = opener.getAttribute('data-id');
-      opener = Array.prototype.slice.call(document.querySelectorAll('#body [data-id]')).find(function (el) { return el.getAttribute('data-id') === id; });
+      opener = id ? visibleInBody(id) : null;
     }
-    if (!opener || !opener.isConnected) opener = document.getElementById('tab-' + TAB);
+    if (!opener || !opener.isConnected || opener.offsetParent === null) {
+      opener = document.getElementById('tabs-trigger') || document.getElementById('tab-' + TAB);
+    }
     if (opener && opener.focus) opener.focus();
   }
   // Fetch one application through the gated apiFetch and render the drawer. A bad id / error toasts
@@ -4504,7 +4726,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (e.key === 'Escape') { e.stopPropagation(); closeAbout(); } else { trap(e, document.getElementById('about')); }
   });
 
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sizeDetail).observe(document.getElementById('cc'));
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(onResize).observe(document.getElementById('cc'));
 
   // The job detail drawer dismisses on the ✕, the backdrop, and Esc.
   (function () {

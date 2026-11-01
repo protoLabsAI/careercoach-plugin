@@ -557,7 +557,7 @@ def test_close_restores_replaced_opener_after_live_refresh(plugin):
     ctx.eval("""
       DETAIL_RETURN = {isConnected: false, getAttribute: function () { return 'a'; }};
       var replacement = {isConnected: true, getAttribute: function () { return 'a'; }, focus: function () { document.activeElement = this; }};
-      document.querySelectorAll = function () { return [replacement]; };
+      document.getElementById('body').querySelectorAll = function () { return [replacement]; };
       closeDetail();
     """)
     assert ctx.eval("document.activeElement === replacement") is True
