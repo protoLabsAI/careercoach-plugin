@@ -102,15 +102,23 @@ def test_board_shows_open_columns_other_and_closed_stub(plugin, status):
         {"id": "missing", "role": "Missing status"},
     ]
     html = _render_pipeline(ctx, apps, COLUMNS)
+    # The board (≥600px) and the rail stage-list (<600px, §8) are both in the markup; CSS shows one
+    # or the other by container width. Scope the per-region checks so the stage mirror doesn't read
+    # as duplication.
+    board, _, stages = html.partition('<div class="stages"')
     # the live open card renders in its column; the two unmappable rows fall to "Other statuses"
-    assert 'Applied<span class="pl-count">1</span>' in html
-    assert 'Other statuses<span class="pl-count">2</span>' in html
+    assert 'Applied<span class="pl-count">1</span>' in board
+    assert 'Other statuses<span class="pl-count">2</span>' in board
     for app in apps:
-        assert html.count('data-id="' + app["id"] + '"') == 1
+        assert board.count('data-id="' + app["id"] + '"') == 1  # once on the board, no duplication
+    # the rail stage-list mirrors the live role under its stage; legacy "Other" rows are not a named
+    # stage, so (as the board gives them the "Other" column) they aren't mirrored there (§8)
+    assert stages.count('data-id="known"') == 1
+    assert 'data-id="unknown"' not in stages and 'data-id="missing"' not in stages
     # the six-column contract holds as a narrow Closed stub, not a stack of dead cards
-    assert 'class="col stub"' in html
-    assert 'data-col="Closed"' in html
-    assert "Drop here to close" in html
+    assert 'class="col stub"' in board
+    assert 'data-col="Closed"' in board
+    assert "Drop here to close" in board
     # the legacy column is never a persisted status or a move destination
     assert 'value="Other statuses"' not in html
     assert 'data-col="Other statuses"' not in html
@@ -1161,3 +1169,191 @@ def test_closed_date_uses_last_move_not_later_note_update(plugin):
     assert out.index("Later") < out.index("Earlier")
     assert "2026-10-31" not in out
     assert "2026-10-01" in out
+
+
+# ── R5 §8: narrow widths switch on a CONTAINER query on the view root, not the viewport ──
+def test_layout_bands_switch_on_a_container_query_not_the_viewport(plugin):
+    css = plugin._DASHBOARD_HTML.split("</style>")[0]
+    # the view root is the query container (inline-size), so the rail panel and split-screen read ITS
+    # width, never the viewport's
+    assert ".cc { container: cc / inline-size;" in css
+    # ≥900px: the five columns share the width, the Closed stub is 120px (§8)
+    assert ".board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 120px;" in css
+    # the bands are @container rules at 900 and 600 — never an @media width query
+    assert "@container cc (max-width: 899px)" in css
+    assert "@container cc (max-width: 599px)" in css
+    assert "@media (max-width" not in css and "@media (min-width" not in css
+
+
+def test_split_screen_band_scrolls_the_board_sideways_with_snap_columns(plugin):
+    css = plugin._DASHBOARD_HTML.split("</style>")[0]
+    band = css.split("@container cc (max-width: 899px)", 1)[1].split("@container cc (max-width: 599px)", 1)[0]
+    # 600–899px: columns fix at 220px, the board scrolls sideways with scroll-snap, stub 110px (§8)
+    assert "grid-template-columns: repeat(5, 220px) 110px;" in band
+    assert "overflow-x: auto;" in band
+    assert "scroll-snap-type: x mandatory;" in band
+    assert ".col { scroll-snap-align: start; }" in band
+    # the drawers go full width in this band (§8)
+    assert "#detail .detail-panel, #about { width: 100%; }" in css
+
+
+def test_rail_band_swaps_board_for_stages_folds_closed_and_bottoms_the_drawer(plugin):
+    css = plugin._DASHBOARD_HTML.split("</style>")[0]
+    rail = css.split("@container cc (max-width: 599px)", 1)[1]
+    # <600px: the board is hidden and the stage-list shown; the drawer is bottom-side at 85dvh; the
+    # Closed table folds Company/Closed-on under the role; the header's target-roles subline hides (§8)
+    assert ".board { display: none; }" in rail
+    assert ".stages { display: block; }" in rail
+    assert "#detail .detail-panel { top: auto; bottom: 0; height: 85dvh; }" in rail
+    assert ".closed-company, .closed-date { display: none; }" in rail
+    assert ".closed-sub { display: block; }" in rail
+    assert ".hd .s { display: none; }" in rail
+    assert "#about, #detail .detail-panel { width: 100%; }" in rail
+
+
+def test_reduced_motion_is_honoured_for_chevrons_and_the_toast(plugin):
+    rule = plugin._DASHBOARD_HTML.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".grp > summary .chev { transition: none; }" in rule
+    assert "#toast { transition: none; }" in rule  # §10 honour reduced-motion for the toast fade too
+
+
+# ── R5 §8: <600px Pipeline is a stage-grouped Accordion list (drag off) ─────────────────
+def test_rail_pipeline_is_a_stage_grouped_accordion_list(plugin):
+    ctx = _view_ctx(plugin)
+    apps = [
+        {"id": "s1", "role": "Saved role", "company": "Acme", "status": "considering"},
+        {"id": "a1", "role": "Applied role", "company": "Lumen", "status": "applied"},
+        {"id": "a2", "role": "Flagged", "company": "Quarry", "status": "applied", "followup": True},
+    ]
+    html = _render_pipeline(ctx, apps, COLUMNS)
+    stages = html.partition('<div class="stages"')[2]
+    # one accordion per stage, in spec order, each with a Count (§8)
+    assert '<div class="stages" aria-label="Pipeline by stage">' in html
+    for stage in ("Saved", "Preparing", "Applied", "Interviewing", "Offer"):
+        assert 'data-stage="' + stage + '"' in stages
+    assert (
+        stages.index('data-stage="Saved"')
+        < stages.index('data-stage="Preparing"')
+        < stages.index('data-stage="Applied"')
+    )
+    # stages with items open; empty stages collapse to one line (count still showing)
+    assert 'data-stage="Saved" open>' in stages
+    assert 'data-stage="Applied" open>' in stages
+    assert 'data-stage="Preparing"><summary>' in stages  # empty → collapsed, not open
+    assert 'data-stage="Offer"><summary>' in stages
+    # the live roles are rail rows (not board cards) carrying role, company and the follow-up TEXT
+    assert stages.count('class="srow"') == 3
+    assert "Applied role" in stages and "Lumen" in stages and "No reply" in stages
+    assert 'class="pcard' not in stages  # the board card markup never leaks into the stage list
+    # a Closed link row rounds off the list (keyboard-operable)
+    assert 'id="to-closed2"' in stages
+    assert "Closed · 0" in stages
+
+
+def test_rail_stage_empty_pipeline_renders_no_stages(plugin):
+    """§7 Pipeline Empty (no live roles): neither the board NOR the stage-list is drawn."""
+    ctx = _view_ctx(plugin)
+    out = _render_pipeline(ctx, [{"id": "r", "status": "rejected"}, {"id": "p", "status": "passed"}], COLUMNS)
+    assert "No live applications" in out
+    assert 'class="stages"' not in out and "pl-board" not in out
+
+
+def test_rail_stage_list_keyboard_pickup_moves_between_stages(plugin):
+    """§8/§10: drag is off in the rail, so a focused stage row is picked up with Space, the target
+    stage chosen with ↑/↓ (the vertical analogue of the board's ←/→), and Space drops — every step
+    announced in the single live region. Mirrors the board's keyboard pick-up."""
+    ctx = _view_ctx(plugin)
+    ctx.eval("""
+      function setTimeout(fn, ms) { if (fn) fn(); return 0; }
+      var __moves = [];
+      moveToColumn = function (id, col) { __moves.push([id, col]); };
+      var __cols = ['Saved', 'Preparing', 'Applied', 'Interviewing', 'Offer', 'Closed'].map(function (name) {
+        return { getAttribute: function (k) { return k === 'data-col' ? name : null; } };
+      });
+      var __board = { querySelectorAll: function (sel) { return sel === 'details[data-stage]' ? [] : __cols; },
+        querySelector: function () { return null; } };
+      function mkRow(id) {
+        return { _attr: {}, getAttribute: function (k) { return k === 'data-id' ? id : (this._attr[k] || null); },
+          setAttribute: function (k, v) { this._attr[k] = String(v); },
+          classList: { add: function () {}, remove: function () {} }, focus: function () {} };
+      }
+    """)
+    jobs = {
+        "applications": [{"id": "ap1", "role": "SRE", "company": "Acme", "status": "applied"}],
+        "columns": COLUMNS,
+        "inbox": [],
+        "followup_days": 10,
+    }
+    ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + "; var __row = mkRow('ap1');")
+    # Space picks the row up, starting in its own stage, and announces (mentioning up/down arrows)
+    ctx.eval("stageKey({key: ' ', preventDefault: function () {}}, __board, __row);")
+    assert ctx.eval("LIFT_ID") == "ap1"
+    assert ctx.eval("LIFT_COL") == "Applied"
+    assert ctx.eval("__row._attr['aria-pressed']") == "true"
+    live = ctx.eval("document.getElementById('live').textContent")
+    assert "Picked up SRE" in live and "up and down arrows" in live
+    # ArrowDown walks toward Closed; ArrowUp walks back
+    ctx.eval("stageKey({key: 'ArrowDown', preventDefault: function () {}}, __board, __row);")
+    assert ctx.eval("LIFT_COL") == "Interviewing"
+    ctx.eval("stageKey({key: 'ArrowUp', preventDefault: function () {}}, __board, __row);")
+    assert ctx.eval("LIFT_COL") == "Applied"
+    ctx.eval("stageKey({key: 'ArrowDown', preventDefault: function () {}}, __board, __row);")
+    # Space drops: routes through the shared moveToColumn and clears the lift
+    ctx.eval("stageKey({key: ' ', preventDefault: function () {}}, __board, __row);")
+    assert ctx.eval("JSON.stringify(__moves)") == '[["ap1","Interviewing"]]'
+    assert ctx.eval("LIFT_ID") is None
+    # a fresh pick-up then Escape cancels with no further move
+    ctx.eval("stageKey({key: ' ', preventDefault: function () {}}, __board, __row);")
+    ctx.eval("stageKey({key: 'Escape', preventDefault: function () {}}, __board, __row);")
+    assert ctx.eval("LIFT_ID") is None
+    assert ctx.eval("__moves.length") == 1  # Escape did not move anything
+    assert "Move cancelled." in ctx.eval("document.getElementById('live').textContent")
+
+
+def test_rail_stage_row_opens_the_drawer_not_a_move_on_plain_enter(plugin):
+    html = plugin._DASHBOARD_HTML
+    # a row at rest opens the drawer on click / Enter; the pick-up is behind Space (§8)
+    assert "if (!LIFT_ID) openDetail(row.getAttribute('data-id'));" in html
+    assert "if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }" in html
+    # focus restoration lands on the VISIBLE copy (board or stage-list), never the hidden one (§8)
+    assert "function visibleInBody(id)" in html
+    assert "els[i].offsetParent !== null" in html
+
+
+# ── R5 §8: tabs use `responsive`, collapsing to a menu trigger when the counts don't fit ──
+def _fit_tabs(ctx, scroll_width):
+    ctx.eval(
+        "var __t = document.getElementById('tabs');"
+        "__t.scrollWidth = %d; __t.clientWidth = 100; fitTabs();" % scroll_width
+    )
+    return ctx.eval("document.getElementById('tabs').innerHTML")
+
+
+def test_tabs_collapse_to_a_menu_trigger_when_they_dont_fit(plugin):
+    ctx = _view_ctx(plugin)
+    apps = [{"id": "a%d" % i, "status": "applied"} for i in range(5)]  # pipeline 5
+    inbox = [{"id": "in%d" % i} for i in range(49)]  # inbox 49
+    jobs = {"applications": apps, "columns": COLUMNS, "inbox": inbox, "followup_days": 10}
+    ctx.eval("LOADING = false; STATE = null; JOBS = " + json.dumps(jobs) + "; renderTabs();")
+    # they fit (scrollWidth <= clientWidth) → the WAI-ARIA tablist stays untouched
+    fits = _fit_tabs(ctx, 90)
+    assert 'role="tab"' in fits and "tabs-trigger" not in fits
+    # they overflow → collapse to one menu trigger that opens a menu of the same tabs (§8)
+    collapsed = _fit_tabs(ctx, 500)
+    assert 'id="tabs-trigger"' in collapsed and 'aria-haspopup="menu"' in collapsed
+    assert 'role="menu"' in collapsed
+    assert collapsed.count('role="menuitemradio"') == 3
+    assert 'aria-checked="true"' in collapsed  # the active tab is marked in the menu
+    # counts ride along in the accessible name and as a badge (§10: counts in the accessible name)
+    assert 'aria-label="Pipeline, 5, choose a view"' in collapsed
+    assert 'aria-label="Inbox, 49"' in collapsed
+    assert 'class="pl-count"' in collapsed
+
+
+def test_width_change_re_evaluates_today_cap_tabs_and_drawer_side(plugin):
+    html = plugin._DASHBOARD_HTML
+    assert "function onResize() { sizeDetail(); renderTabs(); renderToday(); }" in html
+    assert "new ResizeObserver(onResize)" in html  # the container's width drives it, not the viewport
+    # the drawer goes bottom-side below 600px (§8)
+    assert "var bottom = document.getElementById('cc').clientWidth < 600;" in html
+    assert "panel.classList.toggle('pl-drawer--bottom', bottom);" in html
