@@ -1185,14 +1185,15 @@ def test_layout_bands_switch_on_a_container_query_not_the_viewport(plugin):
     assert "@media (max-width" not in css and "@media (min-width" not in css
 
 
-def test_split_screen_band_scrolls_the_board_sideways_with_snap_columns(plugin):
+def test_split_screen_band_wraps_the_board_with_no_sideways_scroll(plugin):
     css = plugin._DASHBOARD_HTML.split("</style>")[0]
     band = css.split("@container cc (max-width: 899px)", 1)[1].split("@container cc (max-width: 599px)", 1)[0]
-    # 600–899px: columns fix at 220px, the board scrolls sideways with scroll-snap, stub 110px (§8)
-    assert "grid-template-columns: repeat(5, 220px) 110px;" in band
-    assert "overflow-x: auto;" in band
-    assert "scroll-snap-type: x mandatory;" in band
-    assert ".col { scroll-snap-align: start; }" in band
+    # 600–899px: the columns wrap to three across and nothing scrolls sideways (§8)
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in band
+    assert ".board .col-list { max-height: 40vh; }" in band
+    rule = band.split("\n  }", 1)[0]  # just this @container block; the split above runs on past it
+    assert "overflow-x" not in rule
+    assert "scroll-snap" not in rule
     # the drawers go full width in this band (§8)
     assert "#detail .detail-panel, #about { width: 100%; }" in css
 

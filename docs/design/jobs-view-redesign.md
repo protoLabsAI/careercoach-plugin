@@ -135,7 +135,7 @@ Mark applied keeps its inline confirm (a `pl-dialog`, never `window.confirm`). T
 ## 8. Narrow widths and split-screen
 The layout reads the view root's width through a container query, not the viewport, so the rail panel and split-screen both work.
 - **≥ 900px:** the layout above. The board's five columns share the width, and the Closed stub is 120px.
-- **600–899px:** the board scrolls sideways with columns at a fixed 220px and scroll-snap. The Today band and Inbox stay full width. The drawer becomes full width.
+- **600–899px:** the board wraps to three columns across, so every stage stays on screen with no sideways scroll. The console's rail and Work panel take about 495px, so a 1280px window lands in this band. The Today band and Inbox stay full width. The drawer becomes full width.
 - **< 600px (rail panel):**
   - The Pipeline tab changes from a board to a **stacked list grouped by stage**: Saved, Preparing, Applied, Interviewing, Offer, each an `Accordion` item with its `Count`. Stages with items open; empty stages collapse to one line. Drag is off, and moving goes through the drawer Status select or keyboard pick-up (↑/↓ between stages).
   - Tabs use `responsive`, collapsing to a menu trigger if the counts don't fit.

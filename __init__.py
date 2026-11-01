@@ -2894,10 +2894,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
      Layout bands switch on a CONTAINER query on the view root (§8), never the viewport, so the rail
      panel and split-screen both work. ≥900px: the five columns share the width, Closed stub 120px. */
   .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 120px; gap: 12px; align-items: start; }
-  /* 600–899px (split-screen, §8): columns fix at 220px and the board scrolls sideways with scroll-snap. */
+  /* 600–899px (§8): the columns wrap to three across, so nothing runs off the right edge. The console's
+     rail and Work panel take about 495px, so a 1280px window lands here. The shorter lists keep the
+     second row on screen. */
   @container cc (max-width: 899px) {
-    .board { grid-template-columns: repeat(5, 220px) 110px; overflow-x: auto; scroll-snap-type: x mandatory; }
-    .col { scroll-snap-align: start; }
+    .board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .board .col-list { max-height: 40vh; }
   }
   /* One line whatever the list length: a long target list must not eat the one-viewport page. */
   .hd > div:first-child { min-width: 0; }
