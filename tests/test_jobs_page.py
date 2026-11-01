@@ -37,7 +37,7 @@ COLUMNS = {
 _STUB = r"""
 var __els = {};
 function __mkEl(id) {
-  return { id: id, innerHTML: '', hidden: false, value: '', _a: {},
+  return { id: id, innerHTML: '', hidden: false, value: '', _a: {}, style: {},
     clientWidth: (id === 'cc' ? __W : 0),
     setAttribute: function (k, v) { this._a[k] = String(v); },
     getAttribute: function (k) { return (k in this._a) ? this._a[k] : null; },
@@ -794,3 +794,40 @@ def test_dynamic_path_ids_are_fleet_safe(plugin, state, tmp_path, monkeypatch):
 def test_dynamic_path_scan_detects_encoded_and_raw_ids(source):
     expected = "inbox" if "/inbox/" in source else "new_resource"
     assert _dynamic_id_resources(source) == {expected}
+
+
+@pytest.mark.parametrize("drop_key", [" ", "Enter"])
+@pytest.mark.parametrize("choice", ["passed", "rejected", "cancel", "escape"])
+def test_keyboard_closed_drop_keeps_modal_focus(plugin, drop_key, choice):
+    ctx = _view_ctx(plugin)
+    ctx.eval("JOBS = " + json.dumps({"columns": COLUMNS, "applications": [{"id": "a", "status": "offer"}]}) + ";")
+    ctx.eval("""
+      var card = __mkEl('card');
+      card.setAttribute('data-id', 'a'); card.isConnected = true;
+      card.focus = function () { document.activeElement = card; };
+      document.querySelector = function () { return card; };
+      var board = { querySelectorAll: function () { return []; } };
+      ['choose-passed', 'choose-rejected', 'choose-cancel'].forEach(function (id) {
+        var el = document.getElementById(id);
+        el.focus = function () { document.activeElement = el; };
+      });
+      var moves = [];
+      moveApp = function (id, status) { moves.push([id, status]); };
+      card.focus(); LIFT_ID = 'a'; LIFT_COL = 'Closed';
+    """)
+    ctx.eval("boardKey({key: " + json.dumps(drop_key) + ", preventDefault: function () {}}, board, card);")
+    assert ctx.eval("document.activeElement.id") == "choose-passed"
+    assert ctx.eval("LIFT_ID") is None
+    assert ctx.eval("moves.length") == 0
+    if choice == "escape":
+        ctx.eval(
+            "document.getElementById('chooser').onkeydown({key: 'Escape', preventDefault: function () {}, stopPropagation: function () {}});"
+        )
+    else:
+        ctx.eval("document.getElementById('choose-" + choice + "').onclick();")
+    while ctx.execute_pending_job():
+        pass
+    assert ctx.eval("document.activeElement.id") == "card"
+    assert ctx.eval("document.getElementById('chooser').style.display") == "none"
+    expected = [] if choice in ("cancel", "escape") else [["a", choice]]
+    assert json.loads(ctx.eval("JSON.stringify(moves)")) == expected

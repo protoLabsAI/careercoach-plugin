@@ -3180,14 +3180,21 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       var passed = document.getElementById('choose-passed');
       var rejected = document.getElementById('choose-rejected');
       var cancel = document.getElementById('choose-cancel');
+      var previous = document.activeElement;
       function done(v) {
         ov.style.display = 'none';
         passed.onclick = rejected.onclick = cancel.onclick = null;
+        ov.onkeydown = null;
+        if (previous && previous.isConnected && previous.focus) previous.focus();
         resolve(v);
       }
       passed.onclick = function () { done('passed'); };
       rejected.onclick = function () { done('rejected'); };
       cancel.onclick = function () { done(null); };
+      ov.onkeydown = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); return; }
+        trap(e, ov);
+      };
       ov.style.display = 'flex';
       passed.focus();
     });
@@ -3215,6 +3222,25 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     });
   }
 
+  function syncDetailStatus() {
+    var sel = document.getElementById('detail-status'), app = findApp(DETAIL_ID);
+    if (sel && app) sel.value = app.status;
+  }
+  function detailStatusHtml(app) {
+    var statuses = [], labels = {};
+    Object.keys(JOBS.columns || {}).forEach(function (col) {
+      JOBS.columns[col].forEach(function (status) {
+        statuses.push(status);
+        labels[status] = status === 'passed' ? 'Passed' : status === 'rejected' ? 'Rejected' : col;
+      });
+    });
+    if (app.status && statuses.indexOf(app.status) === -1) statuses.unshift(app.status);
+    return '<label for="detail-status">Status</label> <select id="detail-status" class="pl-select" aria-label="Status">' +
+      statuses.map(function (status) {
+        return '<option value="' + esc(status) + '"' + (status === app.status ? ' selected' : '') + '>' +
+          esc(labels[status] || status) + '</option>';
+      }).join('') + '</select>';
+  }
   function columnOfStatus(status) { return statusToColumn()[status] || status; }
   // Optimistic move: flip the card's status and re-render now. On success, announce it in the live
   // region, offer a 6s Undo in the toast (§7 — Undo POSTs /undo-move, never a second move), and
@@ -3227,6 +3253,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var role = app.role || 'This role', dest = label || columnOfStatus(status);
     var prev = app.status;
     app.status = status;
+    syncDetailStatus();
     renderBody();
     write('/applications/' + encodeURIComponent(id) + '/move', { status: status })
       .then(function (r) {
@@ -3237,6 +3264,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       })
       .catch(function () {
         app.status = prev;
+        syncDetailStatus();
         renderBody();
         toast('Couldn’t move that role. It’s back where it was.', { error: true });
       });
@@ -3498,8 +3526,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         var to = LIFT_COL;
         clearLift(b, card);
         if (to) moveToColumn(id, to);
-        var moved = document.querySelector('#body [data-id="' + id + '"]');
-        if (moved && moved.focus) moved.focus();
+        // The chooser owns focus once opened; never focus a card behind its modal.
+        if (document.getElementById('chooser').style.display !== 'flex') {
+          var moved = document.querySelector('#body [data-id="' + id + '"]');
+          if (moved && moved.focus) moved.focus();
+        }
         return;
       }
       if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }
@@ -3686,6 +3717,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var ae = document.activeElement;
     var fid = ae && ae.getAttribute ? ae.getAttribute('data-id') : null;
     renderBanner(); renderHeader(); renderToday(); renderTabs(); renderBody();
+    syncDetailStatus();
     if (aboutIsOpen()) renderAboutBody();
     body = document.getElementById('body'); if (body) body.scrollTop = scroll;
     if (fid) { try { var el = document.querySelector('#body [data-id="' + fid + '"]'); if (el && el.focus) el.focus(); } catch (e) {} }
@@ -3908,6 +3940,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     body.querySelectorAll('.act').forEach(function (b) {
       b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); });
     });
+    var status = document.getElementById('detail-status');
+    if (status) status.addEventListener('change', function () {
+      if (DETAIL_ID) moveApp(DETAIL_ID, status.value);
+    });
     var applied = document.getElementById('detail-applied');
     if (applied) applied.addEventListener('click', markApplied);
     var save = document.getElementById('detail-notes-save');
@@ -3923,7 +3959,8 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     document.getElementById('detail-title').innerHTML =
       '<div class="detail-role">' + esc(app.role || title || 'This role') + '</div>' +
       '<div class="detail-co">' + esc(app.company || '') +
-        (app.status ? ' · <span class="pl-badge">' + esc(app.status) + '</span>' : '') + '</div>';
+        (app.status ? ' · <span class="pl-badge">' + esc(app.status) + '</span>' : '') + '</div>' +
+      detailStatusHtml(app);
 
     var html = '';
     // posting
