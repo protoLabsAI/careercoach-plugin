@@ -121,13 +121,14 @@ Mark applied keeps its inline confirm (a `pl-dialog`, never `window.confirm`). T
 | State | What shows |
 |---|---|
 | **Brand-new agent** (no profile, nothing anywhere) | No tabs, no Today band. A single `Empty`: "Your coach hasn't started a search yet", description "Run /setup-coach in chat. It builds your profile, then a watch starts surfacing roles here." Action: **Start setup** (drafts `/setup-coach` into the composer). Under it, three `pl-suggestion` chips from the old tips paragraph: "Paste a posting and say /apply", "Critique my CV", "Run a mock interview". A stranger's first run ends on this screen. |
-| **Profile set, watch not run yet** | Tabs show. Inbox `Empty`: "Your watch is looking. New roles land here." Pipeline `Empty`: "Keep a role from Inbox, or paste a posting in chat." |
-| **Inbox cleared** (0 new, pipeline has items) | Inbox `Empty` "All caught up", with the date the watch last ran. The Inbox count hides. |
+| **Profile set, watch not run yet** (`watch_last_run` empty on `/jobs`) | Tabs show. Inbox `Empty`: "Your watch is looking. New roles land here." Pipeline `Empty`: "Keep a role from Inbox, or paste a posting in chat." |
+| **Inbox cleared** (0 new, pipeline has items) | Inbox `Empty` "All caught up", with the date the watch last ran (`watch_last_run` on `/jobs`). The Inbox count hides. |
 | **Nothing needs you today** | The Today band is hidden entirely. Tabs move up. |
 | **Loading** | `pl-skel` rows in the band and tab body; the tab strip renders at once with no counts. |
 | **Partial failure** (`/state` fails, `/jobs` OK) | The view renders. The About-you drawer shows a `Callout tone="warning"` "Couldn't load your profile". |
 | **API unreachable** (`/jobs` fails) | `Banner tone="error"` "Couldn't load your jobs" with **Retry**; tab bodies stay as skeletons. |
 | **Move / keep / dismiss fails** | Optimistic change rolls back. `pl-toast--error` "Couldn't move that role. It's back where it was." |
+| **Undo a move** | The toast's Undo calls `POST /applications/{id}/undo-move`, never a second move: it restores the prior status (legacy included), `updated` and history, so the follow-up clock and "oldest move" sort are untouched. If it fails, reload the board and show the error toast "Couldn't undo that. The role stayed where you moved it." |
 | **Unknown legacy status** | An "Other" column appears at the end of the board only when such rows exist (current behaviour, kept). |
 | **Live refresh** (`careercoach.#` event) | Re-render in place. Keep scroll, open groups, focus and the open drawer. Never jump tabs. |
 
