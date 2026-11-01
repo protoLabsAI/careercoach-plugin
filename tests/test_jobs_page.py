@@ -1435,3 +1435,15 @@ def test_drawer_close_falls_back_to_current_tab_control(plugin, collapsed, hidde
       closeDetail();
     """)
     assert ctx.eval("document.activeElement === control") is True
+
+
+def test_board_columns_share_the_width_instead_of_the_kits_min_width(plugin):
+    """The kit's .pl-board-col sets min-width: 200px, which overlapped the columns under about 1,200px."""
+    css = plugin._DASHBOARD_HTML
+    assert re.search(r"\.col \{[^}]*min-width: 0;", css)
+
+
+def test_a_long_target_list_stays_on_one_line_and_keeps_the_full_text(plugin):
+    css = plugin._DASHBOARD_HTML
+    assert "#sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }" in css
+    assert "sub.title = roles" in css

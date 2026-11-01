@@ -2899,8 +2899,14 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     .board { grid-template-columns: repeat(5, 220px) 110px; overflow-x: auto; scroll-snap-type: x mandatory; }
     .col { scroll-snap-align: start; }
   }
+  /* One line whatever the list length: a long target list must not eat the one-viewport page. */
+  .hd > div:first-child { min-width: 0; }
+  #sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #about-btn { flex: none; white-space: nowrap; }
+  /* min-width: 0 — the kit's .pl-board-col sets 200px, which would push the shared grid tracks into
+     each other below about 1,200px. */
   .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: 10px;
-         padding: 8px; min-height: 60px; }
+         padding: 8px; min-height: 60px; min-width: 0; }
   .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
   .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 2px 4px 8px;
             color: var(--pl-color-fg-muted); font-weight: 600; display: flex; justify-content: space-between; }
@@ -2913,7 +2919,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
            padding: 9px 10px; cursor: grab; }
   .pcard:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
   .pcard.lift { border-color: var(--pl-color-accent); }  /* picked up by keyboard (§3, WCAG 2.5.7) */
-  .pcard .prole { font-weight: 600; font-size: 13px; }
+  .pcard .prole { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
   .pcard .pco { color: var(--pl-color-fg-muted); font-size: 12px; }
   .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 5px; }
   .pcard .fit { font-variant-numeric: tabular-nums; }
@@ -3401,7 +3407,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var st = (STATE && STATE.settings) || {};
     var roles = st.target_roles || '';
     var sub = document.getElementById('sub');
-    if (roles) { sub.textContent = 'Targeting: ' + roles; sub.hidden = false; }
+    if (roles) { sub.textContent = 'Targeting: ' + roles; sub.title = roles; sub.hidden = false; }
     else { sub.textContent = ''; sub.hidden = true; }
   }
   // The Today band's rows, in priority order (§2): overdue follow-ups, interviews to prep, offers
