@@ -165,12 +165,13 @@ def test_page_targets_jobs_keep_dismiss_and_move(plugin):
     html = plugin._DASHBOARD_HTML
     assert "api('/jobs')" in html  # the band + tabs data
     assert "api('/state')" in html  # the header subline + About-you drawer
-    assert "write('/inbox/' + action, {id: id})" in html  # URL-shaped inbox ids travel in the body
+    assert "write('/inbox/keep', { id: id })" in html  # URL-shaped inbox ids travel in the body
+    assert "write('/inbox/dismiss', { id: id })" in html
     assert "'/inbox/' + encodeURIComponent(" not in html
     assert "headers: { 'Content-Type': 'application/json' }" in html
     assert "JSON.stringify(body)" in html
-    assert "inboxAction(id, 'keep'" in html
-    assert "inboxAction(id, 'dismiss'" in html
+    assert "function inboxKeep(ids)" in html
+    assert "function inboxDismiss(ids)" in html
     assert "'/applications/' + encodeURIComponent(id) + '/move'" in html
 
 
@@ -692,17 +693,291 @@ def test_board_followup_line_is_one_gated_pl_chip_warning(plugin):
     assert html.count('pl-chip--warning">No reply in ') == 1  # one board branch, not duplicated
 
 
-# ── the inbox list: title, company, score, reason, posting link, keep/dismiss (carried) ─
-def test_inbox_item_renders_all_fields_and_a_safe_posting_link(plugin):
+# ── the Inbox tab (§3): freshness groups, text reasons, ghost filter, multi-select, triage ──
+# NOW is pinned so freshness buckets (cut by posted, <24h / <168h) are deterministic in quickjs.
+_FIXED_NOW = "var __NOW = new Date('2026-10-31T00:00:00Z').getTime(); Date.now = function () { return __NOW; };"
+
+
+def _inbox_item(iid, score, posted, **extra):
+    it = {
+        "id": iid,
+        "title": extra.get("title", "Staff Platform Engineer"),
+        "company": extra.get("company", "Northwind"),
+        "score": score,
+        "reason": extra.get("reason", 'title matches "Staff Platform Engineer" (4/4 words)'),
+        "posted": posted,
+        "first_seen": extra.get("first_seen", posted),
+        "ghost": extra.get("ghost", []),
+    }
+    if "url" in extra:
+        it["url"] = extra["url"]
+    if "snippet" in extra:
+        it["snippet"] = extra["snippet"]
+    return it
+
+
+def _render_inbox(
+    ctx,
+    inbox,
+    *,
+    watch_last_run="2026-10-20T09:00:00Z",
+    last_visit_iso="2026-10-30T00:00:00Z",
+    sort="newest",
+    hide_ghost=False,
+    sel=None,
+    open_map=None,
+    hidden=None,
+):
+    ctx.eval(_FIXED_NOW)
+    jobs = {
+        "applications": [],
+        "columns": COLUMNS,
+        "inbox": inbox,
+        "followup_days": 10,
+        "watch_last_run": watch_last_run,
+    }
+    ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + ";")
+    ctx.eval("LAST_VISIT = new Date(%s).getTime();" % json.dumps(last_visit_iso))
+    ctx.eval("INBOX_SORT = %s; HIDE_GHOST = %s;" % (json.dumps(sort), "true" if hide_ghost else "false"))
+    ctx.eval("INBOX_SEL = %s; INBOX_HIDDEN = %s;" % (json.dumps(sel or {}), json.dumps(hidden or {})))
+    if open_map is not None:
+        ctx.eval("INBOX_OPEN = %s;" % json.dumps(open_map))
+    ctx.eval(
+        "var __B = {innerHTML: '', querySelectorAll: function () { return []; }, "
+        "querySelector: function () { return null; }}; renderInbox(__B);"
+    )
+    return ctx.eval("__B.innerHTML")
+
+
+def test_inbox_groups_by_freshness_with_spec_defaults(plugin):
+    """§3: four groups — Today, This week, Older, then Title didn't match (score-0 ONLY). Today and
+    This week open by default; Older and Title didn't match collapsed. A partial score stays put."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("today", 100, "2026-10-30T18:00:00Z"),
+        _inbox_item("week", 100, "2026-10-28T00:00:00Z"),
+        _inbox_item("older_partial", 67, "2026-10-01T00:00:00Z"),  # partial score, NOT a miss
+        _inbox_item("miss", 0, "2026-10-20T00:00:00Z", reason="No target title words matched"),
+    ]
+    out = _render_inbox(ctx, inbox)
+    for label in ("Today", "This week", "Older", "Title didn’t match"):
+        assert label in out
+    assert out.index("Today") < out.index("This week") < out.index("Older") < out.index("Title didn’t match")
+    # open defaults
+    assert re.search(r'data-g="today"[^>]* open>', out)
+    assert re.search(r'data-g="week"[^>]* open>', out)
+    assert re.search(r'data-g="older"(?![^>]*open)', out)  # collapsed
+    assert re.search(r'data-g="miss"(?![^>]*open)', out)  # collapsed
+    # the 67 row stays in its freshness group (Older), never in Title didn't match
+    assert out.index('data-id="older_partial"') < out.index('data-g="miss"')
+    # only the score-0 row sits under Title didn't match
+    assert out.index('data-g="miss"') < out.index('data-id="miss"')
+    assert "pl-accordion" in out and "pl-count" in out
+
+
+def test_inbox_sort_orders_rows_newest_or_oldest(plugin):
+    """§3: newest first within a group by default; the Sort select flips to oldest first."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("earlier", 100, "2026-10-30T02:00:00Z"),
+        _inbox_item("later", 100, "2026-10-30T20:00:00Z"),
+    ]
+    newest = _render_inbox(ctx, inbox, sort="newest")
+    assert 'id="ibx-sort"' in newest
+    assert newest.index('data-id="later"') < newest.index('data-id="earlier"')
+    oldest = _render_inbox(ctx, inbox, sort="oldest")
+    assert oldest.index('data-id="earlier"') < oldest.index('data-id="later"')
+
+
+def test_inbox_match_reason_is_text_and_shows_no_numeric_score(plugin):
+    """§3/§1.5: the reason is text ('Title matches / partly matches / doesn't match'); the numeric
+    score never shows anywhere."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("full", 100, "2026-10-30T18:00:00Z"),
+        _inbox_item(
+            "part",
+            67,
+            "2026-10-30T18:00:00Z",
+            title="Platform Eng",
+            reason='title matches "Platform Engineer" (2/3 words)',
+        ),
+        _inbox_item("miss", 0, "2026-10-30T18:00:00Z", title="Data Scientist", reason="No target title words matched"),
+    ]
+    out = _render_inbox(ctx, inbox)
+    assert "Title matches <em>Staff Platform Engineer</em>" in out
+    assert "Title partly matches <em>Platform Engineer</em>" in out
+    assert "Title doesn’t match your targets" in out
+    assert "100" not in out and ">67<" not in out and "fit 67" not in out  # no numeric score
+
+
+def test_inbox_ghost_warning_badge_and_conditional_filter_chip(plugin):
+    """§3: ghost = a 'Possible ghost job' pl-badge--warning with evidence; the Hide-ghost chip (with
+    count) renders ONLY when a ghost exists, and hiding filters the row out."""
+    ctx = _view_ctx(plugin)
+    clean = [_inbox_item("a", 100, "2026-10-30T18:00:00Z")]
+    out = _render_inbox(ctx, clean)
+    assert "Possible ghost job" not in out
+    assert "Hide likely ghost jobs" not in out  # no chip without a ghost
+    ghosted = clean + [
+        _inbox_item("g", 100, "2026-10-30T18:00:00Z", title="G", ghost=["reposted 4 times in 60 days", "open 80 days"])
+    ]
+    out2 = _render_inbox(ctx, ghosted)
+    assert 'class="pl-badge pl-badge--warning"' in out2 and "Possible ghost job" in out2
+    assert "reposted 4 times in 60 days; open 80 days" in out2  # evidence joined (tooltip + inline text)
+    assert "Hide likely ghost jobs · 1" in out2  # chip with its count
+    hidden = _render_inbox(ctx, ghosted, hide_ghost=True)
+    assert 'data-id="g"' not in hidden  # the ghost row is filtered out
+    assert "✓ Hide likely ghost jobs · 1" in hidden  # chip reads active
+
+
+def test_inbox_is_a_multiselect_listbox_with_hover_focus_actions(plugin):
+    """§3/§6/§10: rows are a listbox with aria-multiselectable; Keep / Dismiss / View posting and the
+    checkbox reveal only on hover, focus or selection — never at rest (enforced by the CSS)."""
     html = plugin._DASHBOARD_HTML
-    assert "esc(it.title)" in html
-    assert "esc(it.company)" in html
-    assert "esc(it.reason)" in html
-    assert "Number(it.score || 0)" in html
+    css = html.split("</style>")[0]
+    assert ".ibx-acts { display: flex; gap: 6px; flex: none; visibility: hidden; }" in css
+    assert (
+        ".ibx-row:hover .ibx-acts, .ibx-row:focus .ibx-acts, .ibx-row:focus-within .ibx-acts, "
+        ".ibx-row.sel .ibx-acts { visibility: visible; }" in css
+    )
+    assert ".ibx-ck { flex: none; margin-top: 2px; visibility: hidden; }" in css
+    ctx = _view_ctx(plugin)
+    out = _render_inbox(ctx, [_inbox_item("a", 100, "2026-10-30T18:00:00Z", url="https://jobs.example.com/1")])
+    assert 'role="listbox" aria-multiselectable="true"' in out
+    assert 'role="option" aria-selected="false" tabindex="0" data-id="a"' in out
+    assert 'type="checkbox" class="pl-checkbox ibx-ck"' in out
+    assert 'data-a="keep"' in out and 'data-a="dismiss"' in out and 'data-a="open"' in out
+    assert 'target="_blank" rel="noopener"' in out and 'href="https://jobs.example.com/1"' in out
+
+
+def test_inbox_new_marker_comes_from_the_last_visit(plugin):
+    """§3/§11.1: a row surfaced since the last visit carries the pl-dot--info + text 'New'; older
+    rows do not."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("fresh", 100, "2026-10-30T18:00:00Z", title="Fresh"),
+        _inbox_item("stale", 100, "2026-10-28T00:00:00Z", title="Stale"),
+    ]
+    out = _render_inbox(ctx, inbox, last_visit_iso="2026-10-30T00:00:00Z")
+    assert '<span class="pl-dot pl-dot--info"' in out and ">New<" in out
+    assert out.count('class="ibx-new"') == 1  # exactly the fresh row is marked
+
+
+def test_inbox_selection_turns_the_toolbar_into_keep_dismiss(plugin):
+    """§3: selecting any row turns the toolbar into 'N selected · Keep · Dismiss'; each group header
+    carries Select all."""
+    ctx = _view_ctx(plugin)
+    inbox = [_inbox_item("a", 0, "2026-10-20T00:00:00Z", reason="No target title words matched")]
+    plain = _render_inbox(ctx, inbox)
+    assert 'id="ibx-sort"' in plain and "selected</" not in plain
+    assert 'data-all="miss"' in plain and ">Select all<" in plain  # per-group Select all
+    sel = _render_inbox(ctx, inbox, sel={"a": 1})
+    assert "1 selected" in sel
+    assert 'id="ibx-bkeep">Keep<' in sel and 'id="ibx-bdismiss">Dismiss<' in sel
+    assert 'aria-selected="true"' in sel and "ibx-multi" in sel
+
+
+def test_inbox_select_all_selects_every_visible_row_in_one_group(plugin):
+    ctx = _view_ctx(plugin)
+    ctx.eval(_FIXED_NOW)
+    inbox = [
+        _inbox_item("m1", 0, "2026-10-20T00:00:00Z", reason="No target title words matched"),
+        _inbox_item("m2", 0, "2026-10-19T00:00:00Z", reason="No target title words matched"),
+        _inbox_item("t1", 100, "2026-10-30T18:00:00Z"),
+    ]
+    jobs = {"applications": [], "columns": COLUMNS, "inbox": inbox, "followup_days": 10}
+    ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + ";")
+    ctx.eval("INBOX_SEL = {}; INBOX_HIDDEN = {}; HIDE_GHOST = false; render = function () {};")
+    ctx.eval("inboxSelectAll('miss');")
+    assert json.loads(ctx.eval("JSON.stringify(INBOX_SEL)")) == {"m1": 1, "m2": 1}  # the two misses only
+
+
+# ── Keep / Dismiss: optimistic, Keep writes at once, Dismiss HOLDS its write for the 6s Undo ──
+_TIMER_STUBS = """
+  var __timers = [];
+  function setTimeout(fn, ms) { __timers.push({ fn: fn, ms: ms }); return __timers.length; }
+  function clearTimeout(h) { if (h) __timers[h - 1] = null; }
+  var __writes = [];
+  write = function (p, b) { __writes.push([p, b]); return { then: function () { return this; }, catch: function () { return this; } }; };
+  var __toasts = [];
+  toast = function (m, o) { __toasts.push({ msg: m, opts: o || null }); };
+  render = function () {};
+  load = function () {};
+  announce = function () {};
+"""
+
+
+def _inbox_action_ctx(plugin, inbox):
+    ctx = _view_ctx(plugin)
+    ctx.eval(_TIMER_STUBS)
+    jobs = {"inbox": inbox, "applications": [], "columns": COLUMNS}
+    ctx.eval("JOBS = " + json.dumps(jobs) + "; INBOX_HIDDEN = {}; DISMISS_TIMERS = {}; INBOX_SEL = {};")
+    return ctx
+
+
+def test_keep_removes_the_row_writes_at_once_and_toasts_kept_in_saved(plugin):
+    ctx = _inbox_action_ctx(plugin, [{"id": "in1", "title": "Staff Eng", "company": "C", "score": 100}])
+    ctx.eval("inboxKeep(['in1']);")
+    assert ctx.eval("!!INBOX_HIDDEN['in1']") is True  # optimistically removed
+    assert json.loads(ctx.eval("JSON.stringify(__writes)")) == [["/inbox/keep", {"id": "in1"}]]  # immediate
+    assert ctx.eval("__toasts[0].msg") == "Kept — in Saved."  # §3 copy
+    assert ctx.eval("__toasts[0].opts") is None  # Keep offers no Undo
+
+
+def test_dismiss_holds_the_write_until_the_six_second_window_closes(plugin):
+    ctx = _inbox_action_ctx(plugin, [{"id": "in1", "title": "Staff Eng", "company": "C", "score": 100}])
+    ctx.eval("inboxDismiss(['in1']);")
+    assert ctx.eval("!!INBOX_HIDDEN['in1']") is True  # row gone immediately
+    assert ctx.eval("__writes.length") == 0  # but the dismiss write is HELD
+    assert ctx.eval("__timers[__timers.length - 1].ms") == 6000  # for the 6s Undo window
+    assert ctx.eval("!!(__toasts[0].opts && __toasts[0].opts.undo)") is True  # Undo is offered
+    ctx.eval("__timers[__timers.length - 1].fn();")  # the window closes
+    assert json.loads(ctx.eval("JSON.stringify(__writes)")) == [["/inbox/dismiss", {"id": "in1"}]]
+
+
+def test_dismiss_undo_cancels_the_held_write_and_restores_the_row(plugin):
+    ctx = _inbox_action_ctx(plugin, [{"id": "in1", "title": "Staff Eng", "company": "C", "score": 100}])
+    ctx.eval("inboxDismiss(['in1']);")
+    ctx.eval("__toasts[0].opts.undo();")  # the operator hits Undo inside the window
+    assert ctx.eval("!!INBOX_HIDDEN['in1']") is False  # the row is back
+    ctx.eval("__timers.forEach(function (t) { if (t && t.fn) t.fn(); });")  # any stale timer fires
+    assert ctx.eval("__writes.length") == 0  # the dismiss write never went
+
+
+def test_inbox_keep_and_dismiss_roll_back_with_the_section7_error_toast(plugin):
+    html = plugin._DASHBOARD_HTML
+    assert html.count("Couldn’t move that role. It’s back where it was.") >= 2  # move + inbox keep/dismiss reuse
+    assert "write('/inbox/keep', { id: id })" in html
+    assert "write('/inbox/dismiss', { id: id })" in html
+    assert "}, 6000);" in html  # the dismiss write is deferred to the end of the window
+
+
+def test_inbox_empty_states_watch_not_run_vs_all_caught_up(plugin):
+    """§7: an empty watch_last_run means the watch has never run ('Your watch is looking'); once it
+    has run, a cleared inbox reads 'All caught up' with the last-run date."""
+    ctx = _view_ctx(plugin)
+    looking = _render_inbox(ctx, [], watch_last_run="")
+    assert "Your watch is looking" in looking and "New roles land here." in looking
+    assert "All caught up" not in looking
+    caught = _render_inbox(ctx, [], watch_last_run="2026-10-20T09:30:00Z")
+    assert "All caught up" in caught
+    assert "Your watch last ran on 2026-10-20." in caught
+
+
+# ── the inbox posting link stays safe (carried guard, rebuilt markup) ───────────────────
+def test_inbox_item_renders_all_fields_and_a_safe_posting_link(plugin):
+    ctx = _view_ctx(plugin)
+    out = _render_inbox(
+        ctx,
+        [_inbox_item("a", 100, "2026-10-30T18:00:00Z", url="https://jobs.example.com/1")],
+    )
+    assert "Staff Platform Engineer" in out and "Northwind" in out  # title + company
+    assert "h ago" in out or "d ago" in out  # relative posted date
+    assert ">Keep<" in out and ">Dismiss<" in out and ">View posting<" in out
+    html = plugin._DASHBOARD_HTML
     assert 'target="_blank" rel="noopener"' in html
     assert '''href="' + esc(it.url) + '"''' in html
-    assert "data-keep" in html and "data-dismiss" in html
-    assert "Nothing new" in html
 
 
 def test_all_posting_and_inbox_text_is_escaped(plugin):
@@ -711,7 +986,6 @@ def test_all_posting_and_inbox_text_is_escaped(plugin):
     for frag in (
         "esc(it.title)",
         "esc(it.company)",
-        "esc(it.reason)",
         "esc(it.url)",
         "esc(a.role)",
         "esc(a.company)",
