@@ -2864,7 +2864,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .plink { color: var(--pl-color-accent); font-size: 12px; text-decoration: none; }
   .plink:hover { text-decoration: underline; }
 
-  /* Pipeline board (carried; its redesign is R2) + the Closed stub (§2). */
+  /* Pipeline board (§3): five open columns + an "Other" column for legacy statuses + the Closed stub. */
   .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) 140px; gap: 12px; align-items: start; }
   @container cc (max-width: 899px) { .board { grid-template-columns: repeat(5, 220px) 140px; overflow-x: auto; } }
   .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: 10px;
@@ -2872,19 +2872,25 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
   .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 2px 4px 8px;
             color: var(--pl-color-fg-muted); font-weight: 600; display: flex; justify-content: space-between; }
+  /* Applied (and any tall column) scrolls inside the column, so the board stays one viewport — no paging (§3). */
+  .col-list { display: grid; gap: 8px; max-height: 62vh; overflow: auto; }
   .col.stub { display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center;
               text-align: center; border-style: dashed; color: var(--pl-color-fg-muted); font-size: 12px; }
   .col.stub .stub-n { color: var(--pl-color-fg); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .pcard { background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border); border-radius: 8px;
-           padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
-  .pcard:last-child { margin-bottom: 0; }
+           padding: 9px 10px; cursor: grab; }
+  .pcard:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .pcard.lift { border-color: var(--pl-color-accent); }  /* picked up by keyboard (§3, WCAG 2.5.7) */
   .pcard .prole { font-weight: 600; font-size: 13px; }
   .pcard .pco { color: var(--pl-color-fg-muted); font-size: 12px; }
   .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 5px; }
-  .pcard .nudge { margin-top: 6px; font-size: 12px; color: var(--pl-color-status-warning);
-                  border: 1px solid var(--pl-color-border); border-radius: 6px; padding: 4px 7px; }
+  .pcard .fit { font-variant-numeric: tabular-nums; }
+  /* The single follow-up line — a pl-chip--warning, carrying text, never colour alone (§3/§10). */
+  .pcard .nudge { margin-top: 6px; font-size: 12px; border: 1px solid var(--pl-color-border);
+                  border-radius: 6px; padding: 4px 7px; }
   .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; }
   .closed-list { display: grid; gap: 8px; max-width: 520px; }
+  .closed-list .pcard { margin-bottom: 0; }
   .pipeline-hint { margin: 0 0 10px; }
 
   /* About-you drawer: three read-only accordions + the rubric bars (§5). */
@@ -2916,10 +2922,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .dbody { overflow: auto; padding: 16px 20px 28px; }
 
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
+           display: inline-flex; align-items: center; gap: 12px;
            background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong);
            color: var(--pl-color-fg); padding: 10px 16px; border-radius: 10px; font-size: 13px;
            opacity: 0; pointer-events: none; transition: opacity .15s; max-width: 80%; }
-  #toast.show { opacity: 1; }
+  #toast.show { opacity: 1; pointer-events: auto; }
+  #toast.pl-toast--error { border-color: var(--pl-color-status-error); }  /* §7 move/undo failure */
+  #toast #toast-text { min-width: 0; }
 
   #chooser { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
              background: var(--pl-color-overlay); }
@@ -3009,7 +3018,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     <div class="dbody" id="about-body"></div>
   </aside>
 
-  <div id="toast" class="pl-toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="pl-toast" role="status" aria-live="polite">
+    <span id="toast-text"></span>
+    <button class="pl-btn pl-btn--ghost pl-btn--sm" id="toast-undo" type="button" hidden>Undo</button>
+  </div>
   <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
   <div id="chooser" role="dialog" aria-modal="true">
@@ -3072,6 +3084,9 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   var STATE = null, STATE_FAILED = false, JOBS_FAILED = false, LOADING = true;
   var TAB = 'pipeline', TODAY_ALL = false, LAST_VISIT = 0;
   var DRAG_ID = null, DETAIL = null, DETAIL_ID = null;
+  // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
+  // the arrow keys are hovering. Both null at rest. A pointer drag never touches these.
+  var LIFT_ID = null, LIFT_COL = null;
 
   function closedColName() {
     var cols = JOBS.columns || {}, names = Object.keys(cols);
@@ -3095,12 +3110,35 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function compose(text) { try { parent.postMessage({ type: 'protoagent:chat:compose', text: String(text).slice(0, 4000) }, '*'); } catch (e) {} }
   function skel(n) { var out = '<div class="skel" aria-hidden="true">'; for (var i = 0; i < n; i++) { out += '<div class="pl-skel"></div>'; } return out + '</div>'; }
   function setTab(t) { TAB = t; renderTabs(); renderBody(); var b = document.getElementById('tab-' + t); if (b && b.focus) b.focus(); }
-  function toast(msg) {
+  // Announce a board move / pick-up in the single role="status" live region (§10). Cleared then set
+  // on a tick so the same message announced twice (e.g. two moves to the same column) still fires.
+  function announce(msg) {
+    var live = document.getElementById('live');
+    if (!live) return;
+    live.textContent = '';
+    setTimeout(function () { live.textContent = msg; }, 30);
+  }
+  // Toast with an optional 6s Undo action and an error variant (§7). opts: {undo: fn, error: bool}.
+  // A plain toast(msg) keeps its old 4s, no-button behaviour, so existing callers are unchanged.
+  function toast(msg, opts) {
+    opts = opts || {};
     var t = document.getElementById('toast');
-    t.textContent = msg;
+    var txt = document.getElementById('toast-text');
+    var undo = document.getElementById('toast-undo');
+    if (txt) txt.textContent = msg; else t.textContent = msg;
+    t.classList.toggle('pl-toast--error', !!opts.error);
+    if (undo) {
+      if (opts.undo) {
+        undo.hidden = false;
+        undo.onclick = function () { t.classList.remove('show'); clearTimeout(toast._t); opts.undo(); };
+      } else {
+        undo.hidden = true;
+        undo.onclick = null;
+      }
+    }
     t.classList.add('show');
     clearTimeout(toast._t);
-    toast._t = setTimeout(function () { t.classList.remove('show'); }, 4000);
+    toast._t = setTimeout(function () { t.classList.remove('show'); }, opts.undo ? 6000 : 4000);
   }
 
   function findApp(id) {
@@ -3177,24 +3215,46 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     });
   }
 
-  // Optimistic move: flip the card's status and re-render now; on a non-2xx (or network error)
-  // roll the status back, re-render, and surface an inline toast. On success, reload for the
-  // authoritative row (new date, history, recomputed follow-up).
-  function moveApp(id, status) {
+  function columnOfStatus(status) { return statusToColumn()[status] || status; }
+  // Optimistic move: flip the card's status and re-render now. On success, announce it in the live
+  // region, offer a 6s Undo in the toast (§7 — Undo POSTs /undo-move, never a second move), and
+  // reload for the authoritative row (new date, history, recomputed follow-up). On a non-2xx (or
+  // network error) roll the status back, re-render, and show the §7 error toast. `label` is the
+  // destination column name for the announce + toast copy.
+  function moveApp(id, status, label) {
     var app = findApp(id);
     if (!app || app.status === status) return;
+    var role = app.role || 'This role', dest = label || columnOfStatus(status);
     var prev = app.status;
     app.status = status;
     renderBody();
     write('/applications/' + encodeURIComponent(id) + '/move', { status: status })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        announce(role + ' moved to ' + dest + '.');
+        toast(role + ' moved to ' + dest + '.', { undo: function () { undoMove(id); } });
         load();
       })
       .catch(function () {
         app.status = prev;
         renderBody();
-        toast('Could not move that role — left it where it was.');
+        toast('Couldn’t move that role. It’s back where it was.', { error: true });
+      });
+  }
+  // Undo the last move exactly (§7): POST /undo-move restores the prior status (a legacy one
+  // included), `updated` and history, so the follow-up clock and the "oldest move" sort are
+  // untouched — never a second move. A failure reloads the board to the true state and shows the
+  // §7 error toast.
+  function undoMove(id) {
+    write('/applications/' + encodeURIComponent(id) + '/undo-move')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        announce('Move undone.');
+        load();
+      })
+      .catch(function () {
+        load();
+        toast('Couldn’t undo that. The role stayed where you moved it.', { error: true });
       });
   }
   function moveToColumn(id, col) {
@@ -3203,9 +3263,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var statuses = (JOBS.columns || {})[col] || [];
     if (!statuses.length || statuses.indexOf(app.status) !== -1) return;  // already there / unknown
     if (isClosedColumn(statuses)) {
-      askClosedStatus().then(function (s) { if (s) moveApp(id, s); });
+      // Dropping on Closed asks rejected / passed, with passed as the default (§3).
+      askClosedStatus().then(function (s) { if (s) moveApp(id, s, col); });
     } else {
-      moveApp(id, statuses[0]);
+      moveApp(id, statuses[0], col);
     }
   }
 
@@ -3364,7 +3425,31 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       dismiss.addEventListener('click', function () { inboxAction(id, 'dismiss', btns); });
     });
   }
-  function cardHtml(a, selOpts) {
+  // A board card (§3): role, company, age. Fit shows only when fit_score > 0 (never a 0). No status
+  // pill — the column already says it. A server-flagged follow-up adds ONE pl-chip--warning line that
+  // carries text ("No reply in N days", §10). The card is both drag-movable (draggable) and
+  // keyboard-movable (role=button, tabindex 0); the per-card "Move to…" select is gone (§6).
+  function cardHtml(a) {
+    var n = daysSince(lastMoveDate(a));
+    var age = n == null ? '' : '<span>' + n + 'd</span>';
+    var fitN = Number(a.fit_score || 0);
+    var fit = fitN > 0 ? '<span class="fit">fit ' + fitN + '</span>' : '';
+    var nd = n == null ? (JOBS.followup_days || 0) : n;
+    var nudge = a.followup ? '<div class="nudge pl-chip pl-chip--warning">No reply in ' + nd + ' days</div>' : '';
+    var picked = LIFT_ID === a.id;
+    var aria = (a.role || 'Role') + ' at ' + (a.company || '') + ', ' + (a.status || '') +
+      (n == null ? '' : ', ' + n + ' days') + (a.followup ? ', no reply, follow up' : '') + (picked ? ', picked up' : '');
+    return '<div class="pcard pl-board-card' + (picked ? ' lift' : '') + '" draggable="true" tabindex="0" role="button"' +
+      ' data-id="' + esc(a.id) + '" aria-pressed="' + (picked ? 'true' : 'false') + '" aria-label="' + esc(aria) + '">' +
+      '<div class="prole">' + esc(a.role) + '</div>' +
+      '<div class="pco">' + esc(a.company) + '</div>' +
+      '<div class="pmeta">' + age + fit + '</div>' +
+      nudge +
+    '</div>';
+  }
+  // The carried Closed-tab card: its §3 table and drawer Reopen are R4, so until then this keeps the
+  // status pill and the Move-to select — the only reopen path. Board cards never use it.
+  function closedCardHtml(a, selOpts) {
     var n = daysSince(lastMoveDate(a));
     var age = n == null ? '' : '<span>' + n + 'd</span>';
     var nudge = a.followup ? '<div class="nudge">No reply in ' + (n == null ? (JOBS.followup_days || 0) : n) + ' days — follow up?</div>' : '';
@@ -3377,6 +3462,86 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       '<select class="movesel pl-select" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
     '</div>';
   }
+  // Column order (§3): flagged follow-ups first, then oldest move first (earliest lastMoveDate).
+  function sortCards(rows) {
+    return rows.slice().sort(function (x, y) {
+      var fx = x.followup ? 1 : 0, fy = y.followup ? 1 : 0;
+      if (fx !== fy) return fy - fx;
+      var dx = lastMoveDate(x), dy = lastMoveDate(y);
+      return dx === dy ? 0 : (dx < dy ? -1 : 1);
+    });
+  }
+  // The board's navigable columns, in order: the five open columns + the Closed stub (each a
+  // data-col drop target). The legacy "Other" column has no data-col and is never a move target.
+  function boardCols(b) {
+    return Array.prototype.slice.call(b.querySelectorAll('.col[data-col]')).map(function (c) { return c.getAttribute('data-col'); });
+  }
+  function overCol(b, col) {
+    b.querySelectorAll('.col[data-col]').forEach(function (c) { c.classList.toggle('over', c.getAttribute('data-col') === col); });
+  }
+  function clearLift(b, card) {
+    LIFT_ID = null; LIFT_COL = null;
+    if (card) { card.classList.remove('lift'); card.setAttribute('aria-pressed', 'false'); }
+    b.querySelectorAll('.col[data-col]').forEach(function (c) { c.classList.remove('over'); });
+  }
+  // Keyboard pick-up (§3, WCAG 2.5.7): Space picks a focused card up, ←/→ choose a column, Space or
+  // Enter drops it where the arrows left off, Escape cancels. Each step is announced in the single
+  // live region. Enter on a card at rest opens its drawer; a drop goes through moveToColumn (so the
+  // Closed column still asks rejected/passed, and the move still offers Undo).
+  function boardKey(ev, b, card) {
+    var id = card.getAttribute('data-id'), app = findApp(id);
+    if (!app) return;
+    var k = ev.key;
+    if (k === ' ' || k === 'Spacebar' || k === 'Enter') {
+      if (LIFT_ID === id) {               // drop
+        ev.preventDefault();
+        var to = LIFT_COL;
+        clearLift(b, card);
+        if (to) moveToColumn(id, to);
+        var moved = document.querySelector('#body [data-id="' + id + '"]');
+        if (moved && moved.focus) moved.focus();
+        return;
+      }
+      if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }
+      ev.preventDefault();                // Space → pick up
+      LIFT_ID = id; LIFT_COL = statusToColumn()[app.status] || boardCols(b)[0] || null;
+      card.classList.add('lift'); card.setAttribute('aria-pressed', 'true');
+      overCol(b, LIFT_COL);
+      announce('Picked up ' + (app.role || 'this role') +
+        '. Use left and right arrows to choose a column, then Space or Enter to drop, Escape to cancel.');
+      return;
+    }
+    if (LIFT_ID === id && (k === 'ArrowRight' || k === 'ArrowLeft')) {
+      ev.preventDefault();
+      var cols = boardCols(b); if (!cols.length) return;
+      var i = cols.indexOf(LIFT_COL); if (i === -1) i = 0;
+      i = Math.max(0, Math.min(cols.length - 1, i + (k === 'ArrowRight' ? 1 : -1)));
+      LIFT_COL = cols[i];
+      overCol(b, LIFT_COL);
+      announce('Over ' + LIFT_COL);
+      return;
+    }
+    if (k === 'Escape' && LIFT_ID === id) {
+      ev.preventDefault();
+      clearLift(b, card);
+      announce('Move cancelled.');
+    }
+  }
+  // Board wiring: pointer drag (dragstart/over/drop) + keyboard pick-up + click-to-open. No select.
+  function wireBoard(b) {
+    b.querySelectorAll('.pcard').forEach(function (card) {
+      card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
+      card.addEventListener('dragend', function () { DRAG_ID = null; });
+      card.addEventListener('click', function () { if (!LIFT_ID) openDetail(card.getAttribute('data-id')); });
+      card.addEventListener('keydown', function (ev) { boardKey(ev, b, card); });
+    });
+    b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
+      colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
+      colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
+    });
+  }
+  // Carried wiring for the Closed-tab cards (drag + click + the Move-to select); the board uses wireBoard.
   function wireCards(b) {
     b.querySelectorAll('.pcard').forEach(function (card) {
       card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
@@ -3397,8 +3562,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var cols = JOBS.columns || {};
     return '<option value="">Move to…</option>' + Object.keys(cols).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
   }
-  // Pipeline tab (§2): the live board — five open columns (+ an Other column for legacy statuses)
-  // and a narrow Closed stub that links to the Closed tab and still takes a drag-to-close drop.
+  // Pipeline tab (§3): the live board — five open columns (Saved · Preparing · Applied ·
+  // Interviewing · Offer), an "Other" column only when legacy statuses exist (§7), and a narrow
+  // Closed stub that links to the Closed tab and still takes a drag-to-close / keyboard drop. Closed
+  // cards never render on the board. Each column sorts follow-ups first, then oldest move.
   function renderPipeline(b) {
     var cols = JOBS.columns || {}, colNames = Object.keys(cols);
     if (!colNames.length) { b.innerHTML = '<p class="empty">No pipeline columns.</p>'; return; }
@@ -3407,14 +3574,23 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     colNames.forEach(function (c) { buckets[c] = []; });
     apps.forEach(function (a) { var col = reverse[a.status]; if (col && buckets[col]) buckets[col].push(a); else other.push(a); });
     var openNames = colNames.filter(function (c) { return c !== closedName; });
-    var selOpts = colSelOpts();
+    // Pipeline Empty (§7): no live roles (closed never counts). The coaching tips moved to §7's
+    // brand-new empty state and to chat, so this stays a single plain line.
+    var openCount = other.length;
+    openNames.forEach(function (c) { openCount += buckets[c].length; });
+    if (!openCount) {
+      b.innerHTML = '<div class="emptyc pl-empty"><div class="empty-title">No live applications</div>' +
+        '<p class="muted sm emptyc-desc">Keep a role from Inbox, or paste a posting in chat.</p></div>';
+      return;
+    }
     var displayCols = openNames.concat(other.length ? [null] : []);
     var cards = displayCols.map(function (col) {
-      var rows = col === null ? other : buckets[col];
-      var inner = rows.map(function (a) { return cardHtml(a, selOpts); }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
+      var rows = sortCards(col === null ? other : buckets[col]);
+      var inner = rows.map(cardHtml).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
       var lbl = col === null ? 'Other statuses' : col;
-      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + ' role="listitem" aria-label="' + esc(lbl) + ', ' + rows.length + '">' +
-        '<h3>' + esc(lbl) + '<span class="pl-count">' + rows.length + '</span></h3>' + inner + '</div>';
+      return '<div class="col pl-board-col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + ' role="listitem" aria-label="' + esc(lbl) + ', ' + rows.length + '">' +
+        '<h3>' + esc(lbl) + '<span class="pl-count">' + rows.length + '</span></h3>' +
+        '<div class="col-list">' + inner + '</div></div>';
     }).join('');
     var stub = '';
     if (closedName) {
@@ -3424,10 +3600,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         '<span class="muted sm">Drop here to close</span>' +
         '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="to-closed">View all</button></div>';
     }
-    b.innerHTML = '<p class="muted sm pipeline-hint">Drag a card to a column to move it, or use its <span class="pl-kbd">Move to…</span> menu. Closed roles live on the Closed tab.</p>' +
+    b.innerHTML = '<p class="muted sm pipeline-hint">Drag a card, or focus it and press <span class="pl-kbd">Space</span> to pick up, ' +
+      '<span class="pl-kbd">←</span><span class="pl-kbd">→</span> to choose a column, <span class="pl-kbd">Space</span> to drop. ' +
+      'Closed roles live on the Closed tab.</p>' +
       '<div class="board pl-board" role="list">' + cards + stub + '</div>';
     var tc = document.getElementById('to-closed'); if (tc) tc.onclick = function () { setTab('closed'); };
-    wireCards(b);
+    wireBoard(b);
   }
   // Closed tab (§2/§3): the dead roles, off the working board. The full searchable table is R4;
   // for now the carried card (with its move menu, so a role can be reopened) opens the drawer.
@@ -3436,7 +3614,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (!rows.length) { b.innerHTML = '<div class="emptyc"><div class="empty-title">No closed roles</div><p class="muted sm emptyc-desc">Roles you reject or pass on land here, out of the working board.</p></div>'; return; }
     var selOpts = colSelOpts();
     b.innerHTML = '<p class="muted sm">' + rows.length + ' closed ' + (rows.length === 1 ? 'role' : 'roles') + ' — open one to review, or move it back with its menu.</p>' +
-      '<div class="closed-list">' + rows.map(function (a) { return cardHtml(a, selOpts); }).join('') + '</div>';
+      '<div class="closed-list">' + rows.map(function (a) { return closedCardHtml(a, selOpts); }).join('') + '</div>';
     wireCards(b);
   }
   // About-you drawer content (§5): three read-only accordions. /state failure shows a warning callout.

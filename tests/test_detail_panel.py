@@ -42,6 +42,13 @@ def test_card_click_fetches_the_application_through_apifetch(plugin):
     assert "kit.apiFetch('/api/plugins/careercoach' + path)" in html  # `api` goes through apiFetch
 
 
+def test_board_card_click_opens_drawer_only_when_not_picked_up(plugin):
+    """A board card opens the detail drawer on a plain click, but not while it is picked up for a
+    keyboard move (LIFT_ID set) — so Space-to-drop can't also fire a drawer-opening click (R2 §3)."""
+    html = plugin._DASHBOARD_HTML
+    assert "if (!LIFT_ID) openDetail(card.getAttribute('data-id'))" in html
+
+
 def test_detail_renders_all_sections(plugin):
     html = plugin._DASHBOARD_HTML
     for marker in (
