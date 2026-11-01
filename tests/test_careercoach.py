@@ -37,12 +37,12 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.13.5 (PATCH): the market reply lists only roles that reach the inbox, and Keep
-    leaves fit_score unscored rather than storing a keyword title match."""
+    This release is v0.13.6: the redesigned Jobs view, in the 0.13 line so the bundle floor still
+    takes it (the 0.x minor is the pin boundary)."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.13.5"
+    assert pyproject == "0.13.6"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
