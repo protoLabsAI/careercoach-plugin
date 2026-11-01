@@ -52,6 +52,24 @@ def _save(name: str, data) -> None:
     _store._write_store(_path(name), json.dumps(data, indent=2, ensure_ascii=False))
 
 
+# ── when the watch last ran ───────────────────────────────────────────────────
+WATCH_RUN = "watch-run.json"
+
+
+def record_watch_run() -> None:
+    """Note that a watch pass finished with at least one source answering."""
+    _save(WATCH_RUN, {"last_run": _now()})
+
+
+def watch_last_run() -> str:
+    """The ISO time of the last watch pass, "" if it has never run. A read never raises: an
+    unreadable note reads as "not run yet", and the board still renders."""
+    try:
+        return str(_load(WATCH_RUN, {}).get("last_run") or "")
+    except StoreUnreadable:
+        return ""
+
+
 # ── watchlist ─────────────────────────────────────────────────────────────────
 def load_watchlist() -> list[dict]:
     return _load("watchlist.json", [])

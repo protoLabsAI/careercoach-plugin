@@ -535,6 +535,31 @@ def test_watch_tracks_exact_title_matches_despite_many_target_roles(watch_env, m
     assert {j["company"] for j in queued} >= {"Acme", "Newco"} and mods.watchlist.take_inbox() == []
 
 
+def test_a_watch_pass_records_when_it_ran(watch_env, mods):
+    plugin, reg, cfg = watch_env
+    assert mods.watchlist.watch_last_run() == ""
+    asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    assert mods.watchlist.watch_last_run()
+
+
+def test_a_pass_where_every_source_failed_is_not_a_run(watch_env, mods, monkeypatch):
+    plugin, reg, cfg = watch_env
+
+    async def down(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(mods.scan, "scan_watchlist", down)
+    monkeypatch.setattr(importlib.import_module(plugin.__name__ + ".jobsource"), "search_jobs", down)
+    asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    assert mods.watchlist.watch_last_run() == ""
+
+
+def test_an_unreadable_run_note_reads_as_not_run(mods):
+    mods.watchlist._path(mods.watchlist.WATCH_RUN).parent.mkdir(parents=True, exist_ok=True)
+    mods.watchlist._path(mods.watchlist.WATCH_RUN).write_text("{broken")
+    assert mods.watchlist.watch_last_run() == ""
+
+
 def test_a_digest_does_not_steal_the_watchs_new_roles(watch_env, mods, plugin):
     _, reg, cfg = watch_env
     asyncio.run(

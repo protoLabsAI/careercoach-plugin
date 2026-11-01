@@ -2431,7 +2431,8 @@ def _register_views(registry, cfg) -> None:
     @data.get("/jobs")
     async def _jobs():
         """The pipeline board: the watch inbox, the tracked applications (each flagged `followup`
-        when an applied role is overdue a nudge), the column mapping, and the follow-up window."""
+        when an applied role is overdue a nudge), the column mapping, the follow-up window, and
+        when the watch last ran ("" if never)."""
         days = _followup_days()
         today = state._today()
         try:
@@ -2439,7 +2440,15 @@ def _register_views(registry, cfg) -> None:
         except wl.StoreUnreadable:
             inbox = []  # an unreadable inbox reads as empty — the board still renders the pipeline
         apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
-        return JSONResponse({"inbox": inbox, "applications": apps, "columns": state.COLUMNS, "followup_days": days})
+        return JSONResponse(
+            {
+                "inbox": inbox,
+                "applications": apps,
+                "columns": state.COLUMNS,
+                "followup_days": days,
+                "watch_last_run": wl.watch_last_run(),
+            }
+        )
 
     def _keep_inbox_item(item_id: str):
         """Promote a watch-inbox item into the pipeline as a `considering` row (keeping its reason
@@ -2498,6 +2507,20 @@ def _register_views(registry, cfg) -> None:
         except state.StoreUnreadable as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
+        _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
+        return JSONResponse({"ok": True, "application": row})
+
+    @data.post("/applications/{app_id}/undo-move")
+    async def _undo_move(app_id: str):
+        """Take back the last move, exactly: prior status, `updated` and history. The server holds
+        what to restore, so the client can't name a status. Nothing to undo is a 409; an unknown id
+        is a 400, as for a move."""
+        try:
+            row = state.undo_move(app_id)
+        except (state.StoreUnreadable, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        except KeyError as e:
             return JSONResponse({"error": str(e.args[0]) if e.args else str(e)}, status_code=400)
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
@@ -2650,6 +2673,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         return []
     rows = state.load_applications()
     found: list[dict] = []
+    answered = False  # did any source answer? A pass where all failed didn't run, for the view
     # The watch keeps its OWN first-seen log (watch-seen.json) and records only what it handled:
     # a morning digest showing a role first must not make the watch skip it, and a role cut by
     # the per-scan cap must come back next scan.
@@ -2661,6 +2685,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 watched, roles=roles, exclude=f["exclude"], locations=f["locations"],
                 max_age_days=f["max_age_days"], tracker_rows=rows, log_name=wl.WATCH_SEEN, record=False,
             )  # fmt: skip
+            answered = True
             found += [j for j in res.new if not j["tracked"]]
     except Exception as e:  # noqa: BLE001
         log.info("[careercoach] watch board scan failed: %s", e)
@@ -2675,6 +2700,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         except Exception as e:  # noqa: BLE001
             log.info("[careercoach] watch market search failed for %r: %s", role, e)
             continue
+        answered = True
         for j in got.jobs:
             if boards.passes(
                 j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
@@ -2682,6 +2708,11 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 j["id"] = f"{j['source']}:{j['url']}"
                 j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
                 market[j["id"]] = j
+    if answered:
+        try:
+            wl.record_watch_run()
+        except OSError as e:  # the note is chrome: it must not cost this pass its results
+            log.info("[careercoach] watch run not recorded: %s", e)
     try:
         if market:
             index = scan.tracked_index(rows)
@@ -2760,7 +2791,7 @@ def _register_watch_verifier(registry) -> None:
 # iframe's own path (ADR 0042). Live refresh subscribes to `careercoach.#` and reloads on an event.
 _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Career Coach</title>
+<title>Career Coach — Jobs</title>
 <script>
   // Fleet-proxy-safe base: "" on the host, "/agents/<slug>" behind the proxy (ADR 0042).
   var BASE = location.pathname.split('/plugins/')[0];
@@ -2769,239 +2800,334 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   document.head.appendChild(link);
 </script>
 <style>
-  :root { --gap: 14px; }
-  body { margin: 0; padding: 24px; background: var(--pl-color-bg, #0a0f14);
-         color: var(--pl-color-fg, #e6e6e6);
-         font-family: var(--pl-font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif); }
-  h1 { font-size: 20px; margin: 0 0 2px; color: var(--pl-color-accent, #9b87f2); }
-  .sub { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin: 0 0 20px; }
-  .card { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-          border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
-  .card > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-               color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 12px; font-weight: 600; }
-  .empty { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 14px; padding: 16px 0; }
-  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
-          background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa); }
-  .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
-  code { background: var(--pl-color-bg-subtle, #1b2330); padding: 1px 6px; border-radius: 5px; color: var(--pl-color-accent, #9b87f2); }
+  /* House style (spec §1.7 / §6): /_ds/plugin-kit.css classes and --pl-* tokens only. No custom
+     accent, no hex fallbacks, no hand-rolled .btn/.pill/.card; overlay colour from --pl-color-overlay. */
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--pl-color-bg); color: var(--pl-color-fg);
+         font-family: var(--pl-font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif); overflow: hidden; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--pl-color-fg-muted); }
+  .sm { font-size: 12px; }
+  .empty { color: var(--pl-color-fg-muted); font-size: 14px; padding: 12px 0; }
+  code { background: var(--pl-color-bg-subtle); padding: 1px 6px; border-radius: 5px; }
 
-  /* Inbox: new roles the watch surfaced, each a keep/dismiss decision. */
-  .inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px;
-                padding: 12px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
-  .inbox-item:first-child { border-top: 0; }
-  .inbox-item .title { font-weight: 600; font-size: 14px; }
-  .inbox-item .co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
-  .score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; padding: 2px 8px;
-           border-radius: 999px; background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-accent, #9b87f2); }
-  .reason { flex-basis: 100%; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
-  .inbox-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  .plink { color: var(--pl-color-accent, #9b87f2); font-size: 12px; text-decoration: none; }
+  /* One-viewport shell: the page never scrolls; the active tab body scrolls inside itself (§2). */
+  .cc { container: cc / inline-size; position: relative; overflow: hidden; height: 100dvh;
+        display: flex; flex-direction: column; background: var(--pl-color-bg); }
+  .hd { display: flex; align-items: flex-start; gap: 12px; padding: 20px 24px 8px; flex: none; }
+  .hd .t { font-size: 18px; font-weight: 600; margin: 2px 0 0; color: var(--pl-color-fg); }
+  .hd .s { font-size: 13px; color: var(--pl-color-fg-muted); margin: 3px 0 0; }
+  .hd .sp { flex: 1; }
+
+  .banner { margin: 8px 24px 0; flex: none; }
+  .pl-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--pl-radius, 10px);
+               border: 1px solid var(--pl-color-border); background: var(--pl-color-bg-raised); font-size: 13px; }
+  .pl-banner--error { border-color: var(--pl-color-status-error); }
+
+  .today { margin: 8px 24px 0; padding: 10px 14px; border: 1px solid var(--pl-color-border);
+           border-radius: var(--pl-radius, 10px); background: var(--pl-color-bg-raised); flex: none; }
+  .today > h3 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                color: var(--pl-color-fg-muted); font-weight: 600; }
+  .trow { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px;
+          border-top: 1px solid var(--pl-color-border); }
+  .trow:first-of-type { border-top: 0; }
+  .tmark { flex: none; font-size: 12px; }
+  .pl-chip--warning { color: var(--pl-color-status-warning); }
+
+  .tabs { display: flex; gap: 2px; padding: 8px 24px 0; border-bottom: 1px solid var(--pl-color-border);
+          flex: none; position: relative; }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted);
+         font: inherit; font-size: 13px; padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
+  .tab:focus-visible, .body:focus-visible, .tab--menu:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  /* Responsive tabs (§8): when the three tabs + counts don't fit the container, the strip collapses to
+     a single menu trigger (fitTabs measures overflow) that opens this menu of the same tabs. */
+  .tab--menu { background: none; border: 0; color: var(--pl-color-fg); font: inherit; font-size: 13px;
+               padding: 8px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  .tabs-menu { position: absolute; top: 100%; left: 24px; z-index: 30; min-width: 180px; padding: 4px;
+               background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong);
+               border-radius: var(--pl-radius, 10px); }
+  .tabs-menu[hidden] { display: none; }
+  .tabs-menu .tab { width: 100%; border-bottom: 0; justify-content: space-between; }
+  .pl-count { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--pl-color-bg-subtle);
+              color: var(--pl-color-fg-muted); font-variant-numeric: tabular-nums; }
+
+  .body { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 24px; }
+  .skel { display: grid; gap: 10px; }
+  .pl-skel { height: 16px; border-radius: 6px; background: var(--pl-color-bg-subtle); }
+
+  .emptyc { display: grid; place-items: center; text-align: center; gap: 10px; padding: 48px 24px; }
+  .emptyc .empty-title { font-size: 15px; font-weight: 600; }
+  .emptyc-desc { max-width: 380px; margin: 0; }
+  .sugs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+  /* Inbox tab (§3): a toolbar, freshness accordions (reusing .grp) and listbox rows whose Keep /
+     Dismiss / View posting + checkbox reveal only on hover, focus or selection — never at rest. */
+  .ibx-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+  .ibx-toolbar label { color: var(--pl-color-fg-muted); }
+  .ibx-kbd { margin-left: auto; color: var(--pl-color-fg-muted); }
+  .ibx-kbd .pl-kbd { margin: 0 1px; }
+  .grp > summary .pl-count { margin-left: 4px; }
+  .ibx-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+             border-top: 1px solid var(--pl-color-border); }
+  .ibx-row:first-child { border-top: 0; }
+  .ibx-row:hover, .ibx-row.sel { background: var(--pl-color-bg-hover); }
+  .ibx-row:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .ibx-main { flex: 1; min-width: 0; }
+  .ibx-ti { font-size: 13px; font-weight: 600; }
+  .ibx-meta { font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 2px; }
+  .ibx-meta em { font-style: normal; color: var(--pl-color-fg); }
+  .ibx-ghost { margin-top: 5px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  /* The "New" marker carries text, not just the dot (§10): never colour alone. */
+  .ibx-new { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 600;
+             color: var(--pl-color-status-info); margin-right: 2px; }
+  /* Hover/focus/selection reveal (§3/§6); focus-within so a focused action stays visible (§10). */
+  .ibx-acts { display: flex; gap: 6px; flex: none; visibility: hidden; }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.sel .ibx-acts { visibility: visible; }
+  .ibx-ck { flex: none; margin-top: 2px; visibility: hidden; }
+  .ibx-row:hover .ibx-ck, .ibx-row:focus .ibx-ck, .ibx-row:focus-within .ibx-ck, .ibx-row.sel .ibx-ck, .ibx-multi .ibx-ck { visibility: visible; }
+  .plink { color: var(--pl-color-accent); font-size: 12px; text-decoration: none; }
   .plink:hover { text-decoration: underline; }
-  button.btn { font: inherit; font-size: 13px; cursor: pointer; padding: 5px 12px; border-radius: 8px;
-               border: 1px solid var(--pl-color-border, #232b36); background: var(--pl-color-bg-subtle, #1b2330);
-               color: var(--pl-color-fg, #e6e6e6); }
-  button.btn.keep { border-color: var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
-  button.btn:disabled { opacity: .5; cursor: default; }
 
-  /* Pipeline board: six columns, cards drag between them (or use the per-card Move-to select). */
-  .board { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: var(--gap);
-           align-items: start; overflow-x: auto; }
-  @media (max-width: 860px) { .board { grid-template-columns: repeat(2, minmax(150px, 1fr)); } }
-  .col { background: var(--pl-color-bg-subtle, #1b2330); border: 1px solid var(--pl-color-border, #232b36);
-         border-radius: 10px; padding: 8px; min-height: 60px; }
-  .col.over { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed; }
+  /* Pipeline board (§3): five open columns + an "Other" column for legacy statuses + the Closed stub.
+     Layout bands switch on a CONTAINER query on the view root (§8), never the viewport, so the rail
+     panel and split-screen both work. ≥900px: the five columns share the width, Closed stub 120px. */
+  .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 120px; gap: 12px; align-items: start; }
+  /* 600–899px (split-screen, §8): columns fix at 220px and the board scrolls sideways with scroll-snap. */
+  @container cc (max-width: 899px) {
+    .board { grid-template-columns: repeat(5, 220px) 110px; overflow-x: auto; scroll-snap-type: x mandatory; }
+    .col { scroll-snap-align: start; }
+  }
+  /* One line whatever the list length: a long target list must not eat the one-viewport page. */
+  .hd > div:first-child { min-width: 0; }
+  #sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #about-btn { flex: none; white-space: nowrap; }
+  /* min-width: 0 — the kit's .pl-board-col sets 200px, which would push the shared grid tracks into
+     each other below about 1,200px. */
+  .col { background: var(--pl-color-bg-subtle); border: 1px solid var(--pl-color-border); border-radius: 10px;
+         padding: 8px; min-height: 60px; min-width: 0; }
+  .col.over { border-color: var(--pl-color-accent); border-style: dashed; }
   .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 2px 4px 8px;
-            color: var(--pl-color-fg-muted, #9aa0aa); font-weight: 600; display: flex; justify-content: space-between; }
-  .col h3 .count { background: var(--pl-color-bg-raised, #12181f); border-radius: 999px; padding: 0 7px; }
-  .pcard { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-           border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
-  .pcard:last-child { margin-bottom: 0; }
-  .pcard .prole { font-weight: 600; font-size: 13px; }
-  .pcard .pco { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; }
-  .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
-                  color: var(--pl-color-fg-muted, #9aa0aa); margin-top: 5px; }
-  .pcard .nudge { margin-top: 6px; font-size: 12px; color: var(--pl-color-accent, #9b87f2);
-                  border: 1px solid var(--pl-color-accent, #9b87f2); border-radius: 6px; padding: 4px 7px; }
-  .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; padding: 4px;
-                    border-radius: 6px; border: 1px solid var(--pl-color-border, #232b36);
-                    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+            color: var(--pl-color-fg-muted); font-weight: 600; display: flex; justify-content: space-between; }
+  /* Applied (and any tall column) scrolls inside the column, so the board stays one viewport — no paging (§3). */
+  .col-list { display: grid; gap: 8px; max-height: 62vh; overflow: auto; }
+  .col.stub { display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center;
+              text-align: center; border-style: dashed; color: var(--pl-color-fg-muted); font-size: 12px; }
+  .col.stub .stub-n { color: var(--pl-color-fg); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pcard { background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border); border-radius: 8px;
+           padding: 9px 10px; cursor: grab; }
+  .pcard:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .pcard.lift { border-color: var(--pl-color-accent); }  /* picked up by keyboard (§3, WCAG 2.5.7) */
+  .pcard .prole { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+  .pcard .pco { color: var(--pl-color-fg-muted); font-size: 12px; }
+  .pcard .pmeta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 5px; }
+  .pcard .fit { font-variant-numeric: tabular-nums; }
+  /* The single follow-up line — a pl-chip--warning, carrying text, never colour alone (§3/§10). */
+  .pcard .nudge { margin-top: 6px; font-size: 12px; border: 1px solid var(--pl-color-border);
+                  border-radius: 6px; padding: 4px 7px; }
+  .pcard .movesel { margin-top: 7px; width: 100%; font: inherit; font-size: 12px; }
+  .closed-list { display: grid; gap: 8px; max-width: 520px; }
+  .closed-list .pcard { margin-bottom: 0; }
+  .pipeline-hint { margin: 0 0 10px; }
 
-  /* The secondary disclosures: the profile the coach holds, and the fit rubric. Compact, below the board. */
-  details.disc { margin-top: 12px; }
-  details.disc > summary { cursor: pointer; color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px;
-                           padding: 6px 0; font-weight: 600; }
-  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
-  .row .name { width: 92px; color: var(--pl-color-fg-muted, #9aa0aa); text-transform: capitalize; }
-  .track { flex: 1; height: 6px; border-radius: 4px; background: var(--pl-color-border, #232b36); overflow: hidden; }
-  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent, #9b87f2); }
-  #profile .row { align-items: baseline; gap: 12px; }
-  #profile .row .name { width: 190px; flex: none; text-transform: none; }
-  #profile .row .empty { padding: 0; font-size: 13px; font-style: italic; }
-  #profile-ctx { margin: 10px 0 0; padding: 12px; border-radius: 8px; overflow-x: auto;
-                 background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg-muted, #9aa0aa);
-                 font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
-  .coach { margin-top: 18px; padding: 14px 16px; border-radius: 12px;
-           border: 1px dashed var(--pl-color-border, #232b36); color: var(--pl-color-fg-muted, #9aa0aa);
-           font-size: 13px; line-height: 1.6; }
+  /* Rail (<600px, §8): the board is swapped for a stacked list of stage accordions (Saved · Preparing
+     · Applied · Interviewing · Offer). Hidden at wider widths; the @container 599 rule toggles it on
+     and the board off. Drag is off here — a row opens the drawer, and the keyboard pick-up (↑/↓
+     between stages) highlights the lifted row (.lift) and the target stage (details[data-stage].over). */
+  .stages { display: none; }
+  .srow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+          border-top: 1px solid var(--pl-color-border); }
+  .srow:first-child { border-top: 0; }
+  .srow:hover { background: var(--pl-color-bg-hover); }
+  .srow:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .srow.lift { background: var(--pl-color-bg-hover); box-shadow: inset 2px 0 0 var(--pl-color-accent); }
+  .srow .srole { font-size: 13px; font-weight: 600; }
+  .srow .smeta { font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 2px; }
+  /* The follow-up marker carries text ("No reply"), never colour alone (§10). */
+  .srow .snudge { color: var(--pl-color-status-warning); }
+  details[data-stage].over > summary { outline: 2px dashed var(--pl-color-accent); outline-offset: -2px; }
+  .stage-closed .srole { font-weight: 600; }
 
-  /* The inline move-failure toast and the rejected/passed chooser — no browser modals (sandboxed iframe). */
-  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
-           background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-accent, #9b87f2);
-           color: var(--pl-color-fg, #e6e6e6); padding: 10px 16px; border-radius: 10px; font-size: 13px;
+  /* About-you drawer: three read-only accordions + the rubric bars (§5). */
+  .arow { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-size: 13px; }
+  .arow .aname { width: 150px; flex: none; color: var(--pl-color-fg-muted); }
+  .track { flex: 1; height: 6px; border-radius: 4px; background: var(--pl-color-border); overflow: hidden; }
+  .bar { height: 6px; border-radius: 4px; background: var(--pl-color-accent); }
+  .fit { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .grp { border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius, 10px); margin-bottom: 10px;
+         background: var(--pl-color-bg-raised); }
+  .grp > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center;
+                   padding: 10px 12px; font-size: 13px; font-weight: 600; }
+  .grp > summary::-webkit-details-marker { display: none; }
+  .grp > summary .chev { color: var(--pl-color-fg-muted); transition: transform .15s; }
+  .grp[open] > summary .chev { transform: rotate(90deg); }
+  .grp-body { padding: 0 12px 12px; }
+  .ctx { margin: 0; padding: 10px; border-radius: 8px; background: var(--pl-color-bg-subtle);
+         color: var(--pl-color-fg-muted); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; }
+
+  /* Drawers / dialogs / toast — overlay colour from the token, never a hardcoded rgba (§6). */
+  .scrim { position: fixed; inset: 0; z-index: 41; background: var(--pl-color-overlay); }
+  #about { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 42; display: flex;
+           flex-direction: column; background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border); }
+  #about[aria-hidden="true"] { display: none; }
+  #about-scrim { display: none; }
+  #cc.about-open ~ #about-scrim { display: block; }
+  .dtop { display: flex; gap: 8px; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--pl-color-border); }
+  .dtitle { font-size: 16px; font-weight: 600; }
+  .dbody { overflow: auto; padding: 16px 20px 28px; }
+
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
+           display: inline-flex; align-items: center; gap: 12px;
+           background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong);
+           color: var(--pl-color-fg); padding: 10px 16px; border-radius: 10px; font-size: 13px;
            opacity: 0; pointer-events: none; transition: opacity .15s; max-width: 80%; }
-  #toast.show { opacity: 1; }
-  #chooser { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
-             background: rgba(0,0,0,.5); }
-  #chooser .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-                  border-radius: 12px; padding: 20px; max-width: 320px; }
-  #chooser p { margin: 0 0 14px; font-size: 14px; }
-  #chooser .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+  #toast.show { opacity: 1; pointer-events: auto; }
+  #toast.pl-toast--error { border-color: var(--pl-color-status-error); }  /* §7 move/undo failure */
+  #toast #toast-text { min-width: 0; }
 
-  /* Mark-applied confirmation — an inline overlay (never window.confirm, which a sandboxed iframe
-     without allow-modals silently suppresses, returning false). z-index above #detail (40) so it
-     sits over the open drawer. Mirrors the #chooser box. */
+  #chooser { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+             background: var(--pl-color-overlay); }
   #confirm { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
-             background: rgba(0,0,0,.5); }
-  #confirm .box { background: var(--pl-color-bg-raised, #12181f); border: 1px solid var(--pl-color-border, #232b36);
-                  border-radius: 12px; padding: 20px; max-width: 320px; }
-  #confirm p { margin: 0 0 14px; font-size: 14px; }
-  #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+             background: var(--pl-color-overlay); }
+  #chooser .box, #confirm .box { max-width: 320px; }
+  #chooser p, #confirm p { margin: 0 0 14px; font-size: 14px; }
+  #chooser .choices, #confirm .choices { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* The job detail drawer (S2b): a right-side overlay; Esc, the ✕ and the backdrop all dismiss it.
-     Reuses the same --pl-* tokens as the rest, so it reads correctly in both light and dark. */
+  /* Job detail drawer (§4). */
   #detail { position: fixed; inset: 0; z-index: 40; display: none; }
   #detail.open { display: block; }
-  #detail .detail-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+  #detail .detail-backdrop { position: absolute; inset: 0; background: var(--pl-color-overlay); }
   #detail .detail-panel { position: absolute; top: 0; right: 0; height: 100%; width: min(560px, 100%);
     box-sizing: border-box; overflow-y: auto; padding: 0 20px 28px;
-    background: var(--pl-color-bg-raised, #12181f); border-left: 1px solid var(--pl-color-border, #232b36);
-    box-shadow: -8px 0 24px rgba(0,0,0,.3); }
+    background: var(--pl-color-bg-raised); border-left: 1px solid var(--pl-color-border); }
   #detail .detail-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start;
     justify-content: space-between; gap: 12px; padding: 18px 0 12px;
-    background: var(--pl-color-bg-raised, #12181f); border-bottom: 1px solid var(--pl-color-border, #232b36); }
+    background: var(--pl-color-bg-raised); border-bottom: 1px solid var(--pl-color-border); }
   #detail .detail-role { font-size: 17px; font-weight: 700; }
-  #detail .detail-co { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; margin-top: 2px; }
-  #detail .detail-close { font-size: 16px; line-height: 1; padding: 6px 10px; }
-  #detail .dsec { padding: 14px 0; border-top: 1px solid var(--pl-color-border, #232b36); }
+  #detail .detail-co { color: var(--pl-color-fg-muted); font-size: 13px; margin-top: 2px; }
+  #detail .detail-close { font-size: 16px; line-height: 1; }
+  #detail .dsec { padding: 14px 0; border-top: 1px solid var(--pl-color-border); }
   #detail .dsec:first-child { border-top: 0; }
   #detail .dsec > h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--pl-color-fg-muted, #9aa0aa); margin: 0 0 10px; font-weight: 600; }
+    color: var(--pl-color-fg-muted); margin: 0 0 10px; font-weight: 600; }
   #detail .kit-block { margin-bottom: 14px; }
   #detail .kit-block:last-child { margin-bottom: 0; }
   #detail .kit-block h5 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
   #detail .kv { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; flex-wrap: wrap; }
-  #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted); }
   #detail .kv a.plink { word-break: break-all; }
-  #detail .snippet, #detail .cover-text, #detail .answer-val { white-space: pre-wrap; line-height: 1.5;
-    font-size: 13px; }
-  #detail .snippet { margin-top: 10px; color: var(--pl-color-fg-muted, #9aa0aa); }
-  #detail .cover-text { margin-top: 8px; padding: 10px; border-radius: 8px;
-    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .snippet, #detail .cover-text, #detail .answer-val { white-space: pre-wrap; line-height: 1.5; font-size: 13px; }
+  #detail .snippet { margin-top: 10px; color: var(--pl-color-fg-muted); }
+  #detail .cover-text { margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--pl-color-bg-subtle); }
   #detail .fitline { display: flex; align-items: baseline; gap: 10px; }
-  #detail .fit.big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums;
-    color: var(--pl-color-accent, #9b87f2); }
-  #detail .verdict { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 13px; }
+  #detail .fit.big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--pl-color-accent); }
+  #detail .verdict { color: var(--pl-color-fg-muted); font-size: 13px; }
   #detail .notes-ta { width: 100%; min-height: 84px; box-sizing: border-box; resize: vertical; font: inherit;
-    font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pl-color-border, #232b36);
-    background: var(--pl-color-bg-subtle, #1b2330); color: var(--pl-color-fg, #e6e6e6); }
+    font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pl-color-border);
+    background: var(--pl-color-bg-subtle); color: var(--pl-color-fg); }
   #detail .dsec-actions { margin-top: 8px; }
-  #detail .answer { padding: 8px 10px; border-radius: 8px; margin: 8px 0;
-    border: 1px solid var(--pl-color-border, #232b36); }
-  #detail .answer.draft { border-color: var(--pl-color-accent, #9b87f2); border-style: dashed;
-    background: var(--pl-color-bg-subtle, #1b2330); }
+  #detail .answer { padding: 8px 10px; border-radius: 8px; margin: 8px 0; border: 1px solid var(--pl-color-border); }
+  #detail .answer.draft { border-color: var(--pl-color-status-warning); border-style: dashed; background: var(--pl-color-bg-subtle); }
   #detail .answer-head { display: flex; align-items: center; gap: 8px; }
   #detail .answer-key { font-weight: 600; font-size: 13px; }
   #detail .answer-head .copy { margin-left: auto; }
   #detail .answer-val { margin-top: 5px; }
-  #detail .draft-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
-    border: 1px solid var(--pl-color-accent, #9b87f2); color: var(--pl-color-accent, #9b87f2); }
   #detail .timeline, #detail .contacts { list-style: none; margin: 0; padding: 0; font-size: 13px; }
   #detail .timeline li { display: flex; gap: 10px; padding: 3px 0; }
-  #detail .timeline .tl-date { flex: none; width: 92px; font-variant-numeric: tabular-nums;
-    color: var(--pl-color-fg-muted, #9aa0aa); }
+  #detail .timeline .tl-date { flex: none; width: 92px; font-variant-numeric: tabular-nums; color: var(--pl-color-fg-muted); }
   #detail .contacts li { padding: 3px 0; }
   #detail .action-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-  #detail .hint { color: var(--pl-color-fg-muted, #9aa0aa); font-size: 12px; margin: 6px 0 0; }
+  #detail .hint { color: var(--pl-color-fg-muted); font-size: 12px; margin: 6px 0 0; }
+
+  .closed-sub { display: none; }
+  /* 600–899px (§8): the drawers go full width. */
+  @container cc (max-width: 899px) { #detail .detail-panel, #about { width: 100%; } }
+  @container cc (max-width: 599px) {
+    /* Rail (§8): Pipeline becomes the stage-list (board off); the Closed table drops Company and
+       Closed-on, folding both under the role as one muted line; the drawer goes bottom-side at
+       85dvh; the header's target-roles subline is hidden. */
+    .board { display: none; }
+    .stages { display: block; }
+    .closed-company, .closed-date { display: none; }
+    .closed-sub { display: block; }
+    #detail .detail-panel { top: auto; bottom: 0; height: 85dvh; }
+    .hd .s { display: none; }
+    #about, #detail .detail-panel { width: 100%; }
+  }
+  /* §10: honour reduced-motion — kill the chevron spin and the toast fade. */
+  @media (prefers-reduced-motion: reduce) { .grp > summary .chev { transition: none; } #toast { transition: none; } }
 </style></head>
 <body>
-  <h1 id="title">Career Coach</h1>
-  <p class="sub" id="sub">Loading your jobs…</p>
-
-  <div class="card">
-    <h2>New roles from your watch</h2>
-    <div id="inbox"><p class="empty">Loading…</p></div>
+  <div class="cc" id="cc">
+    <div class="hd">
+      <div>
+        <div class="pl-eyebrow">Career Coach</div>
+        <h1 class="t" id="title">Jobs</h1>
+        <p class="s" id="sub" hidden></p>
+      </div>
+      <span class="sp"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="about-btn">About you</button>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <section class="today pl-callout pl-callout--info" id="today" aria-label="Needs you today" hidden></section>
+    <div class="tabs" role="tablist" aria-label="Jobs" id="tabs"></div>
+    <div class="body" id="body" role="tabpanel" tabindex="0"></div>
   </div>
 
-  <div class="card">
-    <h2>Pipeline</h2>
-    <div class="board" id="board"><p class="empty">Loading…</p></div>
-  </div>
+  <!-- About-you drawer (§5): opened by the header button; three read-only accordions. -->
+  <div class="scrim" id="about-scrim"></div>
+  <aside id="about" class="pl-drawer pl-drawer--right" role="dialog" aria-modal="true"
+         aria-labelledby="about-title" aria-hidden="true">
+    <div class="dtop">
+      <div class="grow"><div class="dtitle" id="about-title">About you</div></div>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="about-close" aria-label="Close">✕</button>
+    </div>
+    <div class="dbody" id="about-body"></div>
+  </aside>
 
-  <div class="card">
-    <details class="disc">
-      <summary>What your coach knows about you</summary>
-      <p class="sub" id="profile-cov" style="margin-top:10px">Loading…</p>
-      <p class="sub">A read-only view. To change anything, tell your coach in chat.</p>
-      <div id="profile"></div>
-      <details style="margin-top:12px">
-        <summary style="cursor:pointer;color:var(--pl-color-fg-muted,#9aa0aa)">
-          Exactly what it&rsquo;s told each turn
-        </summary>
-        <pre id="profile-ctx"></pre>
-      </details>
-    </details>
-    <details class="disc">
-      <summary>Fit rubric — how a posting is scored</summary>
-      <div id="weights" style="margin-top:10px"></div>
-    </details>
+  <div id="toast" class="pl-toast" role="status" aria-live="polite">
+    <span id="toast-text"></span>
+    <button class="pl-btn pl-btn--ghost pl-btn--sm" id="toast-undo" type="button" hidden>Undo</button>
   </div>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
-  <div class="coach">
-    This is your coach, not just an auto-applier. Ask it to <b>run a mock interview</b>,
-    <b>critique your CV</b>, <b>weigh an offer</b>, or <b>rehearse a salary negotiation</b> —
-    or paste a posting and say <code>/apply</code> to have it evaluate fit and draft a tailored
-    CV + cover letter. Tune how strictly it scores with <code>careercoach_preset growth-first</code>.
-  </div>
-
-  <div id="toast" role="status" aria-live="polite"></div>
   <div id="chooser" role="dialog" aria-modal="true">
-    <div class="box">
+    <div class="pl-card pl-dialog box">
       <p id="chooser-q">Close this role as rejected, or passed on?</p>
       <div class="choices">
-        <button class="btn keep" id="choose-passed">Mark passed (default)</button>
-        <button class="btn" id="choose-rejected">Mark rejected</button>
-        <button class="btn" id="choose-cancel">Cancel</button>
+        <button class="pl-btn pl-btn--primary" id="choose-passed">Mark passed (default)</button>
+        <button class="pl-btn" id="choose-rejected">Mark rejected</button>
+        <button class="pl-btn" id="choose-cancel">Cancel</button>
       </div>
     </div>
   </div>
   <div id="confirm" role="dialog" aria-modal="true">
-    <div class="box">
+    <div class="pl-card pl-dialog box">
       <p id="confirm-q"></p>
       <div class="choices">
-        <button class="btn keep" id="confirm-ok">Yes (default)</button>
-        <button class="btn" id="confirm-cancel">Cancel</button>
+        <button class="pl-btn pl-btn--primary" id="confirm-ok">Yes (default)</button>
+        <button class="pl-btn" id="confirm-cancel">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- The job detail drawer (S2b): opened by clicking a pipeline card; rendered client-side from
-       GET /applications/{id}. Esc, the ✕ and the backdrop dismiss it. -->
+  <!-- Job drawer: Inbox rows, board cards and Closed history share this surface. -->
   <div id="detail" aria-hidden="true">
     <div class="detail-backdrop"></div>
-    <aside class="detail-panel" role="dialog" aria-modal="true" aria-label="Job detail">
+    <aside class="detail-panel pl-drawer pl-drawer--right" role="dialog" aria-modal="true" aria-label="Job detail">
       <div class="detail-top">
         <div id="detail-title"></div>
-        <button class="btn detail-close" id="detail-close" aria-label="Close detail">✕</button>
+        <button class="pl-btn pl-btn--ghost detail-close" id="detail-close" aria-label="Close detail">✕</button>
       </div>
       <div id="detail-body"></div>
     </aside>
   </div>
 
 <script type="module">
-  // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme: it stamps
-  // data-theme on :root so the --pl-* tokens track the console's light/dark theme (and re-theme
-  // live). Import it and let it drive; fall back to a plain fetch if it can't load (older host /
-  // offline) so the page still renders — just without theme sync.
+  // The DS plugin-kit owns the protoagent:init handshake — bearer + LIVE theme (data-theme on
+  // :root so the --pl-* tokens follow light/dark). Import it; fall back to a plain fetch so the
+  // page still renders without theme sync on an older/offline host.
   var kit;
   try { kit = await import(BASE + '/_ds/plugin-kit.js'); }
   catch (e) { kit = { initPluginView: function (cb) { cb(); },
@@ -3020,17 +3146,87 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
-  var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
-  var DRAG_ID = null;
-  var DETAIL = null;      // the last GET /applications/{id} payload while the drawer is open
-  var DETAIL_ID = null;   // the application id the drawer is showing (null when closed)
 
-  function toast(msg) {
+  // ── shell state ─────────────────────────────────────────────────────────────────────
+  var JOBS = { inbox: [], applications: [], columns: {}, followup_days: 0 };
+  var STATE = null, STATE_FAILED = false, JOBS_FAILED = false, LOADING = true;
+  var TAB = 'pipeline', TODAY_ALL = false, LAST_VISIT = 0;
+  var DRAG_ID = null, DETAIL = null, DETAIL_ID = null, DETAIL_RETURN = null, DETAIL_REQUEST = 0;
+  var CLOSED_Q = '', CLOSED_OUT = 'all', CLOSED_PAGE = 0;
+  var NOTE_DRAFTS = Object.create(null), NOTE_WRITES = Object.create(null), NOTE_PENDING = Object.create(null);
+  // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
+  // the arrow keys are hovering. Both null at rest. A pointer drag never touches these. The same two
+  // drive the rail stage-list pick-up (§8), where ↑/↓ walk LIFT_COL instead of ←/→.
+  var LIFT_ID = null, LIFT_COL = null;
+  // Rail stage-list (§8): which stage accordions the operator has toggled (col -> bool). A stage
+  // defaults open when it has cards and collapses to one line when empty; an explicit toggle wins.
+  var STAGE_OPEN = {};
+  // Inbox triage state (§3): sort order, the ghost filter toggle, the current multi-selection
+  // (id -> 1), which freshness groups are open, rows removed optimistically (kept or dismissing,
+  // id -> 1), the HELD dismiss timers (id -> handle; the write waits out the 6s Undo window), and
+  // the row to focus after the next inbox re-render. All reset to their defaults here.
+  var INBOX_SORT = 'newest', HIDE_GHOST = false, INBOX_SEL = {},
+      INBOX_OPEN = { today: true, week: true, older: false, miss: false },
+      INBOX_HIDDEN = {}, DISMISS_TIMERS = {}, INBOX_FOCUS = null;
+
+  function closedColName() {
+    var cols = JOBS.columns || {}, names = Object.keys(cols);
+    for (var i = 0; i < names.length; i++) { if (isClosedColumn(cols[names[i]] || [])) return names[i]; }
+    return null;
+  }
+  function closedStatuses() { var c = closedColName(); return c ? (JOBS.columns[c] || []) : []; }
+  function isClosedApp(a) { return closedStatuses().indexOf(a.status) !== -1; }
+  function openApps() { return (JOBS.applications || []).filter(function (a) { return !isClosedApp(a); }); }
+  function closedApps() { return (JOBS.applications || []).filter(isClosedApp); }
+  // Counts: Pipeline is the live roles (closed never counts), Closed the dead ones (§2, principle 3).
+  function counts() { return { pipeline: openApps().length, inbox: (JOBS.inbox || []).length, closed: closedApps().length }; }
+  // Brand-new agent (§7): no profile, and nothing anywhere. Needs /state, so a partial failure is never "new".
+  function isBrandNew() {
+    if (JOBS_FAILED || LOADING || STATE_FAILED || !STATE) return false;
+    var cov = STATE.completeness || {};
+    var noProfile = cov.empty || cov.filled === 0;
+    return noProfile && (JOBS.applications || []).length === 0 && (JOBS.inbox || []).length === 0;
+  }
+  function itemTime(it) { var s = it.first_seen || it.posted || ''; if (!s) return 0; var t = new Date(s).getTime(); return isNaN(t) ? 0 : t; }
+  function compose(text) { try { parent.postMessage({ type: 'protoagent:chat:compose', text: String(text).slice(0, 4000) }, '*'); } catch (e) {} }
+  function skel(n) { var out = '<div class="skel" aria-hidden="true">'; for (var i = 0; i < n; i++) { out += '<div class="pl-skel"></div>'; } return out + '</div>'; }
+  function setTab(t) {
+    TAB = t; renderTabs(); renderBody();
+    // When the strip has collapsed to the responsive menu trigger (§8) there is no tab-<t> button to
+    // return focus to, so land on the trigger instead.
+    var el = document.getElementById('tabs');
+    var b = (el && el.querySelector && el.querySelector('#tabs-trigger')) || document.getElementById('tab-' + t);
+    if (b && b.focus) b.focus();
+  }
+  // Announce a board move / pick-up in the single role="status" live region (§10). Cleared then set
+  // on a tick so the same message announced twice (e.g. two moves to the same column) still fires.
+  function announce(msg) {
+    var live = document.getElementById('live');
+    if (!live) return;
+    live.textContent = '';
+    setTimeout(function () { live.textContent = msg; }, 30);
+  }
+  // Toast with an optional 6s Undo action and an error variant (§7). opts: {undo: fn, error: bool}.
+  // A plain toast(msg) keeps its old 4s, no-button behaviour, so existing callers are unchanged.
+  function toast(msg, opts) {
+    opts = opts || {};
     var t = document.getElementById('toast');
-    t.textContent = msg;
+    var txt = document.getElementById('toast-text');
+    var undo = document.getElementById('toast-undo');
+    if (txt) txt.textContent = msg; else t.textContent = msg;
+    t.classList.toggle('pl-toast--error', !!opts.error);
+    if (undo) {
+      if (opts.undo) {
+        undo.hidden = false;
+        undo.onclick = function () { t.classList.remove('show'); clearTimeout(toast._t); opts.undo(); };
+      } else {
+        undo.hidden = true;
+        undo.onclick = null;
+      }
+    }
     t.classList.add('show');
     clearTimeout(toast._t);
-    toast._t = setTimeout(function () { t.classList.remove('show'); }, 4000);
+    toast._t = setTimeout(function () { t.classList.remove('show'); }, opts.undo ? 6000 : 4000);
   }
 
   function findApp(id) {
@@ -3072,14 +3268,21 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       var passed = document.getElementById('choose-passed');
       var rejected = document.getElementById('choose-rejected');
       var cancel = document.getElementById('choose-cancel');
+      var previous = document.activeElement;
       function done(v) {
         ov.style.display = 'none';
         passed.onclick = rejected.onclick = cancel.onclick = null;
+        ov.onkeydown = null;
+        if (previous && previous.isConnected && previous.focus) previous.focus();
         resolve(v);
       }
       passed.onclick = function () { done('passed'); };
       rejected.onclick = function () { done('rejected'); };
       cancel.onclick = function () { done(null); };
+      ov.onkeydown = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); return; }
+        trap(e, ov);
+      };
       ov.style.display = 'flex';
       passed.focus();
     });
@@ -3094,12 +3297,15 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       var q = document.getElementById('confirm-q');
       var ok = document.getElementById('confirm-ok');
       var cancel = document.getElementById('confirm-cancel');
+      var previous = document.activeElement;
       q.textContent = message;
       function done(v) {
         ov.style.display = 'none';
-        ok.onclick = cancel.onclick = null;
+        ok.onclick = cancel.onclick = null; ov.onkeydown = null;
+        if (previous && previous.isConnected) previous.focus();
         resolve(v);
       }
+      ov.onkeydown = function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else trap(e, ov); };
       ok.onclick = function () { done(true); };
       cancel.onclick = function () { done(false); };
       ov.style.display = 'flex';
@@ -3107,24 +3313,71 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     });
   }
 
-  // Optimistic move: flip the card's status and re-render now; on a non-2xx (or network error)
-  // roll the status back, re-render, and surface an inline toast. On success, reload for the
-  // authoritative row (new date, history, recomputed follow-up).
-  function moveApp(id, status) {
+  function syncDetailStatus() {
+    var sel = document.getElementById('detail-status'), app = findApp(DETAIL_ID);
+    if (sel && app) sel.value = app.status;
+    if (DETAIL && app && DETAIL.application.status !== app.status) {
+      DETAIL.application.status = app.status;
+      refreshDetailMarkup(DETAIL);
+    }
+  }
+  function detailStatusHtml(app) {
+    var statuses = [], labels = {};
+    Object.keys(JOBS.columns || {}).forEach(function (col) {
+      JOBS.columns[col].forEach(function (status) {
+        statuses.push(status);
+        labels[status] = status === 'passed' ? 'Passed' : status === 'rejected' ? 'Rejected' : col;
+      });
+    });
+    if (app.status && statuses.indexOf(app.status) === -1) statuses.unshift(app.status);
+    return '<label for="detail-status">Status</label> <select id="detail-status" class="pl-select pl-dropselect" aria-label="Status"' + (isClosedApp(app) ? ' disabled' : '') + '>' +
+      statuses.map(function (status) {
+        return '<option value="' + esc(status) + '"' + (status === app.status ? ' selected' : '') + '>' +
+          esc(labels[status] || status) + '</option>';
+      }).join('') + '</select>';
+  }
+  function columnOfStatus(status) { return statusToColumn()[status] || status; }
+  // Optimistic move: flip the card's status and re-render now. On success, announce it in the live
+  // region, offer a 6s Undo in the toast (§7 — Undo POSTs /undo-move, never a second move), and
+  // reload for the authoritative row (new date, history, recomputed follow-up). On a non-2xx (or
+  // network error) roll the status back, re-render, and show the §7 error toast. `label` is the
+  // destination column name for the announce + toast copy.
+  function moveApp(id, status, label) {
     var app = findApp(id);
     if (!app || app.status === status) return;
+    var role = app.role || 'This role', dest = label || columnOfStatus(status);
     var prev = app.status;
     app.status = status;
-    renderBoard();
+    syncDetailStatus();
+    renderBody();
     write('/applications/' + encodeURIComponent(id) + '/move', { status: status })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        announce(role + ' moved to ' + dest + '.');
+        toast(role + ' moved to ' + dest + '.', { undo: function () { undoMove(id); } });
         load();
       })
       .catch(function () {
         app.status = prev;
-        renderBoard();
-        toast('Could not move that role — left it where it was.');
+        syncDetailStatus();
+        renderBody();
+        toast('Couldn’t move that role. It’s back where it was.', { error: true });
+      });
+  }
+  // Undo the last move exactly (§7): POST /undo-move restores the prior status (a legacy one
+  // included), `updated` and history, so the follow-up clock and the "oldest move" sort are
+  // untouched — never a second move. A failure reloads the board to the true state and shows the
+  // §7 error toast.
+  function undoMove(id) {
+    write('/applications/' + encodeURIComponent(id) + '/undo-move')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        announce('Move undone.');
+        load();
+      })
+      .catch(function () {
+        load();
+        toast('Couldn’t undo that. The role stayed where you moved it.', { error: true });
       });
   }
   function moveToColumn(id, col) {
@@ -3133,189 +3386,912 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     var statuses = (JOBS.columns || {})[col] || [];
     if (!statuses.length || statuses.indexOf(app.status) !== -1) return;  // already there / unknown
     if (isClosedColumn(statuses)) {
-      askClosedStatus().then(function (s) { if (s) moveApp(id, s); });
+      // Dropping on Closed asks rejected / passed, with passed as the default (§3).
+      askClosedStatus().then(function (s) { if (s) moveApp(id, s, col); });
     } else {
-      moveApp(id, statuses[0]);
+      moveApp(id, statuses[0], col);
     }
   }
 
-  function inboxAction(id, action, btns) {
-    btns.forEach(function (b) { b.disabled = true; });
-    write('/inbox/' + action, {id: id})
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        load();
-      })
-      .catch(function () {
-        btns.forEach(function (b) { b.disabled = false; });
-        toast('Could not ' + action + ' that role — try again.');
-      });
+  // >>> view renderers
+  function renderBanner() {
+    var b = document.getElementById('banner');
+    if (JOBS_FAILED) {
+      b.hidden = false;
+      b.innerHTML = '<div class="pl-banner pl-banner--error" role="alert"><span class="grow">Couldn’t load your jobs.</span>' +
+        '<button class="pl-btn pl-btn--sm" id="retry">Retry</button></div>';
+      var r = document.getElementById('retry'); if (r) r.onclick = function () { load(); };
+    } else { b.hidden = true; b.innerHTML = ''; }
   }
+  function renderHeader() {
+    var st = (STATE && STATE.settings) || {};
+    var roles = st.target_roles || '';
+    var sub = document.getElementById('sub');
+    if (roles) { sub.textContent = 'Targeting: ' + roles; sub.title = roles; sub.hidden = false; }
+    else { sub.textContent = ''; sub.hidden = true; }
+  }
+  // The Today band's rows, in priority order (§2): overdue follow-ups, interviews to prep, offers
+  // awaiting a decision, new inbox roles since the last visit, then Saved/Preparing with no kit.
+  function todayItems() {
+    var a = JOBS.applications || [], days = JOBS.followup_days || 0, items = [];
+    var fu = a.filter(function (x) { return x.followup && x.status === 'applied'; });
+    if (fu.length) {
+      var minD = Math.min.apply(null, fu.map(function (x) { var n = daysSince(lastMoveDate(x)); return n == null ? days : n; }));
+      items.push({ ic: '⚠', tone: 'warning',
+        t: fu.length + (fu.length === 1 ? ' application has' : ' applications have') + ' had no reply in ' + minD + '+ days',
+        b: 'Review', go: function () { setTab('pipeline'); } });
+    }
+    a.filter(function (x) { return x.status === 'interviewing'; }).forEach(function (x) {
+      items.push({ ic: '●', tone: 'info', t: 'Interviewing: ' + (x.role || 'a role') + ' @ ' + (x.company || '') + ' · prep not started',
+        b: 'Prep', go: function () { openDetail(x.id); } });
+    });
+    a.filter(function (x) { return x.status === 'offer'; }).forEach(function (x) {
+      items.push({ ic: '★', tone: 'info', t: 'Offer: ' + (x.role || 'a role') + ' @ ' + (x.company || '') + ' — awaiting your decision',
+        b: 'Review', go: function () { openDetail(x.id); } });
+    });
+    var nw = (JOBS.inbox || []).filter(function (it) { var t = itemTime(it); return t && t > LAST_VISIT; }).length;
+    if (nw) { items.push({ ic: '✦', tone: 'info', t: nw + ' new ' + (nw === 1 ? 'role' : 'roles') + ' since your last visit',
+      b: 'Triage', go: function () { setTab('inbox'); } }); }
+    var nk = a.filter(function (x) { return (x.status === 'considering' || x.status === 'preparing') && !(x.kit && x.kit.status === 'complete'); });
+    if (nk.length) { items.push({ ic: '○', tone: 'info',
+      t: nk.length + (nk.length === 1 ? ' saved role has' : ' saved or preparing roles have') + ' no apply kit yet',
+      b: 'Build', go: function () { openDetail(nk[0].id); } }); }
+    return items;
+  }
+  function renderToday() {
+    var el = document.getElementById('today');
+    if (LOADING) { el.hidden = false; el.innerHTML = '<h3>Needs you today</h3>' + skel(2); return; }
+    if (JOBS_FAILED || isBrandNew()) { el.hidden = true; el.innerHTML = ''; return; }
+    var items = todayItems();
+    if (!items.length) { el.hidden = true; el.innerHTML = ''; return; }  // "Nothing needs you today" (§7)
+    el.hidden = false;
+    var cc = document.getElementById('cc');
+    var cap = (cc && cc.clientWidth && cc.clientWidth < 600) ? 2 : 3;  // 2 rows on the rail, 3 otherwise (§8)
+    var shown = TODAY_ALL ? items : items.slice(0, cap), more = items.length - shown.length;
+    el.innerHTML = '<h3>Needs you today</h3>' + shown.map(function (it, i) {
+      var mark = it.tone === 'warning'
+        ? '<span class="tmark pl-chip pl-chip--warning" aria-hidden="true">' + it.ic + '</span>'
+        : '<span class="tmark" aria-hidden="true">' + it.ic + '</span>';
+      return '<div class="trow pl-row">' + mark + '<span class="grow">' + esc(it.t) + '</span>' +
+        '<button class="pl-btn pl-btn--sm" data-t="' + i + '">' + esc(it.b) + '</button></div>';
+    }).join('') + (more > 0 ? '<div class="trow pl-row"><span class="grow"></span>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="today-more">+' + more + ' more</button></div>' : '');
+    el.querySelectorAll('[data-t]').forEach(function (btn) { btn.onclick = function () { shown[+btn.getAttribute('data-t')].go(); }; });
+    var m = document.getElementById('today-more'); if (m) m.onclick = function () { TODAY_ALL = true; renderToday(); };
+  }
+  // WAI-ARIA tabs (§10): roving tabindex, arrow/Home/End keys, counts in the accessible name,
+  // the count hidden at 0. During loading the strip shows with no counts.
+  function renderTabs() {
+    var el = document.getElementById('tabs');
+    if (isBrandNew()) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var showCounts = !LOADING && !JOBS_FAILED;
+    var c = showCounts ? counts() : null;
+    var T = [['pipeline', 'Pipeline'], ['inbox', 'Inbox'], ['closed', 'Closed']];
+    el.innerHTML = T.map(function (t) {
+      var n = c ? c[t[0]] : 0, on = TAB === t[0];
+      var name = t[1] + (n ? ', ' + n : '');
+      return '<button class="tab" role="tab" id="tab-' + t[0] + '" aria-controls="body" aria-selected="' + on + '"' +
+        ' tabindex="' + (on ? 0 : -1) + '" data-tab="' + t[0] + '" aria-label="' + name + '">' +
+        t[1] + (n ? ' <span class="pl-count" aria-hidden="true">' + n + '</span>' : '') + '</button>';
+    }).join('');
+    el.querySelectorAll('.tab').forEach(function (btn, i) {
+      btn.onclick = function () { setTab(btn.getAttribute('data-tab')); };
+      btn.onkeydown = function (e) {
+        var ni = -1;
+        if (e.key === 'ArrowRight') ni = (i + 1) % T.length;
+        else if (e.key === 'ArrowLeft') ni = (i - 1 + T.length) % T.length;
+        else if (e.key === 'Home') ni = 0;
+        else if (e.key === 'End') ni = T.length - 1;
+        else return;
+        e.preventDefault(); setTab(T[ni][0]);
+      };
+    });
+    var body = document.getElementById('body'); if (body) body.setAttribute('aria-labelledby', 'tab-' + TAB);
+    fitTabs();
+  }
+  // Responsive tabs (§8): the WAI-ARIA tablist above is the default. When the three tabs + counts
+  // don't fit the container (a very narrow rail or split-screen), the strip collapses to a single
+  // menu trigger (aria-haspopup) that opens a pl-menu of the same tabs, so the counts never overflow
+  // or clip. Reads layout only (scrollWidth vs clientWidth) and swaps #tabs markup — never the state.
+  // Re-run after every renderTabs and on resize; inert where the container reports no width.
+  function fitTabs() {
+    var el = document.getElementById('tabs');
+    if (!el || el.hidden) return;
+    if (!el.scrollWidth || el.scrollWidth <= el.clientWidth + 1) return;  // they fit → keep the tablist
+    var showCounts = !LOADING && !JOBS_FAILED, c = showCounts ? counts() : null;
+    var T = [['pipeline', 'Pipeline'], ['inbox', 'Inbox'], ['closed', 'Closed']];
+    function nameOf(t) { var n = c ? c[t[0]] : 0; return t[1] + (n ? ', ' + n : ''); }
+    function badge(t) { var n = c ? c[t[0]] : 0; return n ? ' <span class="pl-count" aria-hidden="true">' + n + '</span>' : ''; }
+    var active = T.filter(function (t) { return TAB === t[0]; })[0] || T[0];
+    el.innerHTML = '<button class="tab--menu" id="tabs-trigger" aria-haspopup="menu" aria-expanded="false"' +
+      ' aria-label="' + nameOf(active) + ', choose a view">' + active[1] + badge(active) +
+      ' <span aria-hidden="true">▾</span></button>' +
+      '<div class="tabs-menu" id="tabs-menu" role="menu" aria-label="Jobs" hidden>' + T.map(function (t) {
+        return '<button class="tab" role="menuitemradio" data-tab="' + t[0] + '" aria-checked="' + (TAB === t[0]) +
+          '" aria-label="' + nameOf(t) + '">' + t[1] + badge(t) + '</button>';
+      }).join('') + '</div>';
+    var trigger = document.getElementById('tabs-trigger'), menu = document.getElementById('tabs-menu');
+    function closeMenu(toTrigger) { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); if (toTrigger && trigger.focus) trigger.focus(); }
+    function openMenu() { menu.hidden = false; trigger.setAttribute('aria-expanded', 'true'); var f = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button'); if (f && f.focus) f.focus(); }
+    trigger.onclick = function () { if (menu.hidden) openMenu(); else closeMenu(false); };
+    trigger.onkeydown = function (e) { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); if (menu.hidden) openMenu(); } };
+    var items = Array.prototype.slice.call(menu.querySelectorAll('[data-tab]'));
+    items.forEach(function (it, i) {
+      it.onclick = function () { closeMenu(false); setTab(it.getAttribute('data-tab')); };
+      it.onkeydown = function (e) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+        else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); it.onclick(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+      };
+    });
+    var body = document.getElementById('body'); if (body) body.setAttribute('aria-labelledby', 'tabs-trigger');
+  }
+  function renderBody() {
+    var b = document.getElementById('body');
+    if (LOADING || JOBS_FAILED) { b.innerHTML = skel(5); return; }  // API unreachable: bodies stay skeletons (§7)
+    if (isBrandNew()) return renderNew(b);
+    if (TAB === 'inbox') return renderInbox(b);
+    if (TAB === 'closed') return renderClosedTab(b);
+    return renderPipeline(b);
+  }
+  // Brand-new empty state (§7): the coaching-tips paragraph now lives here as three suggestion chips.
+  function renderNew(b) {
+    b.innerHTML = '<div class="emptyc pl-empty">' +
+      '<div class="empty-title">Your coach hasn’t started a search yet</div>' +
+      '<p class="muted sm emptyc-desc">Run /setup-coach in chat. It builds your profile, then a watch starts surfacing roles here.</p>' +
+      '<button class="pl-btn pl-btn--primary" id="setup">Start setup</button>' +
+      '<div class="sugs">' + ['Paste a posting and say /apply', 'Critique my CV', 'Run a mock interview'].map(function (s) {
+        return '<button class="pl-suggestion pl-btn pl-btn--sm" data-sug="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') +
+      '</div></div>';
+    var setup = document.getElementById('setup');
+    if (setup) setup.onclick = function () { compose('/setup-coach'); toast('Drafted “/setup-coach” into the chat composer. Nothing was sent.'); };
+    b.querySelectorAll('[data-sug]').forEach(function (x) { x.onclick = function () { var s = x.getAttribute('data-sug'); compose(s); toast('Drafted “' + s + '” into the chat composer.'); }; });
+  }
+  // ── Inbox tab (§3): freshness groups, text match reasons, hover/focus/selection actions,
+  // keyboard triage, multi-select and a 6s-held dismiss. The numeric score never shows (§1.5). ──
 
-  function renderInbox() {
-    var box = document.getElementById('inbox');
-    var items = JOBS.inbox || [];
-    if (!items.length) {
-      box.innerHTML = '<p class="empty">Nothing new — your watch hasn\\'t surfaced any roles to review.</p>';
+  // The freshness bucket (§3/§11.2): score-0 rows are always "Title didn't match"; everything else
+  // is cut by posted (falling back to first_seen) into Today / This week / Older.
+  function inboxWhenMs(it) {
+    var s = it.posted || it.first_seen || '';
+    if (!s) return 0;
+    var t = new Date(s).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  function bucket(it) {
+    if (Number(it.score || 0) <= 0) return 'miss';
+    var t = inboxWhenMs(it);
+    if (!t) return 'older';
+    var h = (Date.now() - t) / 3600000;
+    return h < 24 ? 'today' : (h < 168 ? 'week' : 'older');
+  }
+  var GRP = [['today', 'Today'], ['week', 'This week'], ['older', 'Older'], ['miss', 'Title didn’t match']];
+  // A row is "new" when it was surfaced since the last visit — the same first_seen||posted clock the
+  // Today band counts (§3). LAST_VISIT comes from localStorage, falling back to the last 24h (§11.1).
+  function isNew(it) { var t = itemTime(it); return !!t && t > LAST_VISIT; }
+  // "2h ago" / "3d ago" from the posted (or first_seen) date — plain text, never a numeric score.
+  function relAge(dateStr) {
+    if (!dateStr) return '';
+    var t = new Date(dateStr).getTime();
+    if (isNaN(t)) return '';
+    var h = Math.floor((Date.now() - t) / 3600000);
+    if (h < 1) return 'just now';
+    if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+  }
+  // Ghost evidence is a list of strings from the server (empty when none). Join it for the tooltip.
+  function ghostText(it) {
+    var g = it.ghost;
+    if (!g || !g.length) return '';
+    return (typeof g === 'string') ? g : g.join('; ');
+  }
+  function hasGhost(it) { return !!(it.ghost && it.ghost.length); }
+  // The matched target role, pulled from the server's match reason ('title matches "X" (…)'), so the
+  // row can emphasise it. Empty when nothing was quoted.
+  function matchedRole(it) {
+    var m = /"([^"]+)"/.exec(it.reason || '');
+    return m ? m[1] : '';
+  }
+  // Match reason AS TEXT (§3): the score itself never shows. 100 → "Title matches X", a partial
+  // score → "Title partly matches X", 0 (the miss group) → "Title doesn't match your targets".
+  function reasonText(it) {
+    var score = Number(it.score || 0);
+    if (score <= 0) return 'Title doesn’t match your targets';
+    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
+    return role ? verb + ' <em>' + esc(role) + '</em>' : verb + ' your targets';
+  }
+  // The longer form shown in the inbox drawer's "Why it surfaced" section.
+  function reasonSentence(it) {
+    var score = Number(it.score || 0);
+    if (score <= 0) return 'The title doesn’t match your target roles. The watch kept it because the company is on your list.';
+    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
+    return role ? verb + ' <em>' + esc(role) + '</em>, one of your target roles.' : verb + ' your target roles.';
+  }
+  function findInbox(id) {
+    var l = JOBS.inbox || [];
+    for (var i = 0; i < l.length; i++) { if (l[i].id === id) return l[i]; }
+    return null;
+  }
+  function inboxVisible() {
+    return (JOBS.inbox || []).filter(function (it) { return !INBOX_HIDDEN[it.id]; });
+  }
+  function selIds() { var out = []; for (var k in INBOX_SEL) { if (INBOX_SEL[k]) out.push(k); } return out; }
+
+  // One triage row: a listbox option carrying the "New" marker, title, company · posted · reason,
+  // the ghost warning, and the hover/focus/selection-only Keep / Dismiss / View posting (§3/§6).
+  function inboxRowHtml(it) {
+    var sel = !!INBOX_SEL[it.id], ghost = ghostText(it), when = it.posted || it.first_seen || '';
+    var parts = [];
+    if (it.company) parts.push(esc(it.company));
+    var rel = relAge(when); if (rel) parts.push(esc(rel));
+    parts.push(reasonText(it));
+    var newMark = isNew(it) ? '<span class="ibx-new"><span class="pl-dot pl-dot--info" aria-hidden="true"></span>New</span> ' : '';
+    return '<div class="ibx-row' + (sel ? ' sel' : '') + '" role="option" aria-selected="' + sel + '" tabindex="0" data-id="' + esc(it.id) + '">' +
+      '<input type="checkbox" class="pl-checkbox ibx-ck" tabindex="-1" aria-label="Select ' + esc(it.title) + '"' + (sel ? ' checked' : '') + '>' +
+      '<div class="ibx-main">' +
+        '<div class="ibx-ti">' + newMark + esc(it.title) + '</div>' +
+        '<div class="ibx-meta">' + parts.join(' · ') + '</div>' +
+        (ghost ? '<div class="ibx-ghost"><span class="pl-badge pl-badge--warning" title="' + esc(ghost) + '">Possible ghost job</span> ' +
+          '<span class="muted sm">' + esc(ghost) + '</span></div>' : '') +
+      '</div>' +
+      '<div class="ibx-acts">' +
+        (it.url ? '<a class="pl-btn pl-btn--ghost pl-btn--xs" href="' + esc(it.url) + '" target="_blank" rel="noopener" data-a="open" tabindex="-1">View posting</a>' : '') +
+        '<button class="pl-btn pl-btn--xs" type="button" data-a="dismiss" tabindex="-1">Dismiss</button>' +
+        '<button class="pl-btn pl-btn--primary pl-btn--xs" type="button" data-a="keep" tabindex="-1">Keep</button>' +
+      '</div></div>';
+  }
+  // One freshness accordion: chev + label + per-group Select all + the Count, then the listbox rows.
+  function inboxGroupHtml(g, rows) {
+    var key = g[0];
+    return '<details class="grp pl-accordion" data-g="' + key + '"' + (INBOX_OPEN[key] ? ' open' : '') + '>' +
+      '<summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(g[1]) + '</span>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--xs" type="button" data-all="' + key + '">Select all</button>' +
+      '<span class="pl-count">' + rows.length + '</span></summary>' +
+      '<div role="listbox" aria-multiselectable="true" aria-label="' + esc(g[1]) + '">' +
+      rows.map(inboxRowHtml).join('') + '</div></details>';
+  }
+  function inboxSortToolbar(ghosts) {
+    return '<div class="ibx-toolbar">' +
+      '<label class="muted" for="ibx-sort">Sort</label>' +
+      '<select id="ibx-sort" class="pl-select">' +
+        '<option value="newest"' + (INBOX_SORT === 'newest' ? ' selected' : '') + '>Newest</option>' +
+        '<option value="oldest"' + (INBOX_SORT === 'oldest' ? ' selected' : '') + '>Oldest</option>' +
+      '</select>' +
+      (ghosts ? '<button class="pl-chip" type="button" id="ibx-ghost" aria-pressed="' + (HIDE_GHOST ? 'true' : 'false') + '">' +
+        (HIDE_GHOST ? '✓ ' : '') + 'Hide likely ghost jobs · ' + ghosts + '</button>' : '') +
+      '<span class="ibx-kbd sm"><span class="pl-kbd">↑↓</span> move <span class="pl-kbd">K</span> keep ' +
+      '<span class="pl-kbd">D</span> dismiss <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span>' +
+      '</div>';
+  }
+  function inboxSelToolbar(n) {
+    return '<div class="ibx-toolbar"><strong>' + n + ' selected</strong>' +
+      '<button class="pl-btn pl-btn--sm" type="button" id="ibx-bkeep">Keep</button>' +
+      '<button class="pl-btn pl-btn--sm" type="button" id="ibx-bdismiss">Dismiss</button>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" id="ibx-bclear">Clear</button></div>';
+  }
+  // §7 Inbox empty states: an empty watch_last_run means the watch has never run ("looking");
+  // otherwise the inbox is simply cleared ("All caught up", with the date the watch last ran).
+  function renderInboxEmpty(b) {
+    var ran = JOBS.watch_last_run || '', title, desc;
+    if (!ran) { title = 'Your watch is looking'; desc = 'New roles land here.'; }
+    else { title = 'All caught up'; desc = 'Your watch last ran on ' + esc(String(ran).slice(0, 10)) + '. New roles land here.'; }
+    b.innerHTML = '<div class="emptyc pl-empty"><div class="empty-title">' + title + '</div>' +
+      '<p class="muted sm emptyc-desc">' + desc + '</p></div>';
+  }
+  function renderInbox(b) {
+    var all = inboxVisible();
+    if (!all.length) return renderInboxEmpty(b);
+    var ghosts = all.filter(hasGhost).length;
+    var rows = all.filter(function (it) { return !(HIDE_GHOST && hasGhost(it)); }).sort(function (x, y) {
+      var dx = inboxWhenMs(x), dy = inboxWhenMs(y);
+      return INBOX_SORT === 'newest' ? dy - dx : dx - dy;  // newest first by default; freshness is the only signal
+    });
+    var n = selIds().length;
+    var groups = GRP.map(function (g) {
+      var gr = rows.filter(function (it) { return bucket(it) === g[0]; });
+      return gr.length ? inboxGroupHtml(g, gr) : '';
+    }).join('');
+    b.innerHTML = (n ? inboxSelToolbar(n) : inboxSortToolbar(ghosts)) +
+      '<div class="' + (n ? 'ibx-multi' : '') + '" id="ibx-groups">' + groups + '</div>';
+    wireInbox(b);
+  }
+  function wireInbox(b) {
+    var sort = document.getElementById('ibx-sort');
+    if (sort) sort.onchange = function () { INBOX_SORT = sort.value; render(); };
+    var ghost = document.getElementById('ibx-ghost');
+    if (ghost) ghost.onclick = function () { HIDE_GHOST = !HIDE_GHOST; render(); };
+    var bk = document.getElementById('ibx-bkeep'); if (bk) bk.onclick = function () { inboxKeep(selIds()); };
+    var bd = document.getElementById('ibx-bdismiss'); if (bd) bd.onclick = function () { inboxDismiss(selIds()); };
+    var bc = document.getElementById('ibx-bclear'); if (bc) bc.onclick = function () { INBOX_SEL = {}; render(); };
+    b.querySelectorAll('details[data-g]').forEach(function (d) {
+      d.ontoggle = function () { INBOX_OPEN[d.getAttribute('data-g')] = d.open; };
+    });
+    b.querySelectorAll('[data-all]').forEach(function (x) {
+      x.onclick = function (e) { e.preventDefault(); e.stopPropagation(); inboxSelectAll(x.getAttribute('data-all')); };
+    });
+    wireInboxRows(b);
+    if (INBOX_FOCUS) {
+      var fe = b.querySelector ? b.querySelector('[data-id="' + INBOX_FOCUS + '"]') : null;
+      INBOX_FOCUS = null;
+      if (fe && fe.focus) fe.focus();
+    }
+  }
+  // Keyboard triage (§3/§10): shortcuts fire ONLY on the focused row (never a nested field, and only
+  // inside the listbox). ↑/↓ roves, K keeps, D dismisses, O opens the posting, Enter opens the
+  // drawer, Space toggles the selection.
+  function wireInboxRows(b) {
+    var rows = [];
+    b.querySelectorAll('.ibx-row[data-id]').forEach(function (r) { rows.push(r); });
+    rows.forEach(function (row, i) {
+      var id = row.getAttribute('data-id');
+      function nextId() { var nb = rows[i + 1] || rows[i - 1]; return nb ? nb.getAttribute('data-id') : null; }
+      row.onclick = function (e) {
+        var t = e.target;
+        if (t.closest && t.closest('.ibx-ck')) { inboxToggle(id); return; }
+        var act = t.closest ? t.closest('[data-a]') : null;
+        if (act) {
+          var a = act.getAttribute('data-a');
+          e.stopPropagation();
+          if (a === 'open') return;  // the <a> opens the posting itself
+          if (a === 'keep') { INBOX_FOCUS = nextId(); inboxKeep([id]); }
+          else if (a === 'dismiss') { INBOX_FOCUS = nextId(); inboxDismiss([id]); }
+          return;
+        }
+        openInboxDetail(id);
+      };
+      row.onkeydown = function (e) {
+        if (e.target !== row) return;  // never from a nested field (§10)
+        var k = (e.key || '').toLowerCase();
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          var nb = rows[i + (e.key === 'ArrowDown' ? 1 : -1)];
+          if (nb && nb.focus) nb.focus();
+        } else if (k === 'k') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxKeep([id]); }
+        else if (k === 'd') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxDismiss([id]); }
+        else if (k === 'o') { e.preventDefault(); openPosting(id); }
+        else if (e.key === 'Enter') { e.preventDefault(); openInboxDetail(id); }
+        else if (e.key === ' ' || e.key === 'Spacebar' || k === 'x') { e.preventDefault(); inboxToggle(id); }
+      };
+    });
+  }
+  function inboxToggle(id) {
+    if (INBOX_SEL[id]) delete INBOX_SEL[id]; else INBOX_SEL[id] = 1;
+    INBOX_FOCUS = id;
+    render();
+  }
+  // Select all of one group (its currently-visible rows) — how the "Title didn't match" or "Older"
+  // group is cleared in one move (§3).
+  function inboxSelectAll(key) {
+    inboxVisible().forEach(function (it) {
+      if (HIDE_GHOST && hasGhost(it)) return;
+      if (bucket(it) === key) INBOX_SEL[it.id] = 1;
+    });
+    render();
+  }
+  function openPosting(id) {
+    var it = findInbox(id);
+    if (!it) return;
+    if (it.url) { try { window.open(it.url, '_blank', 'noopener'); return; } catch (e) {} }
+    toast('No posting link for this role.');
+  }
+  // Keep (§3): optimistic remove + an immediate write (the route promotes the role to Saved and
+  // emits a live-refresh event). No Undo — the spec gives Keep none. A failed write rolls the row
+  // back and shows the §7 error toast.
+  function inboxKeep(ids) {
+    if (!ids || !ids.length) return;
+    ids.forEach(function (id) { INBOX_HIDDEN[id] = 1; });
+    INBOX_SEL = {};
+    render();
+    toast(ids.length === 1 ? 'Kept — in Saved.' : 'Kept ' + ids.length + ' roles — in Saved.');
+    announce('Kept, moved to Saved.');
+    ids.forEach(function (id) {
+      write('/inbox/keep', { id: id })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
+        .catch(function () {
+          delete INBOX_HIDDEN[id];
+          render();
+          toast('Couldn’t move that role. It’s back where it was.', { error: true });
+        });
+    });
+  }
+  // Dismiss (§3): optimistic remove + a 6s Undo. There is NO undo route, so the dismiss write is
+  // HELD until the 6s window closes — Undo simply cancels the pending timer and un-hides the row.
+  // A write that fails after the window rolls the row back and shows the §7 error toast.
+  function inboxDismiss(ids) {
+    if (!ids || !ids.length) return;
+    var copy = ids.slice();
+    copy.forEach(function (id) { INBOX_HIDDEN[id] = 1; });
+    INBOX_SEL = {};
+    render();
+    var one = copy.length === 1 ? findInbox(copy[0]) : null;
+    toast(copy.length === 1 ? 'Dismissed ' + ((one && one.title) || 'role') + '.' : 'Dismissed ' + copy.length + ' roles.', {
+      undo: function () {
+        copy.forEach(function (id) { clearTimeout(DISMISS_TIMERS[id]); delete DISMISS_TIMERS[id]; delete INBOX_HIDDEN[id]; });
+        render();
+        announce('Dismiss undone.');
+      }
+    });
+    announce('Dismissed.');
+    copy.forEach(function (id) {
+      DISMISS_TIMERS[id] = setTimeout(function () {
+        delete DISMISS_TIMERS[id];
+        write('/inbox/dismiss', { id: id })
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
+          .catch(function () {
+            delete INBOX_HIDDEN[id];
+            render();
+            toast('Couldn’t move that role. It’s back where it was.', { error: true });
+          });
+      }, 6000);
+    });
+  }
+  // The inbox drawer (§3): opened by a row click or Enter so a posting can be read before Keep.
+  // Rendered straight from the inbox item already in hand (no fetch — it is not an application yet).
+  function openInboxDetail(id) {
+    var it = findInbox(id);
+    if (!it) return;
+    rememberDetailOpener(); DETAIL_ID = null; DETAIL_REQUEST++;
+    DETAIL = { application: { role: it.title, company: it.company, source: it.url } };
+    var when = it.posted || it.first_seen || '', ghost = ghostText(it);
+    document.getElementById('detail-title').innerHTML =
+      '<div class="detail-role">' + esc(it.title || 'This role') + '</div>' +
+      '<div class="detail-co">' + esc(it.company || '') + (when ? ' · posted ' + esc(relAge(when)) : '') + '</div>' +
+      '<label>Status <select class="pl-select pl-dropselect" disabled><option>Inbox</option></select></label>' +
+      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '');
+    var html = '<section class="dsec"><h4>Next step</h4><div class="action-btns">' +
+      '<button class="pl-btn pl-btn--primary" type="button" id="ibx-d-keep">Keep (move to Saved)</button>' +
+      '<button class="pl-btn" type="button" id="ibx-d-dismiss">Dismiss</button>' +
+      coachMenu() + '</div></section>' +
+      '<section class="dsec"><h4>Why it surfaced</h4><p class="sm">' + reasonSentence(it) + '</p>' +
+      (ghost ? '<p style="margin-top:8px"><span class="pl-badge pl-badge--warning">Possible ghost job</span> ' +
+        '<span class="muted sm">' + esc(ghost) + '</span></p>' : '') + '</section>';
+    if (it.snippet) html += '<section class="dsec"><h4>Posting</h4><div class="snippet">' + esc(it.snippet) + '</div></section>';
+    document.getElementById('detail-body').innerHTML = html;
+    wireDetail();
+    var keep = document.getElementById('ibx-d-keep'); if (keep) keep.onclick = function () { closeDetail(); inboxKeep([id]); };
+    var dis = document.getElementById('ibx-d-dismiss'); if (dis) dis.onclick = function () { closeDetail(); inboxDismiss([id]); };
+    showDetail();
+  }
+  // A board card (§3): role, company, age. Fit shows only when fit_score > 0 (never a 0). No status
+  // pill — the column already says it. A server-flagged follow-up adds ONE pl-chip--warning line that
+  // carries text ("No reply in N days", §10). The card is both drag-movable (draggable) and
+  // keyboard-movable (role=button, tabindex 0); the per-card "Move to…" select is gone (§6).
+  function cardHtml(a) {
+    var n = daysSince(lastMoveDate(a));
+    var age = n == null ? '' : '<span>' + n + 'd</span>';
+    var fitN = Number(a.fit_score || 0);
+    var fit = fitN > 0 ? '<span class="fit">fit ' + fitN + '</span>' : '';
+    var nd = n == null ? (JOBS.followup_days || 0) : n;
+    var nudge = a.followup ? '<div class="nudge pl-chip pl-chip--warning">No reply in ' + nd + ' days</div>' : '';
+    var picked = LIFT_ID === a.id;
+    var aria = (a.role || 'Role') + ' at ' + (a.company || '') + ', ' + (a.status || '') +
+      (n == null ? '' : ', ' + n + ' days') + (a.followup ? ', no reply, follow up' : '') + (picked ? ', picked up' : '');
+    return '<div class="pcard pl-board-card' + (picked ? ' lift' : '') + '" draggable="true" tabindex="0" role="button"' +
+      ' data-id="' + esc(a.id) + '" aria-pressed="' + (picked ? 'true' : 'false') + '" aria-label="' + esc(aria) + '">' +
+      '<div class="prole">' + esc(a.role) + '</div>' +
+      '<div class="pco">' + esc(a.company) + '</div>' +
+      '<div class="pmeta">' + age + fit + '</div>' +
+      nudge +
+    '</div>';
+  }
+  // A rail stage-list row (§8): the same live role as a focusable list item under its stage accordion.
+  // Drag is off at this width, so the row opens the drawer on click/Enter and moves via the keyboard
+  // pick-up (↑/↓ between stages, stageKey) or the drawer Status select. The follow-up marker carries
+  // text ("No reply"), never colour alone (§10). Picked-up state mirrors the board card's lift.
+  function stageRowHtml(a) {
+    var n = daysSince(lastMoveDate(a));
+    var picked = LIFT_ID === a.id;
+    var meta = [];
+    if (a.company) meta.push(esc(a.company));
+    if (n != null) meta.push(n + 'd');
+    var nudge = a.followup ? ' · <span class="snudge">No reply</span>' : '';
+    var aria = (a.role || 'Role') + ' at ' + (a.company || '') + ', ' + (a.status || '') +
+      (n == null ? '' : ', ' + n + ' days') + (a.followup ? ', no reply, follow up' : '') + (picked ? ', picked up' : '');
+    return '<div class="srow' + (picked ? ' lift' : '') + '" tabindex="0" role="button" data-id="' + esc(a.id) + '"' +
+      ' aria-pressed="' + (picked ? 'true' : 'false') + '" aria-label="' + esc(aria) + '">' +
+      '<div class="grow"><div class="srole">' + esc(a.role) + '</div>' +
+      '<div class="smeta">' + meta.join(' · ') + nudge + '</div></div></div>';
+  }
+  // The carried Closed-tab card: its §3 table and drawer Reopen are R4, so until then this keeps the
+  // status pill and the Move-to select — the only reopen path. Board cards never use it.
+  function closedCardHtml(a, selOpts) {
+    var n = daysSince(lastMoveDate(a));
+    var age = n == null ? '' : '<span>' + n + 'd</span>';
+    var nudge = a.followup ? '<div class="nudge">No reply in ' + (n == null ? (JOBS.followup_days || 0) : n) + ' days — follow up?</div>' : '';
+    return '<div class="pcard pl-board-card" draggable="true" data-id="' + esc(a.id) + '">' +
+      '<div class="prole">' + esc(a.role) + '</div>' +
+      '<div class="pco">' + esc(a.company) + '</div>' +
+      '<span class="pl-badge">' + esc(a.status) + '</span>' +
+      '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
+      nudge +
+      '<select class="movesel pl-select" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
+    '</div>';
+  }
+  // Column order (§3): flagged follow-ups first, then oldest move first (earliest lastMoveDate).
+  function sortCards(rows) {
+    return rows.slice().sort(function (x, y) {
+      var fx = x.followup ? 1 : 0, fy = y.followup ? 1 : 0;
+      if (fx !== fy) return fy - fx;
+      var dx = lastMoveDate(x), dy = lastMoveDate(y);
+      return dx === dy ? 0 : (dx < dy ? -1 : 1);
+    });
+  }
+  // The visible element carrying a data-id inside #body. In rail mode the board is display:none and
+  // the stage-list is shown (and vice versa), so the same role renders twice (§8); focus restoration
+  // and the keyboard move must land on whichever copy is actually on screen, not the hidden one.
+  function visibleInBody(id) {
+    var body = document.getElementById('body');
+    if (!body || !body.querySelectorAll) return null;
+    var els = body.querySelectorAll('[data-id]'), first = null;
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].getAttribute && els[i].getAttribute('data-id') !== id) continue;
+      if (!first) first = els[i];
+      if (els[i].offsetParent !== null) return els[i];
+    }
+    return first;
+  }
+  // The board's navigable columns, in order: the five open columns + the Closed stub (each a
+  // data-col drop target). The legacy "Other" column has no data-col and is never a move target.
+  function boardCols(b) {
+    return Array.prototype.slice.call(b.querySelectorAll('.col[data-col]')).map(function (c) { return c.getAttribute('data-col'); });
+  }
+  function overCol(b, col) {
+    b.querySelectorAll('.col[data-col]').forEach(function (c) { c.classList.toggle('over', c.getAttribute('data-col') === col); });
+  }
+  function clearLift(b, card) {
+    LIFT_ID = null; LIFT_COL = null;
+    if (card) { card.classList.remove('lift'); card.setAttribute('aria-pressed', 'false'); }
+    b.querySelectorAll('.col[data-col]').forEach(function (c) { c.classList.remove('over'); });
+  }
+  // Keyboard pick-up (§3, WCAG 2.5.7): Space picks a focused card up, ←/→ choose a column, Space or
+  // Enter drops it where the arrows left off, Escape cancels. Each step is announced in the single
+  // live region. Enter on a card at rest opens its drawer; a drop goes through moveToColumn (so the
+  // Closed column still asks rejected/passed, and the move still offers Undo).
+  function boardKey(ev, b, card) {
+    var id = card.getAttribute('data-id'), app = findApp(id);
+    if (!app) return;
+    var k = ev.key;
+    if (k === ' ' || k === 'Spacebar' || k === 'Enter') {
+      if (LIFT_ID === id) {               // drop
+        ev.preventDefault();
+        var to = LIFT_COL;
+        clearLift(b, card);
+        if (to) moveToColumn(id, to);
+        // The chooser owns focus once opened; never focus a card behind its modal.
+        if (document.getElementById('chooser').style.display !== 'flex') {
+          var moved = visibleInBody(id);
+          if (moved && moved.focus) moved.focus();
+        }
+        return;
+      }
+      if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }
+      ev.preventDefault();                // Space → pick up
+      LIFT_ID = id; LIFT_COL = statusToColumn()[app.status] || boardCols(b)[0] || null;
+      card.classList.add('lift'); card.setAttribute('aria-pressed', 'true');
+      overCol(b, LIFT_COL);
+      announce('Picked up ' + (app.role || 'this role') +
+        '. Use left and right arrows to choose a column, then Space or Enter to drop, Escape to cancel.');
       return;
     }
-    box.innerHTML = items.map(function (it) {
-      var score = Number(it.score || 0);
-      var link = it.url
-        ? '<a class="plink" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>'
-        : '';
-      var reason = it.reason ? '<div class="reason">' + esc(it.reason) + '</div>' : '';
-      return '<div class="inbox-item" data-id="' + esc(it.id) + '">' +
-        '<span class="title">' + esc(it.title) + '</span>' +
-        '<span class="co">' + esc(it.company) + '</span>' +
-        '<span class="score">' + score + '</span>' +
-        '<span class="inbox-actions">' + link +
-          '<button class="btn keep" data-keep>Keep</button>' +
-          '<button class="btn" data-dismiss>Dismiss</button>' +
-        '</span>' + reason +
-      '</div>';
-    }).join('');
-    box.querySelectorAll('.inbox-item').forEach(function (el) {
-      var id = el.getAttribute('data-id');
-      var keep = el.querySelector('[data-keep]');
-      var dismiss = el.querySelector('[data-dismiss]');
-      var btns = [keep, dismiss];
-      keep.addEventListener('click', function () { inboxAction(id, 'keep', btns); });
-      dismiss.addEventListener('click', function () { inboxAction(id, 'dismiss', btns); });
+    if (LIFT_ID === id && (k === 'ArrowRight' || k === 'ArrowLeft')) {
+      ev.preventDefault();
+      var cols = boardCols(b); if (!cols.length) return;
+      var i = cols.indexOf(LIFT_COL); if (i === -1) i = 0;
+      i = Math.max(0, Math.min(cols.length - 1, i + (k === 'ArrowRight' ? 1 : -1)));
+      LIFT_COL = cols[i];
+      overCol(b, LIFT_COL);
+      announce('Over ' + LIFT_COL);
+      return;
+    }
+    if (k === 'Escape' && LIFT_ID === id) {
+      ev.preventDefault();
+      clearLift(b, card);
+      announce('Move cancelled.');
+    }
+  }
+  function overStage(b, col) {
+    b.querySelectorAll('details[data-stage]').forEach(function (d) { d.classList.toggle('over', d.getAttribute('data-stage') === col); });
+  }
+  function clearStageLift(b, row) {
+    LIFT_ID = null; LIFT_COL = null;
+    if (row) { row.classList.remove('lift'); row.setAttribute('aria-pressed', 'false'); }
+    b.querySelectorAll('details[data-stage]').forEach(function (d) { d.classList.remove('over'); });
+  }
+  // Rail stage-list keyboard move (§8, WCAG 2.5.7): drag is off at this width, so a focused row is
+  // picked up with Space, the target stage is chosen with ↑/↓ (the vertical analogue of the board's
+  // ←/→), and Space or Enter drops it — Escape cancels. Each step is announced in the single live
+  // region (§10). Enter on a row at rest opens its drawer; a drop routes through moveToColumn, so the
+  // Closed stage still asks rejected/passed and the move still offers Undo. Columns come from the
+  // (hidden) board, so pick-up targets stay identical across widths.
+  function stageKey(ev, b, row) {
+    var id = row.getAttribute('data-id'), app = findApp(id);
+    if (!app) return;
+    var k = ev.key;
+    if (k === ' ' || k === 'Spacebar' || k === 'Enter') {
+      if (LIFT_ID === id) {               // drop
+        ev.preventDefault();
+        var to = LIFT_COL;
+        clearStageLift(b, row);
+        if (to) moveToColumn(id, to);
+        if (document.getElementById('chooser').style.display !== 'flex') {
+          var moved = visibleInBody(id);
+          if (moved && moved.focus) moved.focus();
+        }
+        return;
+      }
+      if (k === 'Enter') { ev.preventDefault(); openDetail(id); return; }
+      ev.preventDefault();                // Space → pick up
+      LIFT_ID = id; LIFT_COL = statusToColumn()[app.status] || boardCols(b)[0] || null;
+      row.classList.add('lift'); row.setAttribute('aria-pressed', 'true');
+      overStage(b, LIFT_COL);
+      announce('Picked up ' + (app.role || 'this role') +
+        '. Use up and down arrows to choose a stage, then Space or Enter to drop, Escape to cancel.');
+      return;
+    }
+    if (LIFT_ID === id && (k === 'ArrowDown' || k === 'ArrowUp')) {
+      ev.preventDefault();
+      var cols = boardCols(b); if (!cols.length) return;
+      var i = cols.indexOf(LIFT_COL); if (i === -1) i = 0;
+      i = Math.max(0, Math.min(cols.length - 1, i + (k === 'ArrowDown' ? 1 : -1)));
+      LIFT_COL = cols[i];
+      overStage(b, LIFT_COL);
+      announce('Over ' + LIFT_COL);
+      return;
+    }
+    if (k === 'Escape' && LIFT_ID === id) {
+      ev.preventDefault();
+      clearStageLift(b, row);
+      announce('Move cancelled.');
+    }
+  }
+  // Rail stage-list wiring (§8): a click/Enter opens the drawer; keydown drives the pick-up move.
+  function wireStages(b) {
+    b.querySelectorAll('.srow[data-id]').forEach(function (row) {
+      row.addEventListener('click', function () { if (!LIFT_ID) openDetail(row.getAttribute('data-id')); });
+      row.addEventListener('keydown', function (ev) { stageKey(ev, b, row); });
     });
   }
-
-  function renderBoard() {
-    var board = document.getElementById('board');
-    var cols = JOBS.columns || {};
-    var colNames = Object.keys(cols);
-    var reverse = statusToColumn();
-    var apps = JOBS.applications || [];
-    var days = JOBS.followup_days || 0;
-    var buckets = Object.create(null);
-    var other = [];
-    colNames.forEach(function (c) { buckets[c] = []; });
-    apps.forEach(function (a) {
-      var col = reverse[a.status];
-      if (col && buckets[col]) buckets[col].push(a);
-      else other.push(a);
-    });
-
-    var selOpts = '<option value="">Move to…</option>' +
-      colNames.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
-
-    // Unknown/legacy statuses remain visible, without inventing a persisted status or a
-    // move destination. Their cards can still be moved to any configured column.
-    var displayCols = other.length ? colNames.concat([null]) : colNames;
-    board.innerHTML = displayCols.map(function (col) {
-      var rows = col === null ? other : buckets[col];
-      var cards = rows.map(function (a) {
-        var n = daysSince(lastMoveDate(a));
-        var age = n == null ? '' : '<span>' + n + 'd</span>';
-        // The follow-up nudge renders ONLY for an applied card the server flagged `followup`.
-        var nudge = a.followup
-          ? '<div class="nudge">No reply in ' + (n == null ? days : n) + ' days — follow up?</div>'
-          : '';
-        return '<div class="pcard" draggable="true" data-id="' + esc(a.id) + '">' +
-          '<div class="prole">' + esc(a.role) + '</div>' +
-          '<div class="pco">' + esc(a.company) + '</div>' +
-          '<span class="pill">' + esc(a.status) + '</span>' +
-          '<div class="pmeta"><span class="fit">' + Number(a.fit_score || 0) + '</span>' + age + '</div>' +
-          nudge +
-          '<select class="movesel" aria-label="Move ' + esc(a.role) + ' to another column">' + selOpts + '</select>' +
-        '</div>';
-      }).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
-      return '<div class="col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + '>' +
-        '<h3>' + esc(col === null ? 'Other statuses' : col) + '<span class="count">' + rows.length + '</span></h3>' +
-        cards +
-      '</div>';
-    }).join('') || '<p class="empty">No pipeline columns.</p>';
-
-    board.querySelectorAll('.pcard').forEach(function (card) {
-      card.addEventListener('dragstart', function (ev) {
-        DRAG_ID = card.getAttribute('data-id');
-        try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
-      });
+  // Board wiring: pointer drag (dragstart/over/drop) + keyboard pick-up + click-to-open. No select.
+  function wireBoard(b) {
+    b.querySelectorAll('.pcard').forEach(function (card) {
+      card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
       card.addEventListener('dragend', function () { DRAG_ID = null; });
-      // A plain click (not a drag, and not on the Move-to select) opens the detail drawer.
-      card.addEventListener('click', function (ev) {
-        if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return;
-        openDetail(card.getAttribute('data-id'));
-      });
+      card.addEventListener('click', function () { if (!LIFT_ID) openDetail(card.getAttribute('data-id')); });
+      card.addEventListener('keydown', function (ev) { boardKey(ev, b, card); });
     });
-    board.querySelectorAll('.col[data-col]').forEach(function (colEl) {
-      colEl.addEventListener('dragover', function (ev) {
-        ev.preventDefault();
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-        colEl.classList.add('over');
-      });
+    b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
+      colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
       colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
-      colEl.addEventListener('drop', function (ev) {
-        ev.preventDefault();
-        colEl.classList.remove('over');
-        var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
-        if (id) moveToColumn(id, colEl.getAttribute('data-col'));
-      });
-    });
-    board.querySelectorAll('.movesel').forEach(function (sel) {
-      var card = sel.closest('.pcard');
-      sel.addEventListener('change', function () {
-        var col = sel.value;
-        sel.value = '';
-        if (col) moveToColumn(card.getAttribute('data-id'), col);
-      });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
     });
   }
-
-  // The transparency panel: every field the coach holds, and every one it doesn't. The
-  // operator should never have to open a file to see their own record.
-  function renderProfile(d) {
-    if (!d) {
-      document.getElementById('profile-cov').textContent = 'Could not load your profile.';
+  // Carried wiring for the Closed-tab cards (drag + click + the Move-to select); the board uses wireBoard.
+  function wireCards(b) {
+    b.querySelectorAll('.pcard').forEach(function (card) {
+      card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
+      card.addEventListener('dragend', function () { DRAG_ID = null; });
+      card.addEventListener('click', function (ev) { if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return; openDetail(card.getAttribute('data-id')); });
+    });
+    b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
+      colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
+      colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
+    });
+    b.querySelectorAll('.movesel').forEach(function (sel) {
+      var card = sel.closest('.pcard');
+      sel.addEventListener('change', function () { var col = sel.value; sel.value = ''; if (col) moveToColumn(card.getAttribute('data-id'), col); });
+    });
+  }
+  function colSelOpts() {
+    var cols = JOBS.columns || {};
+    return '<option value="">Move to…</option>' + Object.keys(cols).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
+  }
+  // Pipeline tab (§3): the live board — five open columns (Saved · Preparing · Applied ·
+  // Interviewing · Offer), an "Other" column only when legacy statuses exist (§7), and a narrow
+  // Closed stub that links to the Closed tab and still takes a drag-to-close / keyboard drop. Closed
+  // cards never render on the board. Each column sorts follow-ups first, then oldest move.
+  function renderPipeline(b) {
+    var cols = JOBS.columns || {}, colNames = Object.keys(cols);
+    if (!colNames.length) { b.innerHTML = '<p class="empty">No pipeline columns.</p>'; return; }
+    var reverse = statusToColumn(), apps = JOBS.applications || [], closedName = closedColName();
+    var buckets = Object.create(null), other = [];
+    colNames.forEach(function (c) { buckets[c] = []; });
+    apps.forEach(function (a) { var col = reverse[a.status]; if (col && buckets[col]) buckets[col].push(a); else other.push(a); });
+    var openNames = colNames.filter(function (c) { return c !== closedName; });
+    // Pipeline Empty (§7): no live roles (closed never counts). The coaching tips moved to §7's
+    // brand-new empty state and to chat, so this stays a single plain line.
+    var openCount = other.length;
+    openNames.forEach(function (c) { openCount += buckets[c].length; });
+    if (!openCount) {
+      b.innerHTML = '<div class="emptyc pl-empty"><div class="empty-title">No live applications</div>' +
+        '<p class="muted sm emptyc-desc">Keep a role from Inbox, or paste a posting in chat.</p></div>';
       return;
     }
-    var prof = d.profile || { identity: {}, sections: {} };
-    var cov = d.completeness || { known: [], missing: [], filled: 0, total: 0 };
-    var labels = d.field_labels || {};
-
-    document.getElementById('profile-cov').textContent = d.profile_error
-      ? ('Your profile file is unreadable (' + d.profile_error + '). Nothing new will be saved '
-         + 'until it is fixed — ask your coach where it is.')
-      : cov.filled
-      ? (cov.filled + ' of ' + cov.total + ' recorded'
-         + (cov.updated ? ' · updated ' + cov.updated : ''))
-      : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';
-
-    var rows = Object.keys(labels).map(function (k) {
-      var v = (prof.identity && prof.identity[k]) || (prof.sections && prof.sections[k]) || '';
-      var body = v
-        ? '<span>' + esc(v.length > 220 ? v.slice(0, 220) + '…' : v) + '</span>'
-        : '<span class="empty">not recorded</span>';
-      return '<div class="row"><span class="name">' + esc(labels[k]) + '</span>' + body + '</div>';
-    });
-    document.getElementById('profile').innerHTML = rows.join('');
-    document.getElementById('profile-ctx').textContent =
-      d.context_block || '(nothing injected — no profile recorded yet)';
-  }
-
-  function renderWeights(d) {
-    var w = (d && d.weights) || {};
-    document.getElementById('weights').innerHTML = Object.keys(w).map(function (k) {
-      return '<div class="row"><span class="name">' + esc(k) + '</span>' +
-        '<span class="track"><span class="bar" style="width:' + Number(w[k] || 0) + '%"></span></span>' +
-        '<span class="fit">' + Number(w[k] || 0) + '</span></div>';
+    var displayCols = openNames.concat(other.length ? [null] : []);
+    var cards = displayCols.map(function (col) {
+      var rows = sortCards(col === null ? other : buckets[col]);
+      var inner = rows.map(cardHtml).join('') || '<p class="empty" style="padding:6px 4px;font-size:12px">—</p>';
+      var lbl = col === null ? 'Other statuses' : col;
+      return '<div class="col pl-board-col"' + (col === null ? '' : ' data-col="' + esc(col) + '"') + ' role="listitem" aria-label="' + esc(lbl) + ', ' + rows.length + '">' +
+        '<h3>' + esc(lbl) + '<span class="pl-count">' + rows.length + '</span></h3>' +
+        '<div class="col-list">' + inner + '</div></div>';
     }).join('');
+    var stub = '';
+    if (closedName) {
+      var cn = buckets[closedName].length;
+      stub = '<div class="col stub" data-col="' + esc(closedName) + '" role="listitem" aria-label="' + esc(closedName) + ', ' + cn + '">' +
+        '<span class="muted sm">' + esc(closedName) + '</span><b class="stub-n">' + cn + '</b>' +
+        '<span class="muted sm">Drop here to close</span>' +
+        '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="to-closed">View all</button></div>';
+    }
+    // Rail stage-list (§8): the same live roles as a stacked set of stage accordions, one per open
+    // column. Rendered always; CSS hides it until <600px, where the board is hidden instead. A stage
+    // opens when it has cards and collapses to one line when empty, unless the operator toggled it.
+    // Preserve the legacy-status fallback (§7) at rail widths too. Like the board's Other column,
+    // this group is only present when needed and is not a move destination.
+    var stageItems = displayCols.map(function (col) {
+      var rows = sortCards(col === null ? other : buckets[col]);
+      col = col === null ? 'Other statuses' : col;
+      var open = (STAGE_OPEN[col] != null) ? STAGE_OPEN[col] : rows.length > 0;
+      var inner = rows.map(stageRowHtml).join('') ||
+        '<p class="empty" style="padding:8px 12px;font-size:12px">Nothing here yet.</p>';
+      return '<details class="grp pl-accordion" data-stage="' + esc(col) + '"' + (open ? ' open' : '') + '>' +
+        '<summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(col) + '</span>' +
+        '<span class="pl-count">' + rows.length + '</span></summary>' +
+        '<div role="list">' + inner + '</div></details>';
+    }).join('');
+    var stageClosed = closedName ? '<div class="srow stage-closed" tabindex="0" role="button" id="to-closed2" ' +
+      'aria-label="Closed, ' + buckets[closedName].length + ', open the Closed tab"><div class="grow">' +
+      '<div class="srole">Closed · ' + buckets[closedName].length + '</div>' +
+      '<div class="smeta">Open the Closed tab</div></div></div>' : '';
+    var stages = '<div class="stages" aria-label="Pipeline by stage">' + stageItems + stageClosed + '</div>';
+    b.innerHTML = '<p class="muted sm pipeline-hint">Drag a card, or focus it and press <span class="pl-kbd">Space</span> to pick up, ' +
+      '<span class="pl-kbd">←</span><span class="pl-kbd">→</span> to choose a column, <span class="pl-kbd">Space</span> to drop. ' +
+      'On a narrow panel the board becomes a stage list — pick up and use <span class="pl-kbd">↑</span><span class="pl-kbd">↓</span>. ' +
+      'Closed roles live on the Closed tab.</p>' +
+      '<div class="board pl-board" role="list">' + cards + stub + '</div>' + stages;
+    var tc = document.getElementById('to-closed'); if (tc) tc.onclick = function () { setTab('closed'); };
+    var tc2 = document.getElementById('to-closed2');
+    if (tc2) {
+      tc2.onclick = function () { setTab('closed'); };
+      tc2.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); setTab('closed'); } };
+    }
+    b.querySelectorAll('details[data-stage]').forEach(function (d) {
+      d.ontoggle = function () { STAGE_OPEN[d.getAttribute('data-stage')] = d.open; };
+    });
+    wireStages(b);
+    wireBoard(b);
   }
-
-  function renderHeader(state) {
-    var st = (state && state.settings) || {};
-    var prof = (state && state.profile) || { identity: {} };
-    var name = (prof.identity && prof.identity.name) || st.name || '';
-    document.getElementById('title').textContent = name ? ('Career Coach — ' + name) : 'Career Coach';
-    document.getElementById('sub').textContent = st.target_roles
-      ? ('Targeting: ' + st.target_roles) : 'Set your profile in Settings › Career Coach.';
+  // Closed history: filters never change the overall summary counts.
+  function renderClosedTab(b) {
+    var all = closedApps().slice().sort(function (x, y) { return lastMoveDate(y).localeCompare(lastMoveDate(x)); });
+    var rejected = all.filter(function (a) { return a.status === 'rejected'; }).length;
+    var passed = all.filter(function (a) { return a.status === 'passed'; }).length;
+    var q = CLOSED_Q.toLowerCase();
+    var rows = all.filter(function (a) {
+      return (CLOSED_OUT === 'all' || a.status === CLOSED_OUT) &&
+        (String(a.role || '') + ' ' + String(a.company || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    var pages = Math.max(1, Math.ceil(rows.length / 25));
+    CLOSED_PAGE = Math.max(0, Math.min(CLOSED_PAGE, pages - 1));
+    var page = rows.slice(CLOSED_PAGE * 25, CLOSED_PAGE * 25 + 25);
+    b.innerHTML = '<p class="muted sm">' + all.length + ' closed · ' + rejected + ' rejected · ' + passed + ' passed</p>' +
+      '<div class="toolbar"><label for="closed-search">Search closed roles</label>' +
+      '<input id="closed-search" class="pl-input" placeholder="Search role or company" value="' + esc(CLOSED_Q) + '">' +
+      '<div class="pl-tabs pl-tabs--segmented" role="tablist" aria-label="Outcome">' +
+      [['all', 'All'], ['rejected', 'Rejected'], ['passed', 'Passed']].map(function (o) {
+        return '<button class="pl-tab" role="tab" aria-controls="closed-results" aria-selected="' + (CLOSED_OUT === o[0]) +
+          '" tabindex="' + (CLOSED_OUT === o[0] ? '0' : '-1') + '" data-out="' + o[0] + '">' + o[1] + '</button>';
+      }).join('') + '</div></div><div id="closed-results" role="tabpanel" aria-label="Closed roles">' +
+      '<table class="pl-table"><thead><tr><th>Role</th><th class="closed-company">Company</th><th>Outcome</th><th class="closed-date">Closed on</th></tr></thead><tbody>' +
+      page.map(function (a) {
+        var date = lastMoveDate(a);
+        return '<tr class="pl-tr--interactive" tabindex="0" data-id="' + esc(a.id) + '"><td>' + esc(a.role) +
+          '<div class="closed-sub muted sm">' + esc(a.company) + ' · ' + esc(date) + '</div></td>' +
+          '<td class="closed-company">' + esc(a.company) + '</td><td><span class="pl-badge">' +
+          (a.status === 'rejected' ? 'Rejected' : 'Passed') + '</span></td><td class="closed-date">' + esc(date) + '</td></tr>';
+      }).join('') + '</tbody></table>' + (page.length ? '' : '<p class="pl-empty">No closed roles match</p>') +
+      '</div><div class="toolbar"><span class="muted">' + (rows.length ? (CLOSED_PAGE * 25 + 1) + '–' + (CLOSED_PAGE * 25 + page.length) + ' of ' + rows.length : '0') + '</span>' +
+      '<button class="pl-btn pl-btn--sm" id="closed-prev"' + (CLOSED_PAGE ? '' : ' disabled') + '>Previous</button>' +
+      '<button class="pl-btn pl-btn--sm" id="closed-next"' + (CLOSED_PAGE < pages - 1 ? '' : ' disabled') + '>Next</button></div>';
+    document.getElementById('closed-search').oninput = function () {
+      CLOSED_Q = this.value; CLOSED_PAGE = 0; var caret = this.selectionStart;
+      renderClosedTab(b);
+      var input = document.getElementById('closed-search'); input.focus(); input.setSelectionRange(caret, caret);
+    };
+    var tabs = b.querySelectorAll('[data-out]');
+    tabs.forEach(function (tab, i) {
+      tab.onclick = function () { CLOSED_OUT = tab.getAttribute('data-out'); CLOSED_PAGE = 0; renderClosedTab(b); b.querySelectorAll('[data-out]')[i].focus(); };
+      tab.onkeydown = function (e) {
+        var n = e.key === 'ArrowRight' ? (i + 1) % 3 : e.key === 'ArrowLeft' ? (i + 2) % 3 : e.key === 'Home' ? 0 : e.key === 'End' ? 2 : -1;
+        if (n !== -1) { e.preventDefault(); tabs[n].onclick(); }
+      };
+    });
+    document.getElementById('closed-prev').onclick = function () { CLOSED_PAGE--; renderClosedTab(b); document.getElementById('closed-next').focus(); };
+    document.getElementById('closed-next').onclick = function () { CLOSED_PAGE++; renderClosedTab(b); document.getElementById('closed-prev').focus(); };
+    b.querySelectorAll('tr[data-id]').forEach(function (row) {
+      row.onclick = function () { row.focus(); openDetail(row.getAttribute('data-id')); };
+      row.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.onclick(); } };
+    });
   }
-
+  // About-you drawer content (§5): three read-only accordions. /state failure shows a warning callout.
+  function accordion(title, open, inner) {
+    return '<details class="grp pl-accordion"' + (open ? ' open' : '') + '><summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(title) + '</span></summary><div class="grp-body">' + inner + '</div></details>';
+  }
+  function aboutProfile() {
+    var inner;
+    if (STATE_FAILED || !STATE) {
+      inner = '<div class="pl-callout pl-callout--warning" role="status">Couldn’t load your profile. Nothing new will be saved until it is fixed — ask your coach where it is.</div>';
+    } else if (STATE.profile_error) {
+      inner = '<div class="pl-callout pl-callout--warning" role="status">Your profile file is unreadable (' + esc(STATE.profile_error) + '). Nothing new will be saved until it is fixed.</div>';
+    } else {
+      var prof = STATE.profile || { identity: {}, sections: {} };
+      var cov = STATE.completeness || { filled: 0, total: 0, updated: '' };
+      var labels = STATE.field_labels || {};
+      var covLine = cov.filled ? (cov.filled + ' of ' + cov.total + ' recorded' + (cov.updated ? ' · updated ' + esc(cov.updated) : '')) : 'Nothing recorded yet — run /setup-coach in chat and it will build this with you.';
+      var rows = Object.keys(labels).map(function (k) {
+        var v = (prof.identity && prof.identity[k]) || (prof.sections && prof.sections[k]) || '';
+        var val = v ? esc(v.length > 220 ? v.slice(0, 220) + '…' : v) : '<span class="muted"><em>not recorded</em></span>';
+        return '<div class="arow"><span class="aname">' + esc(labels[k]) + '</span><span>' + val + '</span></div>';
+      }).join('');
+      inner = '<p class="muted sm">' + covLine + '</p>' + rows;
+    }
+    return accordion('What your coach knows about you', true, inner);
+  }
+  function aboutRubric() {
+    var w = (STATE && STATE.weights) || {}, keys = Object.keys(w);
+    var inner = keys.length ? keys.map(function (k) {
+      return '<div class="arow"><span class="aname">' + esc(k) + '</span><span class="track"><span class="bar" style="width:' + Number(w[k] || 0) + '%"></span></span><span class="fit">' + Number(w[k] || 0) + '</span></div>';
+    }).join('') : '<p class="muted sm">Not available.</p>';
+    return accordion('Fit rubric — how a role is scored', false, inner);
+  }
+  function aboutContext() {
+    var ctx = (STATE && STATE.context_block) || '(nothing injected — no profile recorded yet)';
+    return accordion('Exactly what it’s told each turn', false, '<pre class="pl-code-block ctx">' + esc(ctx) + '</pre>');
+  }
+  function renderAboutBody() {
+    var body = document.getElementById('about-body');
+    var openIdx = [];
+    body.querySelectorAll('details.grp').forEach(function (d, i) { openIdx[i] = d.open; });
+    var head = '<p class="muted sm">A read-only view. To change anything, tell your coach in chat. Settings live in Settings › Career Coach.</p>';
+    body.innerHTML = head + aboutProfile() + aboutRubric() + aboutContext();
+    body.querySelectorAll('details.grp').forEach(function (d, i) { if (typeof openIdx[i] === 'boolean') d.open = openIdx[i]; });
+  }
+  function aboutIsOpen() { return document.getElementById('about').getAttribute('aria-hidden') === 'false'; }
+  function openAbout() {
+    renderAboutBody();
+    document.getElementById('cc').classList.add('about-open');
+    document.getElementById('about').setAttribute('aria-hidden', 'false');
+    var c = document.getElementById('about-close'); if (c && c.focus) c.focus();
+  }
+  function closeAbout() {
+    document.getElementById('cc').classList.remove('about-open');
+    document.getElementById('about').setAttribute('aria-hidden', 'true');
+    var ab = document.getElementById('about-btn'); if (ab && ab.focus) ab.focus();
+  }
+  function trap(e, root) {
+    if (e.key !== 'Tab') return;
+    var f = Array.prototype.slice.call(root.querySelectorAll('button:not([disabled]),summary,select:not([disabled]),textarea,input,a[href],[tabindex="0"]')).filter(function (el) { return el.getClientRects().length > 0 && !el.closest('[hidden]'); }); if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+  }
+  // Live refresh (§7): re-render in place, keep the active tab, the body scroll and the focused row.
+  function render() {
+    var body = document.getElementById('body');
+    var scroll = body ? body.scrollTop : 0;
+    var ae = document.activeElement;
+    var fid = ae && ae.getAttribute ? ae.getAttribute('data-id') : null;
+    var fieldId = ae && ae.id && body.contains(ae) ? ae.id : null, caret = ae && ae.selectionStart;
+    renderBanner(); renderHeader(); renderToday(); renderTabs(); renderBody();
+    syncDetailStatus();
+    if (aboutIsOpen()) renderAboutBody();
+    body = document.getElementById('body'); if (body) body.scrollTop = scroll;
+    if (fid) { try { var el = visibleInBody(fid); if (el && el.focus) el.focus(); } catch (e) {} }
+    else if (fieldId) { var field = document.getElementById(fieldId); if (field) { field.focus(); if (caret != null && field.setSelectionRange) field.setSelectionRange(caret, caret); } }
+  }
+  // <<< view renderers
   // >>> s2b pure renderers — self-contained markup builders (depend only on esc), unit-tested.
   function fitVerdict(score) {
     var s = Number(score || 0);
@@ -3331,11 +4307,11 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function answerRow(a) {
     a = a || {};
     var isDraft = a.status === 'draft';
-    var badge = isDraft ? '<span class="draft-badge">Draft — confirm before using</span>' : '';
+    var badge = isDraft ? '<span class="pl-badge pl-badge--warning">Draft: confirm before using</span>' : '';
     return '<div class="answer' + (isDraft ? ' draft' : '') + '">' +
       '<div class="answer-head">' +
         '<span class="answer-key">' + esc(a.label || a.key || '') + '</span>' + badge +
-        '<button class="btn copy" type="button">Copy</button>' +
+        '<button class="pl-btn pl-btn--sm copy" type="button">Copy</button>' +
       '</div>' +
       '<div class="answer-val">' + esc(a.value == null ? '' : a.value) + '</div>' +
     '</div>';
@@ -3353,25 +4329,25 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 
   function renderKit(kit, answers) {
     kit = kit || {};
-    var out = '';
+    var out = '<div class="pl-steps">';
     var r = kit.resume || {};
-    out += '<div class="kit-block"><h5>Resume</h5>';
+    out += '<div class="kit-block pl-step"><h5>Résumé</h5>';
     if (r.path || r.version || r.built) {
       if (r.version) out += '<div class="kv"><span class="k">Version</span><span>' + esc(r.version) + '</span></div>';
       if (r.built) out += '<div class="kv"><span class="k">Built</span><span>' + esc(r.built) + '</span></div>';
       if (r.path) {
         out += '<div class="kv"><span class="k">File</span><code>' + esc(r.path) + '</code>' +
-          '<button class="btn copy" type="button" data-copy-path>Copy path</button></div>';
+          '<button class="pl-btn pl-btn--sm copy" type="button" data-copy-path>Copy path</button></div>';
       }
     } else {
-      out += '<p class="empty">No resume built yet.</p>';
+      out += '<p class="muted">Not started</p><p class="muted sm">Tailors your résumé to this posting’s title and requirements.</p>';
     }
     out += '</div>';
 
     var cl = kit.cover_letter || {};
-    out += '<div class="kit-block"><h5>Cover letter</h5>';
+    out += '<div class="kit-block pl-step"><h5>Cover letter</h5>';
     if (cl.text) {
-      out += '<div class="dsec-actions"><button class="btn copy" type="button" data-copy-cover>' +
+      out += '<div class="dsec-actions"><button class="pl-btn pl-btn--sm copy" type="button" data-copy-cover>' +
         'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
     } else if (cl.needed === false) {
       // Only an explicit "not needed" clears the letter; unset (null) still needs one, matching
@@ -3379,11 +4355,19 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       // has needed:null, so JS must not treat that as "not needed".
       out += '<p class="empty">Not needed for this posting.</p>';
     } else {
-      out += '<p class="empty">Not written yet.</p>';
+      out += '<p class="muted">Not started</p><p class="muted sm">Writes one if the posting asks for it, or marks it not needed.</p>';
     }
     out += '</div>';
 
-    out += '<div class="kit-block"><h5>Answers</h5>' + renderAnswers(kitAnswers(kit, answers)) + '</div>';
+    out += '<div class="kit-block pl-step"><h5>Form answers</h5>';
+    if ((kit.answers || []).length || kit.no_form_questions) {
+      out += kit.no_form_questions ? '<p class="muted sm">No form questions for this posting.</p>' : '';
+      out += renderAnswers(kitAnswers(kit, answers));
+    } else {
+      out += '<p class="muted">Not started</p><p class="muted sm">Drafts any new questions for you to confirm.</p>';
+      if ((answers || []).length) out += '<p class="muted sm">' + answers.length + ' saved answers will be reused</p>' + renderAnswers(answers);
+    }
+    out += '</div></div>';
     return out;
   }
 
@@ -3427,6 +4411,12 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         'If no letter is needed, pass cover_letter="" and cover_letter_needed=false; ' +
         'set no_form_questions=true only if there genuinely are no form questions. ' +
         'If the reply says DRAFT, fill in the listed missing parts and save again with all three; report blockers.';
+    } else if (kind === 'follow') {
+      text = 'Draft a follow-up for ' + role + ' at ' + company + ' ' + ref + '.';
+    } else if (kind === 'offer') {
+      text = 'Help me weigh the offer for ' + role + ' at ' + company + ' ' + ref + '.';
+    } else if (kind === 'discuss') {
+      text = 'Help me with ' + role + ' at ' + company + ' ' + ref + '.';
     } else if (kind === 'tailor') {
       text = 'Tailor my resume for ' + role + ' at ' + company + ' ' + ref + '.';
     } else {
@@ -3466,9 +4456,10 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     copyFallback(text); flash();
   }
 
-  // Draft a message for the coach (never auto-send) — the three action buttons.
+  // Draft a message for the coach; Next step and the menu never auto-send.
   function composeAction(kind) {
     if (!DETAIL) return;
+    if (isClosedApp(DETAIL.application || {})) return;
     var text = composeText(kind, DETAIL.application || {});
     try { parent.postMessage({ type: 'protoagent:chat:compose', text: text }, '*'); } catch (e) {}
     toast('Drafted a message for your coach — review and send it in chat.');
@@ -3481,6 +4472,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   function markApplied() {
     if (!DETAIL) return;
     var app = DETAIL.application || {};
+    if (isClosedApp(app)) return;
     var id = app.id;
     if (!id) return;
     askConfirm('Mark ' + (app.role || 'this role') + ' @ ' + (app.company || 'this company') + ' as applied?')
@@ -3489,6 +4481,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
         write('/applications/' + encodeURIComponent(id) + '/applied', {})
           .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (DETAIL_ID !== id) return;
             return openDetail(id);
           })
           .then(function () { load(); })
@@ -3501,18 +4494,32 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (!DETAIL) return;
     var app = DETAIL.application || {};
     var ta = document.getElementById('detail-notes-text');
-    if (!app.id || !ta) return;
+    if (!app.id || !ta || isClosedApp(app)) return;
     var notes = ta.value;
-    kit.apiFetch('/api/plugins/careercoach/applications/' + encodeURIComponent(app.id) + '/notes', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: notes })
+    if (notes === (app.notes || '') && !NOTE_PENDING[app.id]) return;
+    var status = document.getElementById('detail-notes-status');
+    status.textContent = 'Saving…';
+    NOTE_DRAFTS[app.id] = notes;
+    NOTE_PENDING[app.id] = (NOTE_PENDING[app.id] || 0) + 1;
+    NOTE_WRITES[app.id] = (NOTE_WRITES[app.id] || Promise.resolve()).then(function () {
+      return kit.apiFetch('/api/plugins/careercoach/applications/' + encodeURIComponent(app.id) + '/notes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: notes })
+      });
     }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       app.notes = notes;
-      toast('Notes saved.');
-      load();
-    }).catch(function () { toast('Could not save your notes — try again.'); });
+      if (NOTE_DRAFTS[app.id] === notes) delete NOTE_DRAFTS[app.id];
+      if (DETAIL && DETAIL.application.id === app.id) {
+        DETAIL.application.notes = notes;
+        var current = document.getElementById('detail-notes-text');
+        if (current && current.value === notes) document.getElementById('detail-notes-status').textContent = 'Saved';
+      }
+    }).catch(function () {
+      if (DETAIL_ID === app.id) document.getElementById('detail-notes-status').textContent = 'Could not save — blur to retry';
+      toast('Could not save your notes — try again.');
+    }).then(function () { NOTE_PENDING[app.id]--; });
   }
 
   function wireDetail() {
@@ -3531,158 +4538,224 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       if (btn && val) btn.addEventListener('click', function () { copyText(val.textContent, btn); });
     });
     body.querySelectorAll('.act').forEach(function (b) {
-      b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); });
+      b.addEventListener('click', function () { composeAction(b.getAttribute('data-act')); var menu = document.getElementById('detail-menu'); if (menu) { menu.hidden = true; var more = document.getElementById('detail-more'); more.setAttribute('aria-expanded', 'false'); more.focus(); } });
+    });
+    var status = document.getElementById('detail-status');
+    if (status) status.addEventListener('change', function () {
+      if (DETAIL_ID && (!DETAIL || !isClosedApp(DETAIL.application))) { if (status.value === 'applied') { syncDetailStatus(); markApplied(); } else moveApp(DETAIL_ID, status.value); }
     });
     var applied = document.getElementById('detail-applied');
     if (applied) applied.addEventListener('click', markApplied);
-    var save = document.getElementById('detail-notes-save');
-    if (save) save.addEventListener('click', saveNotes);
+    body.querySelectorAll('[data-applied]').forEach(function (b) { b.onclick = markApplied; });
+    var notes = document.getElementById('detail-notes-text');
+    if (notes && !notes.readOnly) {
+      notes.addEventListener('blur', saveNotes);
+      notes.oninput = function () { if (DETAIL_ID) NOTE_DRAFTS[DETAIL_ID] = notes.value; document.getElementById('detail-notes-status').textContent = '';  };
+    }
+    var reopen = document.getElementById('detail-reopen');
+    if (reopen) reopen.onclick = function () { if (DETAIL_ID) moveApp(DETAIL_ID, ((JOBS.columns || {}).Saved || ['considering'])[0]); };
+    var more = document.getElementById('detail-more'), menu = document.getElementById('detail-menu');
+    if (more && menu) {
+      more.onclick = function () { menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden)); if (!menu.hidden) menu.querySelector('button').focus(); };
+      menu.onkeydown = function (e) {
+        var items = Array.prototype.slice.call(menu.querySelectorAll('button'));
+        var i = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') { e.stopPropagation(); menu.hidden = true; more.setAttribute('aria-expanded', 'false'); more.focus(); }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+      };
+    }
   }
 
+  function coachMenu() {
+    return '<button class="pl-btn" id="detail-more" aria-haspopup="menu" aria-expanded="false">Ask your coach</button>' +
+      '<div class="pl-menu" id="detail-menu" role="menu" hidden>' +
+      '<button class="pl-btn act" role="menuitem" data-act="kit">Build apply kit</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="tailor">Tailor resume</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="prep">Prep me for this interview</button>' +
+      '<button class="pl-btn act" role="menuitem" data-act="follow">Draft a follow-up</button></div>';
+  }
   function renderDetail(d) {
-    var app = (d && d.application) || {};
-    var kitData = (d && d.kit) || {};
-    var posting = app.posting || {};
-    var title = posting.title || app.role || '';
-    var url = app.source || posting.url || '';
+    var app = (d && d.application) || {}, kitData = (d && d.kit) || {};
+    var posting = app.posting || {}, title = posting.title || app.role || '';
+    var url = app.source || posting.url || '', closed = isClosedApp(app);
+    var early = ['considering', 'saved', 'preparing'].indexOf(app.status) !== -1;
     document.getElementById('detail-title').innerHTML =
       '<div class="detail-role">' + esc(app.role || title || 'This role') + '</div>' +
-      '<div class="detail-co">' + esc(app.company || '') +
-        (app.status ? ' · <span class="pill">' + esc(app.status) + '</span>' : '') + '</div>';
-
-    var html = '';
-    // posting
-    html += '<section id="detail-posting" class="dsec"><h4>Posting</h4>';
-    html += '<div class="kv"><span class="k">Role</span><span>' + esc(title) + '</span></div>';
-    html += '<div class="kv"><span class="k">Company</span><span>' + esc(app.company || '') + '</span></div>';
-    if (posting.location) {
-      html += '<div class="kv"><span class="k">Location</span><span>' + esc(posting.location) + '</span></div>';
-    }
-    if (url) {
-      html += '<div class="kv"><span class="k">Link</span>' +
-        '<a class="plink" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + '</a></div>';
-    }
-    if (posting.snippet) html += '<div class="snippet">' + esc(posting.snippet) + '</div>';
-    html += '</section>';
-
-    // fit
-    html += '<section id="detail-fit" class="dsec"><h4>Fit</h4>' +
-      '<div class="fitline"><span class="fit big">' + Number(app.fit_score || 0) + '</span>' +
-      '<span class="verdict">' + esc(fitVerdict(app.fit_score)) + '</span></div></section>';
-
-    // notes (editable, saved via PATCH — holds the fit reason + anything the operator adds)
-    html += '<section id="detail-notes" class="dsec"><h4>Notes</h4>' +
-      '<textarea id="detail-notes-text" class="notes-ta" ' +
-      'placeholder="Your notes on this role — the fit reason, next steps, anything.">' +
-      esc(app.notes || '') + '</textarea>' +
-      '<div class="dsec-actions"><button class="btn" type="button" id="detail-notes-save">Save notes</button></div>' +
-      '</section>';
-
-    // apply kit
-    html += '<section id="detail-kit" class="dsec"><h4>Apply kit</h4>' +
-      renderKit(kitData, (d && d.answers) || []) + '</section>';
-
-    // timeline
-    html += '<section id="detail-timeline" class="dsec"><h4>Timeline</h4>' +
-      renderTimeline(d && d.timeline) + '</section>';
-
-    // contacts — the whole section is hidden when the list is empty
+      '<div class="detail-co">' + esc(app.company || '') + '</div>' + detailStatusHtml(app) +
+      (url ? ' <a class="pl-btn pl-btn--ghost" href="' + esc(url) + '" target="_blank" rel="noopener">View posting</a>' : '') +
+      '<details class="pl-accordion" id="detail-posting"><summary>Posting</summary>' +
+      '<p>' + esc(title) + '</p>' + (posting.location ? '<p>' + esc(posting.location) + '</p>' : '') +
+      (posting.snippet ? '<div class="snippet">' + esc(posting.snippet) + '</div>' : '') + '</details>';
+    var next;
+    if (closed) next = '<button class="pl-btn pl-btn--primary" id="detail-reopen">Reopen</button>';
+    else if (app.status === 'interviewing') next = '<button class="pl-btn pl-btn--primary act" data-act="prep">Prep me for this interview</button>';
+    else if (early && kitData.status === 'complete') next = '<button class="pl-btn pl-btn--primary" type="button" id="detail-applied">Mark applied</button>';
+    else if (early) next = '<button class="pl-btn pl-btn--primary act" data-act="kit">Build apply kit</button>';
+    else next = '<button class="pl-btn pl-btn--primary act" data-act="' + (app.status === 'offer' ? 'offer' : app.followup ? 'follow' : 'discuss') + '">' +
+      (app.status === 'offer' ? 'Weigh this offer' : app.followup ? 'Draft a follow-up' : 'Ask coach about this role') + '</button>';
+    var html = '<section id="detail-actions" class="dsec"><h4>Next step</h4>' + next + (closed ? '' : coachMenu()) + '</section>';
+    html += '<details id="detail-kit" class="pl-card pl-accordion"' + (early ? ' open' : '') + '><summary>Apply kit</summary>' +
+      (kitData.status === 'draft' && kitData.updated ? '<span class="pl-badge pl-badge--warning">Draft: confirm before using</span>' : '') +
+      renderKit(kitData, (d && d.answers) || []) +
+      (closed ? '' : '<button class="pl-btn pl-btn--primary act" data-act="kit">Build apply kit</button>' +
+        '<p class="muted sm">Your coach builds all three in chat. You review each before anything is sent.</p>' +
+        (app.status !== 'applied' ? '<button class="pl-btn" data-applied>I applied already: mark applied</button>' : '')) + '</details>';
+    if (Number(app.fit_score) > 0) html += '<section id="detail-fit" class="dsec"><h4>Fit</h4>' +
+      '<div class="fitline"><span class="fit big">' + Number(app.fit_score) + '</span><span class="verdict">' +
+      esc(fitVerdict(app.fit_score)) + '</span></div><p>' + esc(app.notes || '') + '</p></section>';
+    html += '<section id="detail-notes" class="dsec"><h4><label for="detail-notes-text">Notes</label></h4>' +
+      '<textarea id="detail-notes-text" class="pl-textarea notes-ta"' + (closed ? ' readonly' : '') +
+      ' placeholder="Your notes on this role — the fit reason, next steps, anything.">' + esc(Object.prototype.hasOwnProperty.call(NOTE_DRAFTS, app.id) ? NOTE_DRAFTS[app.id] : app.notes || '') + '</textarea>' +
+      '<div id="detail-notes-status" class="muted sm" role="status"></div></section>';
+    html += '<details id="detail-timeline" class="pl-accordion"><summary>Timeline</summary>' + renderTimeline(d && d.timeline) + '</details>';
     var contacts = (d && d.contacts) || [];
-    if (contacts.length) {
-      html += '<section id="detail-contacts" class="dsec"><h4>Contacts at ' +
-        esc(app.company || 'this company') + '</h4>' + renderContacts(contacts) + '</section>';
-    }
-
-    // actions — each drafts a chat message; Mark applied posts /applied behind an inline confirm
-    html += '<section id="detail-actions" class="dsec"><h4>Ask your coach</h4>' +
-      '<div class="action-btns">' +
-        '<button class="btn act" type="button" data-act="kit">Build apply kit</button>' +
-        '<button class="btn act" type="button" data-act="tailor">Tailor resume</button>' +
-        '<button class="btn act" type="button" data-act="prep">Prep me for this interview</button>' +
-      '</div>' +
-      '<div class="action-btns"><button class="btn keep" type="button" id="detail-applied">Mark applied</button></div>' +
-      '<p class="hint">The buttons above draft a message for your coach — you review and send it. ' +
-      'Nothing is sent automatically.</p></section>';
-
+    if (contacts.length) html += '<details id="detail-contacts" class="pl-accordion"><summary>Contacts at ' + esc(app.company || 'this company') + '</summary>' + renderContacts(contacts) + '</details>';
     document.getElementById('detail-body').innerHTML = html;
     wireDetail();
   }
 
+  function refreshDetailMarkup(d) {
+    var root = document.getElementById('detail'), active = document.activeElement;
+    var inside = active && root.contains(active), focusId = inside ? active.id : null;
+    var controls = Array.prototype.slice.call(root.querySelectorAll('button,select,textarea,input,a,summary'));
+    var focusIndex = inside ? controls.indexOf(active) : -1;
+    var menu = document.getElementById('detail-menu'), menuOpen = menu && !menu.hidden;
+    var ta = document.getElementById('detail-notes-text');
+    var caret = ta && active === ta ? ta.selectionStart : null;
+    var panel = document.querySelector('#detail .detail-panel'), scroll = panel ? panel.scrollTop : 0;
+    var open = {};
+    root.querySelectorAll('details[id]').forEach(function (el) { open[el.id] = el.open; });
+    renderDetail(d);
+    root.querySelectorAll('details[id]').forEach(function (el) { if (el.id in open) el.open = open[el.id]; });
+    if (panel) panel.scrollTop = scroll;
+    menu = document.getElementById('detail-menu');
+    if (menu && menuOpen) { menu.hidden = false; document.getElementById('detail-more').setAttribute('aria-expanded', 'true'); }
+    var target = focusId ? document.getElementById(focusId) : (focusIndex >= 0 ? root.querySelectorAll('button,select,textarea,input,a,summary')[focusIndex] : null);
+    if (!target && inside) target = document.getElementById('detail-close');
+    if (target && target.disabled) target = document.getElementById('detail-close');
+    if (target) { target.focus(); if (caret != null && target.setSelectionRange) target.setSelectionRange(caret, caret); }
+  }
+  function rememberDetailOpener() {
+    if (!document.getElementById('detail').classList.contains('open')) DETAIL_RETURN = document.activeElement;
+  }
+  function sizeDetail() {
+    var panel = document.querySelector('#detail .detail-panel');
+    if (!panel) return;
+    var bottom = document.getElementById('cc').clientWidth < 600;
+    panel.classList.toggle('pl-drawer--bottom', bottom);
+    panel.classList.toggle('pl-drawer--right', !bottom);
+  }
+  // A width change (split-screen drag, rail) re-evaluates the width-dependent chrome without new
+  // data: the drawer side, the Today-band cap (§8, 2 rows on the rail / 3 otherwise) and the
+  // responsive tab collapse. The layout bands themselves are pure CSS container queries (§8); this
+  // only re-runs the JS that reads the container's clientWidth.
+  function onResize() { sizeDetail(); renderTabs(); renderToday(); }
   function showDetail() {
+    sizeDetail();
     var el = document.getElementById('detail');
+    var wasOpen = el.classList.contains('open');
     el.classList.add('open');
     el.setAttribute('aria-hidden', 'false');
     var close = document.getElementById('detail-close');
-    if (close && close.focus) close.focus();
+    if (!wasOpen && close && close.focus) close.focus();
   }
   function closeDetail() {
+    saveNotes();
     var el = document.getElementById('detail');
     el.classList.remove('open');
     el.setAttribute('aria-hidden', 'true');
-    DETAIL = null; DETAIL_ID = null;
+    DETAIL = null; DETAIL_ID = null; DETAIL_REQUEST++;
+    var opener = DETAIL_RETURN; DETAIL_RETURN = null;
+    if (opener && (!opener.isConnected || opener.offsetParent === null) && opener.getAttribute) {
+      var id = opener.getAttribute('data-id');
+      opener = id ? visibleInBody(id) : null;
+    }
+    if (!opener || !opener.isConnected || opener.offsetParent === null) {
+      opener = document.getElementById('tabs-trigger') || document.getElementById('tab-' + TAB);
+    }
+    if (opener && opener.focus) opener.focus();
   }
   // Fetch one application through the gated apiFetch and render the drawer. A bad id / error toasts
   // and leaves the drawer closed.
   function openDetail(id) {
     if (!id) return Promise.resolve();
+    rememberDetailOpener();
     DETAIL_ID = id;
+    var request = ++DETAIL_REQUEST;
     return api('/applications/' + encodeURIComponent(id)).then(function (d) {
       // Drop a response the user has moved on from: a slow fetch for a card they've since closed
       // (Esc/✕ null DETAIL_ID) or clicked past (DETAIL_ID points at a newer id) must not reopen or
       // overwrite the drawer with stale data.
       if (DETAIL_ID !== id) return;
+      if (DETAIL_REQUEST !== request) return;
       if (!d || d.error) { toast('Could not open that role — try again.'); return; }
       DETAIL = d;
-      renderDetail(d);
+      if (document.getElementById('detail').classList.contains('open')) refreshDetailMarkup(d); else renderDetail(d);
       showDetail();
     }, function () {
       if (DETAIL_ID !== id) return;
+      if (DETAIL_REQUEST !== request) return;
       toast('Could not open that role — try again.');
     });
   }
 
+
+  // /jobs drives the band, tabs and bodies; /state feeds the header subline and the About-you
+  // drawer. A failed /state is a partial failure (§7) — the view still renders. A failed /jobs is
+  // "API unreachable": the error banner + Retry, bodies left as skeletons.
   function load() {
-    // /jobs drives the inbox + board; /state is the profile/rubric disclosure and the header. A
-    // failed /state still renders the jobs view.
     return api('/jobs').then(function (jobs) {
       JOBS = jobs || { inbox: [], applications: [], columns: {}, followup_days: 0 };
-      renderInbox();
-      renderBoard();
-      return api('/state').then(function (s) { return s; }, function () { return null; });
-    }).then(function (state) {
-      renderHeader(state);
-      renderProfile(state);
-      renderWeights(state);
-    }).catch(function () {
-      document.getElementById('sub').textContent = 'Could not load your jobs.';
+      JOBS_FAILED = false;
+      return api('/state').then(function (s) { STATE = s; STATE_FAILED = false; },
+                               function () { STATE = null; STATE_FAILED = true; });
+    }, function () { JOBS_FAILED = true; STATE = null; STATE_FAILED = false; }).then(function () {
+      LOADING = false; render();
+      if (DETAIL_ID && document.getElementById('detail').classList.contains('open')) return openDetail(DETAIL_ID);
     });
   }
 
-  // Live refresh (ADR 0039): ask the console to forward `careercoach.#` events into this iframe,
-  // and reload whenever one arrives. We also reload after each successful write (above).
+  // Live refresh (ADR 0039): subscribe to `careercoach.#` and reload in place on an event.
   function subscribe() {
-    try { parent.postMessage({ type: 'protoagent:subscribe', patterns: ['careercoach.#'] }, '*'); }
-    catch (e) {}
+    try { parent.postMessage({ type: 'protoagent:subscribe', patterns: ['careercoach.#'] }, '*'); } catch (e) {}
   }
   window.addEventListener('message', function (e) {
     var d = e && e.data;
     if (d && d.type === 'protoagent:event') load();
   });
 
-  // The detail drawer dismisses on the ✕, the backdrop, and Esc.
+  // About-you drawer: open from the header; Esc / the ✕ / the scrim dismiss it and return focus.
+  document.getElementById('about-btn').addEventListener('click', openAbout);
+  document.getElementById('about-close').addEventListener('click', closeAbout);
+  document.getElementById('about-scrim').addEventListener('click', closeAbout);
+  document.getElementById('about').addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { e.stopPropagation(); closeAbout(); } else { trap(e, document.getElementById('about')); }
+  });
+
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(onResize).observe(document.getElementById('cc'));
+
+  // The job detail drawer dismisses on the ✕, the backdrop, and Esc.
   (function () {
     var close = document.getElementById('detail-close');
     if (close) close.addEventListener('click', closeDetail);
     var backdrop = document.querySelector('#detail .detail-backdrop');
     if (backdrop) backdrop.addEventListener('click', closeDetail);
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' || e.keyCode === 27) closeDetail();
+    document.getElementById('detail').addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' || e.keyCode === 27) { e.stopPropagation(); closeDetail(); }
+      else trap(e, document.querySelector('#detail .detail-panel'));
     });
   })();
 
-  // initPluginView runs the console handshake (ADR 0026) — applies the theme and captures the
-  // bearer — then fires our callback once ready. The timer is a fallback for a host context that
-  // never posts an init, so the page isn't left blank.
+  // "New since your last visit" (§11.1): read the prior visit, then stamp now for the next one.
+  // Per browser, in a try/catch; if storage is unavailable, fall back to the last 24h.
+  try {
+    var lv = localStorage.getItem('cc:lastVisit');
+    LAST_VISIT = lv ? Number(lv) : (Date.now() - 86400000);
+    localStorage.setItem('cc:lastVisit', String(Date.now()));
+  } catch (e) { LAST_VISIT = Date.now() - 86400000; }
+
+  // First paint: skeletons + the tab strip (no counts) before any data arrives (§7 Loading).
+  LOADING = true; render();
   kit.initPluginView(function () { subscribe(); load(); });
   setTimeout(function () { subscribe(); load(); }, 800);
 </script>

@@ -11,6 +11,8 @@ Data facts the design rests on (owner's live instance, rev 2):
 - There is no interview-date field. An application has company, role, status, date, updated, history, fit_score, notes, source, posting, id, and `followup` from the server.
 - Ghost-job warnings are rare.
 
+**How to read this.** The spec wins where the spec and preview differ. Where the spec is silent, follow the preview. "+N more" expands the Today band in place to show every item. Block a slice only for something that can't be built, not for a small gap these rules settle.
+
 ## 1. Principles
 1. **State first, list second.** The first screen answers "what needs me today?" and "where does everything stand?". Nobody should scroll to reach the pipeline.
 2. **One question per surface.** Triage lives in Inbox, standing lives in Pipeline, sending lives in the drawer. They are tabs, not one stack.
@@ -23,7 +25,7 @@ Data facts the design rests on (owner's live instance, rev 2):
 ## 2. Information architecture
 ```
 ┌ Header: Career Coach / Jobs · "Targeting: …" ··························· [About you] ┐
-├ TODAY band (only items that need the operator; max 3 rows, then "+N more")         ┤
+├ TODAY band (only items that need the operator; max 3 rows, "+N more" expands)   ┤
 │  ⚠ 3 applications have had no reply in 10+ days — follow up      [Review]          │
 │  ● Interviewing: Staff Engineer @ Northwind, prep not started    [Prep]            │
 │  ✦ 7 new roles since your last visit                             [Triage]          │
@@ -35,7 +37,7 @@ Data facts the design rests on (owner's live instance, rev 2):
 
 | Region | Contents | Shows when |
 |---|---|---|
-| Header | eyebrow `Career Coach`, title `Jobs`, target-roles subline, **About you** ghost button | always |
+| Header | eyebrow `Career Coach`, title `Jobs`, target-roles subline (hidden below 600px), **About you** ghost button | always |
 | Today band | follow-ups due (server `followup`), roles in Interviewing (needs prep; no date exists), offers awaiting a decision, Saved/Preparing roles with no kit, count of inbox roles new since the last visit (fallback: last 24h) | at least one item exists; hidden otherwise |
 | Tabs | Pipeline (default), Inbox, Closed, each with a `Count` | always (counts hide at 0) |
 | Pipeline tab | board: Saved · Preparing · Applied · Interviewing · Offer, plus a collapsed **Closed** drop target | default tab |
@@ -119,13 +121,14 @@ Mark applied keeps its inline confirm (a `pl-dialog`, never `window.confirm`). T
 | State | What shows |
 |---|---|
 | **Brand-new agent** (no profile, nothing anywhere) | No tabs, no Today band. A single `Empty`: "Your coach hasn't started a search yet", description "Run /setup-coach in chat. It builds your profile, then a watch starts surfacing roles here." Action: **Start setup** (drafts `/setup-coach` into the composer). Under it, three `pl-suggestion` chips from the old tips paragraph: "Paste a posting and say /apply", "Critique my CV", "Run a mock interview". A stranger's first run ends on this screen. |
-| **Profile set, watch not run yet** | Tabs show. Inbox `Empty`: "Your watch is looking. New roles land here." Pipeline `Empty`: "Keep a role from Inbox, or paste a posting in chat." |
-| **Inbox cleared** (0 new, pipeline has items) | Inbox `Empty` "All caught up", with the date the watch last ran. The Inbox count hides. |
+| **Profile set, watch not run yet** (`watch_last_run` empty on `/jobs`) | Tabs show. Inbox `Empty`: "Your watch is looking. New roles land here." Pipeline `Empty`: "Keep a role from Inbox, or paste a posting in chat." |
+| **Inbox cleared** (0 new, pipeline has items) | Inbox `Empty` "All caught up", with the date the watch last ran (`watch_last_run` on `/jobs`). The Inbox count hides. |
 | **Nothing needs you today** | The Today band is hidden entirely. Tabs move up. |
 | **Loading** | `pl-skel` rows in the band and tab body; the tab strip renders at once with no counts. |
 | **Partial failure** (`/state` fails, `/jobs` OK) | The view renders. The About-you drawer shows a `Callout tone="warning"` "Couldn't load your profile". |
 | **API unreachable** (`/jobs` fails) | `Banner tone="error"` "Couldn't load your jobs" with **Retry**; tab bodies stay as skeletons. |
 | **Move / keep / dismiss fails** | Optimistic change rolls back. `pl-toast--error` "Couldn't move that role. It's back where it was." |
+| **Undo a move** | The toast's Undo calls `POST /applications/{id}/undo-move`, never a second move: it restores the prior status (legacy included), `updated` and history, so the follow-up clock and "oldest move" sort are untouched. If it fails, reload the board and show the error toast "Couldn't undo that. The role stayed where you moved it." |
 | **Unknown legacy status** | An "Other" column appears at the end of the board only when such rows exist (current behaviour, kept). |
 | **Live refresh** (`careercoach.#` event) | Re-render in place. Keep scroll, open groups, focus and the open drawer. Never jump tabs. |
 
@@ -137,6 +140,7 @@ The layout reads the view root's width through a container query, not the viewpo
   - The Pipeline tab changes from a board to a **stacked list grouped by stage**: Saved, Preparing, Applied, Interviewing, Offer, each an `Accordion` item with its `Count`. Stages with items open; empty stages collapse to one line. Drag is off, and moving goes through the drawer Status select or keyboard pick-up (↑/↓ between stages).
   - Tabs use `responsive`, collapsing to a menu trigger if the counts don't fit.
   - The Today band caps at 2 rows plus "+N more".
+  - The header's target-roles subline is hidden.
   - The Closed table drops the Company and Closed-on columns; both move under the role as one muted line.
   - The drawer becomes `side="bottom"` at 85dvh.
 

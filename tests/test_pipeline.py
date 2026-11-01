@@ -133,7 +133,7 @@ def test_jobs_route_shape(plugin, client):
     st = importlib.import_module(plugin.__name__ + ".state")
     st.track_application(company="Acme", role="ML Engineer", status="applied")
     body = tc.get("/api/plugins/careercoach/jobs").json()
-    assert set(body) == {"inbox", "applications", "columns", "followup_days"}
+    assert set(body) == {"inbox", "applications", "columns", "followup_days", "watch_last_run"}
     assert body["followup_days"] == 10
     assert body["columns"]["Saved"] == ["considering"]
     assert body["columns"]["Closed"] == ["rejected", "passed"]
@@ -251,6 +251,14 @@ def test_track_application_history_only_records_status_changes(st, monkeypatch):
     ]
     unchanged = st.track_application(company="Acme", role="Engineer", status="preparing", notes="Updated")
     assert unchanged["history"] == changed["history"]
+
+
+def test_jobs_says_when_the_watch_last_ran(plugin, client):
+    http, _ = client
+    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    assert http.get("/api/plugins/careercoach/jobs").json()["watch_last_run"] == ""
+    wl.record_watch_run()
+    assert http.get("/api/plugins/careercoach/jobs").json()["watch_last_run"]
 
 
 def test_dismiss_removes_and_sticks(plugin, client):
