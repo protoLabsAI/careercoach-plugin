@@ -2852,15 +2852,31 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   .emptyc-desc { max-width: 380px; margin: 0; }
   .sugs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 
-  /* Inbox list (carried; its redesign is R3). */
-  .inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px; padding: 12px 0;
-                border-top: 1px solid var(--pl-color-border); }
-  .inbox-item:first-child { border-top: 0; }
-  .inbox-item .title { font-weight: 600; font-size: 14px; }
-  .inbox-item .co { color: var(--pl-color-fg-muted); font-size: 13px; }
-  .score { font-variant-numeric: tabular-nums; }
-  .reason { flex-basis: 100%; color: var(--pl-color-fg-muted); font-size: 13px; }
-  .inbox-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  /* Inbox tab (§3): a toolbar, freshness accordions (reusing .grp) and listbox rows whose Keep /
+     Dismiss / View posting + checkbox reveal only on hover, focus or selection — never at rest. */
+  .ibx-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+  .ibx-toolbar label { color: var(--pl-color-fg-muted); }
+  .ibx-kbd { margin-left: auto; color: var(--pl-color-fg-muted); }
+  .ibx-kbd .pl-kbd { margin: 0 1px; }
+  .grp > summary .pl-count { margin-left: 4px; }
+  .ibx-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+             border-top: 1px solid var(--pl-color-border); }
+  .ibx-row:first-child { border-top: 0; }
+  .ibx-row:hover, .ibx-row.sel { background: var(--pl-color-bg-hover); }
+  .ibx-row:focus-visible { outline: 2px solid var(--pl-color-focus); outline-offset: -2px; }
+  .ibx-main { flex: 1; min-width: 0; }
+  .ibx-ti { font-size: 13px; font-weight: 600; }
+  .ibx-meta { font-size: 12px; color: var(--pl-color-fg-muted); margin-top: 2px; }
+  .ibx-meta em { font-style: normal; color: var(--pl-color-fg); }
+  .ibx-ghost { margin-top: 5px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  /* The "New" marker carries text, not just the dot (§10): never colour alone. */
+  .ibx-new { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 600;
+             color: var(--pl-color-status-info); margin-right: 2px; }
+  /* Hover/focus/selection reveal (§3/§6); focus-within so a focused action stays visible (§10). */
+  .ibx-acts { display: flex; gap: 6px; flex: none; visibility: hidden; }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.sel .ibx-acts { visibility: visible; }
+  .ibx-ck { flex: none; margin-top: 2px; visibility: hidden; }
+  .ibx-row:hover .ibx-ck, .ibx-row:focus .ibx-ck, .ibx-row:focus-within .ibx-ck, .ibx-row.sel .ibx-ck, .ibx-multi .ibx-ck { visibility: visible; }
   .plink { color: var(--pl-color-accent); font-size: 12px; text-decoration: none; }
   .plink:hover { text-decoration: underline; }
 
@@ -3087,6 +3103,13 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
   // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
   // the arrow keys are hovering. Both null at rest. A pointer drag never touches these.
   var LIFT_ID = null, LIFT_COL = null;
+  // Inbox triage state (§3): sort order, the ghost filter toggle, the current multi-selection
+  // (id -> 1), which freshness groups are open, rows removed optimistically (kept or dismissing,
+  // id -> 1), the HELD dismiss timers (id -> handle; the write waits out the 6s Undo window), and
+  // the row to focus after the next inbox re-render. All reset to their defaults here.
+  var INBOX_SORT = 'newest', HIDE_GHOST = false, INBOX_SEL = {},
+      INBOX_OPEN = { today: true, week: true, older: false, miss: false },
+      INBOX_HIDDEN = {}, DISMISS_TIMERS = {}, INBOX_FOCUS = null;
 
   function closedColName() {
     var cols = JOBS.columns || {}, names = Object.keys(cols);
@@ -3298,20 +3321,6 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     }
   }
 
-  function inboxAction(id, action, btns) {
-    btns.forEach(function (b) { b.disabled = true; });
-    write('/inbox/' + action, {id: id})
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        load();
-      })
-      .catch(function () {
-        btns.forEach(function (b) { b.disabled = false; });
-        toast('Could not ' + action + ' that role — try again.');
-      });
-  }
-
-
   // >>> view renderers
   function renderBanner() {
     var b = document.getElementById('banner');
@@ -3429,29 +3438,306 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     if (setup) setup.onclick = function () { compose('/setup-coach'); toast('Drafted “/setup-coach” into the chat composer. Nothing was sent.'); };
     b.querySelectorAll('[data-sug]').forEach(function (x) { x.onclick = function () { var s = x.getAttribute('data-sug'); compose(s); toast('Drafted “' + s + '” into the chat composer.'); }; });
   }
+  // ── Inbox tab (§3): freshness groups, text match reasons, hover/focus/selection actions,
+  // keyboard triage, multi-select and a 6s-held dismiss. The numeric score never shows (§1.5). ──
+
+  // The freshness bucket (§3/§11.2): score-0 rows are always "Title didn't match"; everything else
+  // is cut by posted (falling back to first_seen) into Today / This week / Older.
+  function inboxWhenMs(it) {
+    var s = it.posted || it.first_seen || '';
+    if (!s) return 0;
+    var t = new Date(s).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  function bucket(it) {
+    if (Number(it.score || 0) <= 0) return 'miss';
+    var t = inboxWhenMs(it);
+    if (!t) return 'older';
+    var h = (Date.now() - t) / 3600000;
+    return h < 24 ? 'today' : (h < 168 ? 'week' : 'older');
+  }
+  var GRP = [['today', 'Today'], ['week', 'This week'], ['older', 'Older'], ['miss', 'Title didn’t match']];
+  // A row is "new" when it was surfaced since the last visit — the same first_seen||posted clock the
+  // Today band counts (§3). LAST_VISIT comes from localStorage, falling back to the last 24h (§11.1).
+  function isNew(it) { var t = itemTime(it); return !!t && t > LAST_VISIT; }
+  // "2h ago" / "3d ago" from the posted (or first_seen) date — plain text, never a numeric score.
+  function relAge(dateStr) {
+    if (!dateStr) return '';
+    var t = new Date(dateStr).getTime();
+    if (isNaN(t)) return '';
+    var h = Math.floor((Date.now() - t) / 3600000);
+    if (h < 1) return 'just now';
+    if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+  }
+  // Ghost evidence is a list of strings from the server (empty when none). Join it for the tooltip.
+  function ghostText(it) {
+    var g = it.ghost;
+    if (!g || !g.length) return '';
+    return (typeof g === 'string') ? g : g.join('; ');
+  }
+  function hasGhost(it) { return !!(it.ghost && it.ghost.length); }
+  // The matched target role, pulled from the server's match reason ('title matches "X" (…)'), so the
+  // row can emphasise it. Empty when nothing was quoted.
+  function matchedRole(it) {
+    var m = /"([^"]+)"/.exec(it.reason || '');
+    return m ? m[1] : '';
+  }
+  // Match reason AS TEXT (§3): the score itself never shows. 100 → "Title matches X", a partial
+  // score → "Title partly matches X", 0 (the miss group) → "Title doesn't match your targets".
+  function reasonText(it) {
+    var score = Number(it.score || 0);
+    if (score <= 0) return 'Title doesn’t match your targets';
+    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
+    return role ? verb + ' <em>' + esc(role) + '</em>' : verb + ' your targets';
+  }
+  // The longer form shown in the inbox drawer's "Why it surfaced" section.
+  function reasonSentence(it) {
+    var score = Number(it.score || 0);
+    if (score <= 0) return 'The title doesn’t match your target roles. The watch kept it because the company is on your list.';
+    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
+    return role ? verb + ' <em>' + esc(role) + '</em>, one of your target roles.' : verb + ' your target roles.';
+  }
+  function findInbox(id) {
+    var l = JOBS.inbox || [];
+    for (var i = 0; i < l.length; i++) { if (l[i].id === id) return l[i]; }
+    return null;
+  }
+  function inboxVisible() {
+    return (JOBS.inbox || []).filter(function (it) { return !INBOX_HIDDEN[it.id]; });
+  }
+  function selIds() { var out = []; for (var k in INBOX_SEL) { if (INBOX_SEL[k]) out.push(k); } return out; }
+
+  // One triage row: a listbox option carrying the "New" marker, title, company · posted · reason,
+  // the ghost warning, and the hover/focus/selection-only Keep / Dismiss / View posting (§3/§6).
+  function inboxRowHtml(it) {
+    var sel = !!INBOX_SEL[it.id], ghost = ghostText(it), when = it.posted || it.first_seen || '';
+    var parts = [];
+    if (it.company) parts.push(esc(it.company));
+    var rel = relAge(when); if (rel) parts.push(esc(rel));
+    parts.push(reasonText(it));
+    var newMark = isNew(it) ? '<span class="ibx-new"><span class="pl-dot pl-dot--info" aria-hidden="true"></span>New</span> ' : '';
+    return '<div class="ibx-row' + (sel ? ' sel' : '') + '" role="option" aria-selected="' + sel + '" tabindex="0" data-id="' + esc(it.id) + '">' +
+      '<input type="checkbox" class="pl-checkbox ibx-ck" tabindex="-1" aria-label="Select ' + esc(it.title) + '"' + (sel ? ' checked' : '') + '>' +
+      '<div class="ibx-main">' +
+        '<div class="ibx-ti">' + newMark + esc(it.title) + '</div>' +
+        '<div class="ibx-meta">' + parts.join(' · ') + '</div>' +
+        (ghost ? '<div class="ibx-ghost"><span class="pl-badge pl-badge--warning" title="' + esc(ghost) + '">Possible ghost job</span> ' +
+          '<span class="muted sm">' + esc(ghost) + '</span></div>' : '') +
+      '</div>' +
+      '<div class="ibx-acts">' +
+        (it.url ? '<a class="pl-btn pl-btn--ghost pl-btn--xs" href="' + esc(it.url) + '" target="_blank" rel="noopener" data-a="open" tabindex="-1">View posting</a>' : '') +
+        '<button class="pl-btn pl-btn--xs" type="button" data-a="dismiss" tabindex="-1">Dismiss</button>' +
+        '<button class="pl-btn pl-btn--primary pl-btn--xs" type="button" data-a="keep" tabindex="-1">Keep</button>' +
+      '</div></div>';
+  }
+  // One freshness accordion: chev + label + per-group Select all + the Count, then the listbox rows.
+  function inboxGroupHtml(g, rows) {
+    var key = g[0];
+    return '<details class="grp pl-accordion" data-g="' + key + '"' + (INBOX_OPEN[key] ? ' open' : '') + '>' +
+      '<summary><span class="chev" aria-hidden="true">›</span><span class="grow">' + esc(g[1]) + '</span>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--xs" type="button" data-all="' + key + '">Select all</button>' +
+      '<span class="pl-count">' + rows.length + '</span></summary>' +
+      '<div role="listbox" aria-multiselectable="true" aria-label="' + esc(g[1]) + '">' +
+      rows.map(inboxRowHtml).join('') + '</div></details>';
+  }
+  function inboxSortToolbar(ghosts) {
+    return '<div class="ibx-toolbar">' +
+      '<label class="muted" for="ibx-sort">Sort</label>' +
+      '<select id="ibx-sort" class="pl-select">' +
+        '<option value="newest"' + (INBOX_SORT === 'newest' ? ' selected' : '') + '>Newest</option>' +
+        '<option value="oldest"' + (INBOX_SORT === 'oldest' ? ' selected' : '') + '>Oldest</option>' +
+      '</select>' +
+      (ghosts ? '<button class="pl-chip" type="button" id="ibx-ghost" aria-pressed="' + (HIDE_GHOST ? 'true' : 'false') + '">' +
+        (HIDE_GHOST ? '✓ ' : '') + 'Hide likely ghost jobs · ' + ghosts + '</button>' : '') +
+      '<span class="ibx-kbd sm"><span class="pl-kbd">↑↓</span> move <span class="pl-kbd">K</span> keep ' +
+      '<span class="pl-kbd">D</span> dismiss <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span>' +
+      '</div>';
+  }
+  function inboxSelToolbar(n) {
+    return '<div class="ibx-toolbar"><strong>' + n + ' selected</strong>' +
+      '<button class="pl-btn pl-btn--sm" type="button" id="ibx-bkeep">Keep</button>' +
+      '<button class="pl-btn pl-btn--sm" type="button" id="ibx-bdismiss">Dismiss</button>' +
+      '<button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" id="ibx-bclear">Clear</button></div>';
+  }
+  // §7 Inbox empty states: an empty watch_last_run means the watch has never run ("looking");
+  // otherwise the inbox is simply cleared ("All caught up", with the date the watch last ran).
+  function renderInboxEmpty(b) {
+    var ran = JOBS.watch_last_run || '', title, desc;
+    if (!ran) { title = 'Your watch is looking'; desc = 'New roles land here.'; }
+    else { title = 'All caught up'; desc = 'Your watch last ran on ' + esc(String(ran).slice(0, 10)) + '. New roles land here.'; }
+    b.innerHTML = '<div class="emptyc pl-empty"><div class="empty-title">' + title + '</div>' +
+      '<p class="muted sm emptyc-desc">' + desc + '</p></div>';
+  }
   function renderInbox(b) {
-    var items = JOBS.inbox || [];
-    if (!items.length) { b.innerHTML = '<p class="empty">Nothing new — your watch hasn’t surfaced any roles to review.</p>'; return; }
-    b.innerHTML = items.map(function (it) {
-      var score = Number(it.score || 0);
-      var link = it.url ? '<a class="plink" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '';
-      var reason = it.reason ? '<div class="reason">' + esc(it.reason) + '</div>' : '';
-      return '<div class="inbox-item" data-id="' + esc(it.id) + '">' +
-        '<span class="title">' + esc(it.title) + '</span>' +
-        '<span class="co">' + esc(it.company) + '</span>' +
-        '<span class="score pl-badge">' + score + '</span>' +
-        '<span class="inbox-actions">' + link +
-          '<button class="pl-btn pl-btn--primary pl-btn--sm" data-keep>Keep</button>' +
-          '<button class="pl-btn pl-btn--sm" data-dismiss>Dismiss</button>' +
-        '</span>' + reason + '</div>';
-    }).join('');
-    b.querySelectorAll('.inbox-item').forEach(function (el) {
-      var id = el.getAttribute('data-id');
-      var keep = el.querySelector('[data-keep]'), dismiss = el.querySelector('[data-dismiss]');
-      var btns = [keep, dismiss];
-      keep.addEventListener('click', function () { inboxAction(id, 'keep', btns); });
-      dismiss.addEventListener('click', function () { inboxAction(id, 'dismiss', btns); });
+    var all = inboxVisible();
+    if (!all.length) return renderInboxEmpty(b);
+    var ghosts = all.filter(hasGhost).length;
+    var rows = all.filter(function (it) { return !(HIDE_GHOST && hasGhost(it)); }).sort(function (x, y) {
+      var dx = inboxWhenMs(x), dy = inboxWhenMs(y);
+      return INBOX_SORT === 'newest' ? dy - dx : dx - dy;  // newest first by default; freshness is the only signal
     });
+    var n = selIds().length;
+    var groups = GRP.map(function (g) {
+      var gr = rows.filter(function (it) { return bucket(it) === g[0]; });
+      return gr.length ? inboxGroupHtml(g, gr) : '';
+    }).join('');
+    b.innerHTML = (n ? inboxSelToolbar(n) : inboxSortToolbar(ghosts)) +
+      '<div class="' + (n ? 'ibx-multi' : '') + '" id="ibx-groups">' + groups + '</div>';
+    wireInbox(b);
+  }
+  function wireInbox(b) {
+    var sort = document.getElementById('ibx-sort');
+    if (sort) sort.onchange = function () { INBOX_SORT = sort.value; render(); };
+    var ghost = document.getElementById('ibx-ghost');
+    if (ghost) ghost.onclick = function () { HIDE_GHOST = !HIDE_GHOST; render(); };
+    var bk = document.getElementById('ibx-bkeep'); if (bk) bk.onclick = function () { inboxKeep(selIds()); };
+    var bd = document.getElementById('ibx-bdismiss'); if (bd) bd.onclick = function () { inboxDismiss(selIds()); };
+    var bc = document.getElementById('ibx-bclear'); if (bc) bc.onclick = function () { INBOX_SEL = {}; render(); };
+    b.querySelectorAll('details[data-g]').forEach(function (d) {
+      d.ontoggle = function () { INBOX_OPEN[d.getAttribute('data-g')] = d.open; };
+    });
+    b.querySelectorAll('[data-all]').forEach(function (x) {
+      x.onclick = function (e) { e.preventDefault(); e.stopPropagation(); inboxSelectAll(x.getAttribute('data-all')); };
+    });
+    wireInboxRows(b);
+    if (INBOX_FOCUS) {
+      var fe = b.querySelector ? b.querySelector('[data-id="' + INBOX_FOCUS + '"]') : null;
+      INBOX_FOCUS = null;
+      if (fe && fe.focus) fe.focus();
+    }
+  }
+  // Keyboard triage (§3/§10): shortcuts fire ONLY on the focused row (never a nested field, and only
+  // inside the listbox). ↑/↓ roves, K keeps, D dismisses, O opens the posting, Enter opens the
+  // drawer, Space toggles the selection.
+  function wireInboxRows(b) {
+    var rows = [];
+    b.querySelectorAll('.ibx-row[data-id]').forEach(function (r) { rows.push(r); });
+    rows.forEach(function (row, i) {
+      var id = row.getAttribute('data-id');
+      function nextId() { var nb = rows[i + 1] || rows[i - 1]; return nb ? nb.getAttribute('data-id') : null; }
+      row.onclick = function (e) {
+        var t = e.target;
+        if (t.closest && t.closest('.ibx-ck')) { inboxToggle(id); return; }
+        var act = t.closest ? t.closest('[data-a]') : null;
+        if (act) {
+          var a = act.getAttribute('data-a');
+          e.stopPropagation();
+          if (a === 'open') return;  // the <a> opens the posting itself
+          if (a === 'keep') { INBOX_FOCUS = nextId(); inboxKeep([id]); }
+          else if (a === 'dismiss') { INBOX_FOCUS = nextId(); inboxDismiss([id]); }
+          return;
+        }
+        openInboxDetail(id);
+      };
+      row.onkeydown = function (e) {
+        if (e.target !== row) return;  // never from a nested field (§10)
+        var k = (e.key || '').toLowerCase();
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          var nb = rows[i + (e.key === 'ArrowDown' ? 1 : -1)];
+          if (nb && nb.focus) nb.focus();
+        } else if (k === 'k') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxKeep([id]); }
+        else if (k === 'd') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxDismiss([id]); }
+        else if (k === 'o') { e.preventDefault(); openPosting(id); }
+        else if (e.key === 'Enter') { e.preventDefault(); openInboxDetail(id); }
+        else if (e.key === ' ' || e.key === 'Spacebar' || k === 'x') { e.preventDefault(); inboxToggle(id); }
+      };
+    });
+  }
+  function inboxToggle(id) {
+    if (INBOX_SEL[id]) delete INBOX_SEL[id]; else INBOX_SEL[id] = 1;
+    INBOX_FOCUS = id;
+    render();
+  }
+  // Select all of one group (its currently-visible rows) — how the "Title didn't match" or "Older"
+  // group is cleared in one move (§3).
+  function inboxSelectAll(key) {
+    inboxVisible().forEach(function (it) {
+      if (HIDE_GHOST && hasGhost(it)) return;
+      if (bucket(it) === key) INBOX_SEL[it.id] = 1;
+    });
+    render();
+  }
+  function openPosting(id) {
+    var it = findInbox(id);
+    if (!it) return;
+    if (it.url) { try { window.open(it.url, '_blank', 'noopener'); return; } catch (e) {} }
+    toast('No posting link for this role.');
+  }
+  // Keep (§3): optimistic remove + an immediate write (the route promotes the role to Saved and
+  // emits a live-refresh event). No Undo — the spec gives Keep none. A failed write rolls the row
+  // back and shows the §7 error toast.
+  function inboxKeep(ids) {
+    if (!ids || !ids.length) return;
+    ids.forEach(function (id) { INBOX_HIDDEN[id] = 1; });
+    INBOX_SEL = {};
+    render();
+    toast(ids.length === 1 ? 'Kept — in Saved.' : 'Kept ' + ids.length + ' roles — in Saved.');
+    announce('Kept, moved to Saved.');
+    ids.forEach(function (id) {
+      write('/inbox/keep', { id: id })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
+        .catch(function () {
+          delete INBOX_HIDDEN[id];
+          render();
+          toast('Couldn’t move that role. It’s back where it was.', { error: true });
+        });
+    });
+  }
+  // Dismiss (§3): optimistic remove + a 6s Undo. There is NO undo route, so the dismiss write is
+  // HELD until the 6s window closes — Undo simply cancels the pending timer and un-hides the row.
+  // A write that fails after the window rolls the row back and shows the §7 error toast.
+  function inboxDismiss(ids) {
+    if (!ids || !ids.length) return;
+    var copy = ids.slice();
+    copy.forEach(function (id) { INBOX_HIDDEN[id] = 1; });
+    INBOX_SEL = {};
+    render();
+    var one = copy.length === 1 ? findInbox(copy[0]) : null;
+    toast(copy.length === 1 ? 'Dismissed ' + ((one && one.title) || 'role') + '.' : 'Dismissed ' + copy.length + ' roles.', {
+      undo: function () {
+        copy.forEach(function (id) { clearTimeout(DISMISS_TIMERS[id]); delete DISMISS_TIMERS[id]; delete INBOX_HIDDEN[id]; });
+        render();
+        announce('Dismiss undone.');
+      }
+    });
+    announce('Dismissed.');
+    copy.forEach(function (id) {
+      DISMISS_TIMERS[id] = setTimeout(function () {
+        delete DISMISS_TIMERS[id];
+        write('/inbox/dismiss', { id: id })
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
+          .catch(function () {
+            delete INBOX_HIDDEN[id];
+            render();
+            toast('Couldn’t move that role. It’s back where it was.', { error: true });
+          });
+      }, 6000);
+    });
+  }
+  // The inbox drawer (§3): opened by a row click or Enter so a posting can be read before Keep.
+  // Rendered straight from the inbox item already in hand (no fetch — it is not an application yet).
+  function openInboxDetail(id) {
+    var it = findInbox(id);
+    if (!it) return;
+    var when = it.posted || it.first_seen || '', ghost = ghostText(it);
+    document.getElementById('detail-title').innerHTML =
+      '<div class="detail-role">' + esc(it.title || 'This role') + '</div>' +
+      '<div class="detail-co">' + esc(it.company || '') + (when ? ' · posted ' + esc(relAge(when)) : '') + '</div>';
+    var html = '<section class="dsec"><h4>Next step</h4><div class="action-btns">' +
+      '<button class="pl-btn pl-btn--primary" type="button" id="ibx-d-keep">Keep (move to Saved)</button>' +
+      '<button class="pl-btn" type="button" id="ibx-d-dismiss">Dismiss</button>' +
+      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '') +
+      '</div></section>' +
+      '<section class="dsec"><h4>Why it surfaced</h4><p class="sm">' + reasonSentence(it) + '</p>' +
+      (ghost ? '<p style="margin-top:8px"><span class="pl-badge pl-badge--warning">Possible ghost job</span> ' +
+        '<span class="muted sm">' + esc(ghost) + '</span></p>' : '') + '</section>';
+    if (it.snippet) html += '<section class="dsec"><h4>Posting</h4><div class="snippet">' + esc(it.snippet) + '</div></section>';
+    document.getElementById('detail-body').innerHTML = html;
+    var keep = document.getElementById('ibx-d-keep'); if (keep) keep.onclick = function () { closeDetail(); inboxKeep([id]); };
+    var dis = document.getElementById('ibx-d-dismiss'); if (dis) dis.onclick = function () { closeDetail(); inboxDismiss([id]); };
+    showDetail();
   }
   // A board card (§3): role, company, age. Fit shows only when fit_score > 0 (never a 0). No status
   // pill — the column already says it. A server-flagged follow-up adds ONE pl-chip--warning line that
