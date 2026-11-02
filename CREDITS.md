@@ -8,7 +8,7 @@ An excellent Claude Code job-application framework. What we ported and adapted:
 
 | From upstream | Into this plugin |
 |---------------|------------------|
-| `03-writing-style.md` (anti-slop rules, the interview-backtrack honesty test, forward-looking framing) | `skills/apply-form/writing-style.md` |
+| `03-writing-style.md` (anti-slop rules, the interview-backtrack honesty test, forward-looking framing) | `skills/writing-style/SKILL.md` |
 | `04-job-evaluation.md` (weighted 4-dimension fit rubric, bands, "call the employer" playbook, motivation filter) | `skills/apply-form/job-evaluation.md` + the live `careercoach` rubric knobs |
 | `05-cv-templates.md` / `06-cover-letter-templates.md` (content discipline: 2-page limit, relevance-weighted cutting, the LaTeX gotchas) | `skills/apply-form/cv-guide.md` / `cover-letter-guide.md` |
 | `07-interview-prep.md` (STAR framework, question banks, roleplay) | `skills/interview-coach/SKILL.md` |

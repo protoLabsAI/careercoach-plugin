@@ -110,7 +110,7 @@ Read one when you reach its step, not all up front.
 
 Content discipline is **not** duplicated here. Before writing a single bullet, read
 [cv-guide.md](../apply-form/cv-guide.md) (section order, relevance-weighted cutting, the
-two-page budget) and [writing-style.md](../apply-form/writing-style.md) (tone, banned clichés,
+two-page budget) and the `writing-style` skill (tone, banned clichés,
 the interview-backtrack test). For the filed, gated, one-role-at-a-time version of this
 work, read [the gated packet flow](../apply-form/packet-flow.md) — this skill is what its Phase 3 renders with.
 

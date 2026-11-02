@@ -10,7 +10,7 @@ that step (progressive disclosure), don't inline them all up front:
 | File | When to read it |
 |------|-----------------|
 | [job-evaluation.md](job-evaluation.md) | Step 1 — the weighted fit rubric + output format |
-| [writing-style.md](writing-style.md)  | Steps 2-3 — tone, the banned-cliché list, the honesty test (**read before drafting anything**) |
+| the `writing-style` skill  | Steps 2-3 — tone, the banned-cliché list, the honesty test (**read before drafting anything**) |
 | [cv-guide.md](cv-guide.md)       | Step 2 — tailoring a CV: the content discipline (producing the file is the `resume` skill) |
 | [cover-letter-guide.md](cover-letter-guide.md) | Step 3 — cover-letter structure + rendering |
 
@@ -28,7 +28,7 @@ that step (progressive disclosure), don't inline them all up front:
   tailoring will only stretch so far before continuing.
 
 ### Step 2 — Tailor the CV (on request)
-- Read [cv-guide.md](cv-guide.md) and [writing-style.md](writing-style.md).
+- Read [cv-guide.md](cv-guide.md) and the `writing-style` skill.
 - Load the candidate's verified history with `careercoach_profile(action="read", doc="experience")` — the
   operator profile, the single source of truth (never a workspace `Resume/Experience.md`; that
   only reaches the profile through `careercoach_profile(action="import_experience")`) — plus
@@ -39,7 +39,7 @@ that step (progressive disclosure), don't inline them all up front:
   (`careercoach_profile(action="update")`) before it goes into a draft.
 - Honour `do_not_claim` from that block as a hard stop, not a preference.
 - Reframe *emphasis* from that history, never fabricate (see the honesty test in
-  [writing-style.md](writing-style.md)).
+  the `writing-style` skill).
 - Produce the document with the **`resume`** skill (`load_skill("resume")`) — it owns the
   mechanics: the CV as a versioned `html` artifact, the ATS-safe templates, and the export
   routes per `render_format` (`html`, `docx` → a real Word file, `latex` → moderncv `.tex`),
@@ -50,7 +50,7 @@ that step (progressive disclosure), don't inline them all up front:
 - If the user wants an ATS read on the result, that's the `resume` skill's three-part check.
 
 ### Step 3 — Write the cover letter (on request)
-- Read [cover-letter-guide.md](cover-letter-guide.md) and [writing-style.md](writing-style.md).
+- Read [cover-letter-guide.md](cover-letter-guide.md) and the `writing-style` skill.
 - Forward-looking and task-solving: which of *their* problems can the candidate solve, and how.
 - Verify every company-specific claim against the `company_researcher` brief's sources before including it.
 
@@ -64,7 +64,7 @@ Re-read the generated document and report a pass/fail checklist:
 - **Company claims verified** — each is backed by a source from the research brief, or it's cut.
 - **Targeting** — opening + bullets are specific to this role, not generic.
 - **Rendering** — the rendered CV is ~2 pages, the cover letter ~1 page, no layout breakage.
-- **Style** — no em-dashes, no clichés (see [writing-style.md](writing-style.md)), correct names/dates throughout.
+- **Style** — no em-dashes, no clichés (see the `writing-style` skill), correct names/dates throughout.
 
 ## Coaching stance
 Even in "do it for me" mode, act like a coach: explain *why* a bullet was reframed, flag any

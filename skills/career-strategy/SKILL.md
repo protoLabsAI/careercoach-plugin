@@ -16,7 +16,7 @@ conversation), not with what looks good on paper.
 - Distill the candidate's story into a clear, specific value proposition — what they're
   *known for*, not a list of everything they've touched.
 - Draft a LinkedIn headline / summary using the `[specialty] + [what you do for whom]` formula;
-  kill the clichés (see the writing-style discipline in [writing-style.md](../apply-form/writing-style.md)).
+  kill the clichés (see the writing-style discipline in the `writing-style` skill).
 - Identify the 1-2 role types where their story is strongest, and the keywords that market uses.
 
 ## Target-role strategy

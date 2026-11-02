@@ -10,7 +10,7 @@ description: >-
 
 A final editing pass that strips the tells of generic / machine writing and leaves prose that
 sounds like a specific, confident person. Apply *after* the content is true and targeted — this
-fixes how it reads, not what it claims. It layers on top of the Career Coach's `writing-style.md`
+fixes how it reads, not what it claims. It layers on top of the Career Coach's `writing-style` skill
 (the anti-slop, anti-fabrication core); read that first for the hard rules.
 
 ## The de-slop checklist

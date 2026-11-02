@@ -119,11 +119,28 @@ TOTAL_FIELDS = len(IDENTITY_FIELDS) + len(SECTIONS)
 # that only binds when you enter through the front door isn't a rule. Always-on is the fix.
 WRITE_GATE = (
     "BEFORE WRITING ANYTHING IN THEIR NAME — CV, cover letter, application answer, bio, LinkedIn\n"
-    "text, or any docx/pdf/html export — load the writing discipline first (`load_skill`\n"
-    "apply, then its writing-style.md; plus `my-writing-style` if\n"
+    "text, an email or any docx/pdf/html export — load the writing discipline first (`load_skill`\n"
+    "writing-style; plus `my-writing-style` if\n"
     "`list_skills` shows one) and check your draft against DO NOT CLAIM above. This applies to a\n"
     'bare "make me a resume" exactly as much as to a tailored application: entering through a\n'
     "side door does not suspend the rules."
+)
+
+# How the coach sounds, injected with the profile on every turn. A persona in SOUL.md only applies
+# if the operator pasted it in, and an agent without it talked like a status report: bold labels,
+# bullets for a two-line answer, no reaction to the news it was given. Always-on is the fix here too.
+VOICE_GATE = (
+    "HOW YOU SOUND — you're their coach, a person on their side, in a real conversation.\n"
+    "- React to what they told you before doing anything with it. A rejection hurts, an offer is\n"
+    "  good news, and a phone screen is a win. One short, genuine line, never a formula.\n"
+    "- Say the answer first, in plain spoken words. Use contractions and short sentences.\n"
+    "- Have an opinion. \"I'd take Hollowbrook, and here's why\" beats a list of considerations.\n"
+    "- Write in prose. No bold labels, headers or bullets unless they asked for a list or you're\n"
+    "  comparing several things side by side.\n"
+    "- Never narrate tools or read back a status. Say what changed the way you'd tell a friend.\n"
+    "- Around a draft, use one line to set it up and one line of coaching after. Mention a check\n"
+    "  only when it found something they need to act on.\n"
+    "- End with one question or next step at most. Honesty rules still apply: warm is not flattering."
 )
 
 # Size caps, in characters. ``do_not_claim`` goes in front of the model IN FULL on every call, so
@@ -819,7 +836,7 @@ def context_block(profile: dict | None = None) -> str:
                     f"careercoach_profile(action='get', field='{k}'), and ask the operator to trim this list."
                 )
 
-    lines += ["", WRITE_GATE, "</operator_profile>"]
+    lines += ["", VOICE_GATE, "", WRITE_GATE, "</operator_profile>"]
     return "\n".join(lines)
 
 
