@@ -134,7 +134,7 @@ def test_kit_resume_shows_version_built_path_with_copy(plugin):
     ctx = _pure_ctx(plugin)
     kit = {"resume": {"version": "v3", "built": "2026-01-01", "path": "/tmp/resume.pdf"}, "cover_letter": {}}
     out = _call(ctx, "renderKit", kit, [])
-    assert "v3" in out and "2026-01-01" in out and "/tmp/resume.pdf" in out
+    assert "v3" in out and "2026-01-01" in out and "<code>resume.pdf</code>" in out and "/tmp/" not in out
     assert "data-copy-path" in out and "Copy path" in out
 
 
@@ -561,3 +561,18 @@ def test_close_restores_replaced_opener_after_live_refresh(plugin):
       closeDetail();
     """)
     assert ctx.eval("document.activeElement === replacement") is True
+
+
+def test_kit_steps_wrap_their_content_and_show_only_the_file_name(plugin):
+    """Each step is the design system's number + 1fr grid, so its content needs one wrapper: bare
+    children land in the 2rem number column. The path stays copyable but off the page."""
+    from test_jobs_page import _inner
+
+    kit = {"resume": {"path": "/Users/someone/private/resume-acme.pdf", "version": "acme", "built": "2026-11-02"},
+           "cover_letter": {"text": "Dear Acme,"}}  # fmt: skip
+    ctx = _drawer(plugin, kit=kit)
+    out = _inner(ctx, "detail-body")
+    assert out.count('<span class="pl-step__num">') == 3
+    assert out.count('<div class="kit-body"><h5>') == 3
+    assert "<code>resume-acme.pdf</code>" in out
+    assert "/Users/someone" not in out
