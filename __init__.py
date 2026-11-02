@@ -3015,6 +3015,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     color: var(--pl-color-fg-muted); margin: 0 0 10px; font-weight: 600; }
   #detail .kit-block { margin-bottom: 14px; }
   #detail .kit-block:last-child { margin-bottom: 0; }
+  #detail .kit-body { min-width: 0; }  /* a long word or path must not widen the step's 1fr track */
   #detail .kit-block h5 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
   #detail .kv { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; flex-wrap: wrap; }
   #detail .kv .k { width: 72px; flex: none; color: var(--pl-color-fg-muted); }
@@ -4333,21 +4334,21 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     kit = kit || {};
     var out = '<div class="pl-steps">';
     var r = kit.resume || {};
-    out += '<div class="kit-block pl-step"><h5>Résumé</h5>';
+    out += '<div class="kit-block pl-step"><span class="pl-step__num">1</span><div class="kit-body"><h5>Résumé</h5>';
     if (r.path || r.version || r.built) {
       if (r.version) out += '<div class="kv"><span class="k">Version</span><span>' + esc(r.version) + '</span></div>';
       if (r.built) out += '<div class="kv"><span class="k">Built</span><span>' + esc(r.built) + '</span></div>';
       if (r.path) {
-        out += '<div class="kv"><span class="k">File</span><code>' + esc(r.path) + '</code>' +
+        out += '<div class="kv"><span class="k">File</span><code>' + esc(String(r.path).split(/[\\/]/).pop()) + '</code>' +
           '<button class="pl-btn pl-btn--sm copy" type="button" data-copy-path>Copy path</button></div>';
       }
     } else {
       out += '<p class="muted">Not started</p><p class="muted sm">Tailors your résumé to this posting’s title and requirements.</p>';
     }
-    out += '</div>';
+    out += '</div></div>';
 
     var cl = kit.cover_letter || {};
-    out += '<div class="kit-block pl-step"><h5>Cover letter</h5>';
+    out += '<div class="kit-block pl-step"><span class="pl-step__num">2</span><div class="kit-body"><h5>Cover letter</h5>';
     if (cl.text) {
       out += '<div class="dsec-actions"><button class="pl-btn pl-btn--sm copy" type="button" data-copy-cover>' +
         'Copy cover letter</button></div><div class="cover-text">' + esc(cl.text) + '</div>';
@@ -4359,9 +4360,9 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
     } else {
       out += '<p class="muted">Not started</p><p class="muted sm">Writes one if the posting asks for it, or marks it not needed.</p>';
     }
-    out += '</div>';
+    out += '</div></div>';
 
-    out += '<div class="kit-block pl-step"><h5>Form answers</h5>';
+    out += '<div class="kit-block pl-step"><span class="pl-step__num">3</span><div class="kit-body"><h5>Form answers</h5>';
     if ((kit.answers || []).length || kit.no_form_questions) {
       out += kit.no_form_questions ? '<p class="muted sm">No form questions for this posting.</p>' : '';
       out += renderAnswers(kitAnswers(kit, answers));
@@ -4369,7 +4370,7 @@ _DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
       out += '<p class="muted">Not started</p><p class="muted sm">Drafts any new questions for you to confirm.</p>';
       if ((answers || []).length) out += '<p class="muted sm">' + answers.length + ' saved answers will be reused</p>' + renderAnswers(answers);
     }
-    out += '</div></div>';
+    out += '</div></div></div>';
     return out;
   }
 
