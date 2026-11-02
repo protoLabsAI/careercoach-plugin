@@ -66,6 +66,7 @@ it's too far.
 - **Flag it** — combining academic + industry experience into one claim that implies it was
   all industry; describing adjacent work in the posting's exact terminology as if it were the same.
 - **Never** — claiming experience the candidate doesn't have; implying a domain they haven't worked in.
+  That includes softer wording: "deepen my Kubernetes experience" still claims Kubernetes experience.
 
 When a line is in the "flag it" zone, surface it after drafting:
 > "This bullet is a stretch because X. Keep, soften, or drop?"

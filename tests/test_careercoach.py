@@ -37,12 +37,12 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.13.8: the redesigned Jobs view, in the 0.13 line so the bundle floor still
+    This release is v0.13.9: the coach sounds like a person, in the 0.13 line so the bundle floor still
     takes it (the 0.x minor is the pin boundary)."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.13.8"
+    assert pyproject == "0.13.9"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
@@ -545,3 +545,11 @@ def test_watch_surface_and_verifier_when_enabled(plugin):
     plugin.register(reg)
     assert "careercoach-watch" in reg.surfaces  # auto-scan surface registered when enabled
     assert "careercoach:new_matches" in reg.verifiers  # WATCH/monitor verifier available either way
+
+
+def test_every_turn_carries_the_voice_and_the_implied_claim_rule(plugin, iso):
+    """The persona in SOUL.md only applies if it was pasted in, so the voice rides with the profile."""
+    profile = importlib.import_module(f"{plugin.__name__}.profile")
+    block = profile.context_block({"identity": {"name": "Sam"}, "sections": {"do_not_claim": "Kubernetes"}})
+    assert "HOW YOU SOUND" in block and "Have an opinion" in block
+    assert "implied experience" in block
