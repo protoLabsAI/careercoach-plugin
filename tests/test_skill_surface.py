@@ -1,4 +1,4 @@
-"""The five skill entrypoints, their references, and the preserved application gates."""
+"""The six skill entrypoints, their references, and the preserved application gates."""
 
 import hashlib
 import re
@@ -16,6 +16,7 @@ SKILLS = ROOT / "skills"
 ENTRYPOINTS = {
     "apply-form": "apply",
     "career-strategy": "strategy",
+    "writing-style": "writing-style",
     "interview-coach": "interview",
     "job-hunt": "job-hunt",
     "resume": "resume",
@@ -48,10 +49,10 @@ def _read(directory):
     return yaml.safe_load(frontmatter), body
 
 
-def test_exactly_five_discoverable_skills_in_the_original_directories():
+def test_exactly_six_discoverable_skills_in_the_original_directories():
     paths = sorted(SKILLS.rglob("SKILL.md"))
     assert {p.parent for p in paths} == {SKILLS / d for d in ENTRYPOINTS}
-    assert len(paths) == 5
+    assert len(paths) == 6
     for directory, name in ENTRYPOINTS.items():
         metadata, _ = _read(directory)
         assert metadata["name"] == name
@@ -154,7 +155,7 @@ def test_no_operator_specific_names_in_skills():
 # The runtime surfaces the HOST executes against a skill by name: the always-on write gate
 # (profile.WRITE_GATE, injected every turn), the apply-workflow subagent prompts, and the
 # workflow file. A load_skill call that names a folded-away skill fails silently — the
-# autonomous crew has no operator watching it — so these are held to the five live names.
+# autonomous crew has no operator watching it — so these are held to the six live names.
 RUNTIME_SURFACES = {
     "profile.py": ROOT / "profile.py",
     "__init__.py": ROOT / "__init__.py",
@@ -188,7 +189,7 @@ def test_no_runtime_surface_names_a_folded_away_skill():
             )
 
 
-def test_the_always_on_write_gate_points_at_the_live_apply_skill():
+def test_the_always_on_write_gate_points_at_the_live_writing_style_skill():
     """The gate injects every turn and names the skill that carries the writing discipline.
     It uses the bare-prose `load_skill` form, not a paren call, so it is checked by name."""
     text = (ROOT / "profile.py").read_text(encoding="utf-8")
@@ -196,7 +197,7 @@ def test_the_always_on_write_gate_points_at_the_live_apply_skill():
     assert gate, "WRITE_GATE constant not found"
     body = gate.group(1)
     assert "load_skill" in body, "the gate must still route through load_skill"
-    assert "apply, then its writing-style.md" in body, "the gate must name the live apply skill"
+    assert "writing-style" in body, "the gate must name the live writing-style skill"
 
 
 def test_interview_drafts_require_grounded_metrics_and_a_pre_display_check():

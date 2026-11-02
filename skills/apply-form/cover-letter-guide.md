@@ -3,7 +3,7 @@
 > Content discipline adapted with credit from Mads Lorentzen's `ai-job-search` (MIT),
 > `06-cover-letter-templates.md`. Rendering defaults to a **print-correct HTML artifact**;
 > LaTeX (`cover.cls`) is an option (appendix). Structure + voice live in
-> [writing-style.md](writing-style.md) — read it first.
+> the `writing-style` skill — read it first.
 
 Every candidate metric must come from the profile or story bank; if missing, write
 `[fill in: <what>]` and never estimate. Before showing a draft, run
@@ -32,7 +32,7 @@ as a question or replace it with a placeholder, never silently include it.
 - **Exactly one page**, signature block included. **Body budget: 250-300 words** (350 overflows).
 - Structure = 3 blocks (opening + body-with-bullets + close); add a 4th only if the others are short.
 
-## Structure (see [writing-style.md](writing-style.md) for the full shape)
+## Structure (see the `writing-style` skill for the full shape)
 
 1. **Salutation** — a named person if known ("Dear [First Last],"), else the team
    ("Dear [Company] hiring team,"). Avoid "To whom it may concern".
@@ -43,7 +43,7 @@ as a question or replace it with a placeholder, never silently include it.
 6. **Close** — brief, confident. Then signature.
 
 ## Checklist before finalizing
-- [ ] No em-dashes; no clichés or filler ([writing-style.md](writing-style.md))
+- [ ] No em-dashes; no clichés or filler (the `writing-style` skill)
 - [ ] Every claim backed by a specific example
 - [ ] Forward-looking: focuses on the tasks the candidate will solve
 - [ ] The "why this company" section cites *this* company's specifics (verified against sources)

@@ -1,8 +1,45 @@
+---
+name: writing-style
+description: >-
+  The house rules for anything written in the operator's name: cover letters, résumé bullets,
+  emails, negotiation messages, recruiter replies and application answers. Load it before drafting
+  any of these, however small. Covers sounding like a person, the anti-slop list and the honesty test.
+tools: [careercoach_profile, careercoach_read_sources]
+---
+
 # Writing Style Guide
 
 > Adapted with credit from Mads Lorentzen's `ai-job-search` (MIT), `03-writing-style.md`.
 > This is the anti-slop, anti-fabrication core of the coach — apply it to every cover
 > letter, CV bullet, and message the candidate sends.
+
+## Sound like a person
+
+The reader is a busy human. Write what the operator would actually send, then read it aloud. If you
+wouldn't say it to someone's face, rewrite it.
+
+- **One idea per sentence.** Keep most sentences under 20 words. Never splice a list of facts onto a
+  long clause to hit a sentence count: "three sentences" means three short ones.
+- **Use contractions and everyday words.** "I'd like to", not "I would like to request".
+- **One proof point, not a résumé recap.** Pick the single fact that earns this message and leave
+  the rest for the interview. Drop tooling jargon unless the reader uses it too.
+- **Warmth first, then the point, then an easy close.** Say thanks like you mean it, make the ask
+  plainly, and make the next step simple.
+- **Never open a reason with "Because of my experience".** Never write "I'm excited about the role
+  and would love to join" as a formula. Say one true, specific thing instead.
+
+**A real failure and its fix.** Before:
+
+> Thank you for the Agent Engineer offer. I'm excited about the role and would love to join
+> Hollowbrook. Because of my experience shipping LLM features with evals behind them, like a support
+> reply assistant for 2,000 customers and a 300-case eval suite that caught two regressions before
+> launch, I'm asking for a base salary of $178k, and if we can agree on that, I'm ready to accept.
+
+After:
+
+> Thanks so much for the offer. I'm really looking forward to working with the team. Given the
+> support assistant I shipped to 2,000 customers, I'd like to ask for a base of $178k. If we can get
+> there, I'm ready to sign.
 
 ## Critical rules
 
@@ -12,7 +49,7 @@
    (as an assertion — show it instead).
 3. **No generic buzzwords without backing.** Every claim needs a specific example or fact.
 4. **No apologetic or over-humble language.** Not "I think I could contribute" but
-   "I bring X, demonstrated by Y."
+   "I built X, and it did Y."
 5. **No unverified company claims.** Every company-specific statement (partnerships, product
    names, technology, expansions) must be verified against a source in the `company_researcher`
    brief before it goes in. If it can't be verified, generalize it or cut it.
@@ -29,6 +66,7 @@ it's too far.
 - **Flag it** — combining academic + industry experience into one claim that implies it was
   all industry; describing adjacent work in the posting's exact terminology as if it were the same.
 - **Never** — claiming experience the candidate doesn't have; implying a domain they haven't worked in.
+  That includes softer wording: "deepen my Kubernetes experience" still claims Kubernetes experience.
 
 When a line is in the "flag it" zone, surface it after drafting:
 > "This bullet is a stretch because X. Keep, soften, or drop?"
@@ -38,7 +76,7 @@ reframing would be needed — that's a coaching moment, not a green light.
 
 ## Tone
 
-- **Warm but direct.** Confident without arrogance; how a self-assured person talks in a good interview.
+- **Warm but direct.** Confident without arrogance; how a self-assured person talks to someone they like.
 - **First person, active voice.** "I built", not "a system was developed by the candidate".
 - **Demonstrate, don't state.** Replace "I am a strong communicator" with a specific example and its outcome.
 

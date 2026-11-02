@@ -24,7 +24,7 @@ The output is a real folder tree the user can open and edit:
    cover letter must trace to the operator profile — the single source of truth,
    `careercoach_profile(action="read", doc="experience")` — or `Agent/story-bank.md`, and pass the
    interview-backtrack test in
-   [writing-style.md](writing-style.md). If it isn't there and true, it doesn't ship. Honor
+   the `writing-style` skill. If it isn't there and true, it doesn't ship. Honor
    the "do NOT claim" guardrails — the story bank's and the profile's `do_not_claim`.
 
 ## Before you start
@@ -65,7 +65,7 @@ hiring manager is identifiable from the posting or research, research them and w
 **`hiring-manager-profile`**; otherwise say so and skip it (it's conditional).
 
 ### Phase 3 — Resume  ·  *gate: confirm before drafting*
-Read [evidence-map.md](evidence-map.md), then [cv-guide.md](cv-guide.md) and **[writing-style.md](writing-style.md)**
+Read [evidence-map.md](evidence-map.md), then [cv-guide.md](cv-guide.md) and **the `writing-style` skill**
 (read before writing any bullet). First build the **`evidence-map`**: every JD requirement mapped to
 your proof from the profile / the story bank, with gaps and stretches flagged honestly. *Then*
 write the **`tailored-resume`**, drawing only on what the evidence map supports. Surface any stretch
@@ -85,7 +85,7 @@ you to enter, ranked to the posting, each with the exact phrasing and backed by 
 any the candidate can't substantiate rather than padding the list.
 
 ### Phase 5 — Cover letter  ·  *gate: confirm*
-Read [cover-letter-guide.md](cover-letter-guide.md) + [writing-style.md](writing-style.md) (which layers in the
+Read [cover-letter-guide.md](cover-letter-guide.md) + the `writing-style` skill (which layers in the
 operator's learned `my-writing-style` voice if it exists), then `Skills/Humanize/SKILL.md` for the
 final de-slop pass. Write the **`cover-letter`** (forward-looking,
 task-solving; verify every company-specific claim against the recruiter brief's sources). Capture the

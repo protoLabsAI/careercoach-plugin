@@ -73,7 +73,7 @@ Every protoAgent extension surface, in one plugin:
 
 | Surface | Where | What it shows |
 |---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 5 skills (`job-hunt`, `apply`, `resume`, `interview`, `strategy`); `apply` + `resume` use **sub-files** (`writing-style.md`, `evidence-map.md`, `ats-check.md`, …) read on demand; `apply` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
+| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 6 skills (`job-hunt`, `apply`, `resume`, `interview`, `strategy`, `writing-style`); `apply` + `resume` use **sub-files** (`evidence-map.md`, `ats-check.md`, …) read on demand; `apply` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
 | **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
 | **User-facing slash skill** | `skills/job-hunt/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
 | **Gated, filed pipeline** (skill-driven) | `skills/apply-form/packet-flow.md` + `packet.py` + `templates/` | the role-packet flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
@@ -114,8 +114,9 @@ careercoach-plugin/
 ├─ ats.py + formfill.py       # the opt-in browser-fill beta — per-ATS planning and read-back, tested
 ├─ submitgate.py              # the consent gate for a submit click — tested
 ├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
-├─ skills/                         # 5 skills; directory names kept, frontmatter name in parens
-│  ├─ apply-form/                  # name: apply — evaluate fit, CV/cover-letter + writing-style / job-evaluation, the gated packet-flow, and the opt-in browser-fill beta
+├─ skills/                         # 6 skills; directory names kept, frontmatter name in parens
+│  ├─ apply-form/                  # name: apply — evaluate fit, CV/cover-letter / job-evaluation, the gated packet-flow, and the opt-in browser-fill beta
+│  ├─ writing-style/               # how anything in the operator's name should read: human voice, anti-slop, honesty test
 │  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
 │  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest; absorbs the setup-coach first-run interview
 │  ├─ interview-coach/             # name: interview — STAR bank + mock interviews with feedback
