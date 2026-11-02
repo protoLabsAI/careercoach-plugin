@@ -189,7 +189,7 @@ def test_no_runtime_surface_names_a_folded_away_skill():
             )
 
 
-def test_the_always_on_write_gate_points_at_the_live_apply_skill():
+def test_the_always_on_write_gate_points_at_the_live_writing_style_skill():
     """The gate injects every turn and names the skill that carries the writing discipline.
     It uses the bare-prose `load_skill` form, not a paren call, so it is checked by name."""
     text = (ROOT / "profile.py").read_text(encoding="utf-8")

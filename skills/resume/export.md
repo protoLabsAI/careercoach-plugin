@@ -39,7 +39,7 @@ use.
 
 The procedure is already documented: read [cv-guide.md](../apply-form/cv-guide.md) for the
 full steps and the version floors. In short: `load_skill("docx")`, author the CV with
-`python-docx` following `cv-guide.md` + `writing-style.md`, save it to an **absolute** path in
+`python-docx` following `cv-guide.md` + the `writing-style` skill, save it to an **absolute** path in
 the role folder (cowork's skill defaults to a project folder or `output_dir`; neither fits
 the coach's workspace, so pass the path explicitly), then
 `save_file_artifact("<that same absolute path>", title="<Name> — Resume — <Company> <Role - Req> (DOCX)", artifact_id=<the DOCX export id from the snapshot header, if any>)`.

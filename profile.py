@@ -122,7 +122,7 @@ WRITE_GATE = (
     "text, an email or any docx/pdf/html export — load the writing discipline first (`load_skill`\n"
     "writing-style; plus `my-writing-style` if\n"
     "`list_skills` shows one) and check your draft against DO NOT CLAIM above. A DO NOT CLAIM item\n"
-    "can't come back as implied experience: \"deepen my X experience\" still claims X. This applies to a\n"
+    'can\'t come back as implied experience: "deepen my X experience" still claims X. This applies to a\n'
     'bare "make me a resume" exactly as much as to a tailored application: entering through a\n'
     "side door does not suspend the rules."
 )
