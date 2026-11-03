@@ -37,12 +37,10 @@ def test_manifest_is_valid():
 def test_manifest_and_pyproject_versions_are_in_lockstep():
     """The release ritual tags whatever version the two manifests carry, and they must agree —
     a feature PR that bumped only one, or a release that forgot the other, would tag a mismatch.
-    This release is v0.13.9: the coach sounds like a person, in the 0.13 line so the bundle floor still
-    takes it (the 0.x minor is the pin boundary)."""
+    Neither file's number is pinned here, so a release only edits the two manifests."""
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())["version"]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert str(manifest) == pyproject, (manifest, pyproject)
-    assert pyproject == "0.13.9"
 
 
 # ── the dashboard view honors the DS theme contract ──────────────────────────
@@ -553,3 +551,18 @@ def test_every_turn_carries_the_voice_and_the_implied_claim_rule(plugin, iso):
     block = profile.context_block({"identity": {"name": "Sam"}, "sections": {"do_not_claim": "Kubernetes"}})
     assert "HOW YOU SOUND" in block and "Have an opinion" in block
     assert "implied experience" in block
+
+
+def test_a_kit_that_saved_is_not_reported_lost_when_the_move_fails(plugin, tools, monkeypatch):
+    """The kit is stored before the status move; if the move fails, say that, not "not saved"."""
+    state = importlib.import_module(f"{plugin.__name__}.record.state")
+    row = state.track_application(company="Acme", role="Dev", status="considering")
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(state, "move", boom)
+    out = tools["careercoach_save_apply_kit"].invoke({"company": "Acme", "role": "Dev", "cover_letter": "Dear Acme,"})
+    assert "not saved" not in out.lower() and "Saved the apply kit" in out, out
+    kept = next(r for r in state.load_applications() if r["id"] == row["id"])
+    assert kept["kit"]["cover_letter"]["text"] == "Dear Acme,"

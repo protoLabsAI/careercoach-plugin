@@ -181,5 +181,7 @@ def test_prepare_surfaces_a_fetch_error_as_a_readable_message(tools, ats, monkey
 
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_ats_has_no_host_imports():
-    src = (Path(__file__).resolve().parent.parent / "applying" / "ats.py").read_text(encoding="utf-8")
-    assert "import graph" not in src and "from graph" not in src
+    from hostfree import host_imports
+
+    found = host_imports((Path(__file__).resolve().parent.parent / "applying" / "ats.py"))
+    assert not found, found

@@ -182,8 +182,15 @@ def _families(context: str) -> set[str]:
 
 
 def _is_year(fig: Figure) -> bool:
-    """A standalone four-digit year (1900-2099) — never flagged."""
-    return fig.kind == "number" and bool(re.fullmatch(r"\d{4}", fig.normalized)) and 1900 <= int(fig.normalized) <= 2099
+    """A four-digit year (1900-2099), or a range of two such years like 2021-2026 — never flagged."""
+    if fig.kind == "number":
+        ends = [fig.normalized]
+    elif fig.kind == "range":
+        ends = re.split(r"\s*[-–—]\s*", fig.raw.strip())
+    else:
+        return False
+    want = 1 if fig.kind == "number" else 2
+    return len(ends) == want and all(re.fullmatch(r"\d{4}", e) and 1900 <= int(e) <= 2099 for e in ends)
 
 
 def _is_list_marker(fig: Figure, text: str) -> bool:
