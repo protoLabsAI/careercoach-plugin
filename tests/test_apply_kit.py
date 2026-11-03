@@ -18,7 +18,7 @@ from _plugin_testkit import FakeRegistry
 def st(plugin, iso, monkeypatch):
     """The ``state`` module with an isolated store."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".state")
+    return importlib.import_module(plugin.__name__ + ".record.state")
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def test_mark_applied_snapshots_kit_answers_preserving_status(st):
 
 
 def test_mark_applied_falls_back_to_saved_answers_with_their_status(plugin, st):
-    ans = importlib.import_module(plugin.__name__ + ".answers")
+    ans = importlib.import_module(plugin.__name__ + ".record.answers")
     ans.propose("phone_number", "555-1234")
     ans.confirm(["phone_number"])  # confirmed
     ans.propose("linkedin_url", "https://linkedin.com/in/x")  # left a draft
@@ -421,7 +421,7 @@ def test_save_apply_kit_accepts_the_answers_alias(tools, st):
 # ── GET /applications/{id} ──────────────────────────────────────────────────────────
 def test_application_detail_shape_and_404(plugin, client, monkeypatch):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     monkeypatch.setattr(st, "_today", lambda: "2026-10-01")
     app_id = st.track_application(company="Acme", role="ML Engineer", status="preparing")["id"]
     monkeypatch.setattr(st, "_today", lambda: "2026-10-05")
@@ -443,7 +443,7 @@ def test_application_detail_shape_and_404(plugin, client, monkeypatch):
 
 def test_application_detail_kit_defaults_to_empty_skeleton(plugin, client):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     body = tc.get(f"/api/plugins/careercoach/applications/{app_id}").json()
     assert body["kit"] == st._empty_kit()  # a row without a kit reads as the empty shape
@@ -451,7 +451,7 @@ def test_application_detail_kit_defaults_to_empty_skeleton(plugin, client):
 
 def test_application_detail_round_trips_a_complete_kit(plugin, client, resume_pdf):
     tc, reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     save = {t.name: t for t in reg.tools}["careercoach_save_apply_kit"]
     save.invoke(
         {
@@ -475,8 +475,8 @@ def test_application_detail_round_trips_a_complete_kit(plugin, client, resume_pd
 
 def test_application_detail_answers_preserve_draft_confirmed(plugin, client):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
-    ans = importlib.import_module(plugin.__name__ + ".answers")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
+    ans = importlib.import_module(plugin.__name__ + ".record.answers")
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     ans.propose("phone_number", "555")
     ans.confirm(["phone_number"])
@@ -489,8 +489,8 @@ def test_application_detail_answers_preserve_draft_confirmed(plugin, client):
 
 def test_application_detail_returns_contacts_at_company(plugin, client):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
-    contacts = importlib.import_module(plugin.__name__ + ".contacts")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
+    contacts = importlib.import_module(plugin.__name__ + ".search.contacts")
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     contacts.merge_contacts([{"name": "Dana", "company": "Acme", "url": "https://linkedin.com/in/dana"}])
     body = tc.get(f"/api/plugins/careercoach/applications/{app_id}").json()
@@ -499,8 +499,8 @@ def test_application_detail_returns_contacts_at_company(plugin, client):
 
 def test_application_detail_tolerates_an_unreadable_contacts_store(plugin, client):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
-    contacts = importlib.import_module(plugin.__name__ + ".contacts")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
+    contacts = importlib.import_module(plugin.__name__ + ".search.contacts")
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     contacts._path().write_text("{not json", encoding="utf-8")
     assert tc.get(f"/api/plugins/careercoach/applications/{app_id}").json()["contacts"] == []
@@ -509,7 +509,7 @@ def test_application_detail_tolerates_an_unreadable_contacts_store(plugin, clien
 # ── POST /applications/{id}/applied ─────────────────────────────────────────────────
 def test_applied_route_snapshots_and_emits(plugin, client):
     tc, reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     app_id = st.track_application(company="Acme", role="ML Engineer", status="preparing")["id"]
     st.set_kit(
         app_id,
@@ -531,7 +531,7 @@ def test_applied_route_snapshots_and_emits(plugin, client):
 # ── PATCH /applications/{id}/notes ──────────────────────────────────────────────────
 def test_notes_route_persists_and_404(plugin, client):
     tc, reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     app_id = st.track_application(company="Acme", role="ML Engineer")["id"]
     r = tc.patch(f"/api/plugins/careercoach/applications/{app_id}/notes", json={"notes": "ping recruiter"})
     assert r.status_code == 200

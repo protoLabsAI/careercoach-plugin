@@ -105,7 +105,7 @@ def _fresh(plugin_dir: Path = ROOT):
     from _plugin_testkit import load_plugin
 
     pkg = load_plugin(plugin_dir, "careercoach")
-    return importlib.import_module(pkg.__name__ + ".profile")
+    return importlib.import_module(pkg.__name__ + ".record.profile")
 
 
 def test_a_wiped_dev_sandbox_is_not_resurrected_from_the_legacy_copy(iso, monkeypatch):
@@ -359,7 +359,7 @@ def test_cross_process_writes_serialize(iso):
     flock serializes them, so every field ends at its writer's last value."""
     ccdir = str(iso / "cc")
     ctx = mp.get_context("spawn")
-    procs = [ctx.Process(target=_proc_writer, args=(str(ROOT / "profile.py"), ccdir, f, 30)) for f in FIELDS]
+    procs = [ctx.Process(target=_proc_writer, args=(str(ROOT / "record" / "profile.py"), ccdir, f, 30)) for f in FIELDS]
     [p.start() for p in procs]
     [p.join(60) for p in procs]
     assert all(p.exitcode == 0 for p in procs), [p.exitcode for p in procs]

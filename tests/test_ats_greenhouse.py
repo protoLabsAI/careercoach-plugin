@@ -22,7 +22,7 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "greenhouse_gitlab_8698
 @pytest.fixture
 def ats(plugin):
     """The plugin's ``ats`` module (pure — no store, no network)."""
-    return importlib.import_module(plugin.__name__ + ".ats")
+    return importlib.import_module(plugin.__name__ + ".applying.ats")
 
 
 @pytest.fixture
@@ -181,5 +181,5 @@ def test_prepare_surfaces_a_fetch_error_as_a_readable_message(tools, ats, monkey
 
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_ats_has_no_host_imports():
-    src = (Path(__file__).resolve().parent.parent / "ats.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "applying" / "ats.py").read_text(encoding="utf-8")
     assert "import graph" not in src and "from graph" not in src

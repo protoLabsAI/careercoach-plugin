@@ -74,7 +74,7 @@ def profile(plugin, iso):
     ``iso`` in force so a test can never resolve the real store."""
     import importlib
 
-    return importlib.import_module(plugin.__name__ + ".profile")
+    return importlib.import_module(plugin.__name__ + ".record.profile")
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def state(plugin, iso):
     """The plugin's ``state`` module (the application tracker), isolated by ``iso``."""
     import importlib
 
-    return importlib.import_module(plugin.__name__ + ".state")
+    return importlib.import_module(plugin.__name__ + ".record.state")
 
 
 @pytest.fixture

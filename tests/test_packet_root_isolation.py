@@ -11,7 +11,7 @@ from _plugin_testkit import FakeRegistry
 @pytest.fixture
 def packet(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "agent"))
-    return importlib.import_module(plugin.__name__ + ".packet")
+    return importlib.import_module(plugin.__name__ + ".applying.packet")
 
 
 def _tools(plugin, configured=""):

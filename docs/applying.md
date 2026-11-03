@@ -49,7 +49,7 @@ uses the same live-form path with extra care, and says so.
 
 Submitting without your explicit consent is the one thing this plugin must never do. A rule in a skill
 can't enforce that, and neither can a tool the agent decides to call, so the gate has two parts
-(`submitgate.py`, tested without a host).
+(`applying/submitgate.py`, tested without a host).
 
 **Consent comes through an interrupt, not a model decision.** `careercoach_request_submit` refuses, without
 asking anyone, unless the fill session is `VERIFIED` and hasn't been re-planned or changed since. Any new or

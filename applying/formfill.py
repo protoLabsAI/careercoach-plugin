@@ -35,8 +35,8 @@ import secrets
 from datetime import UTC, datetime
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 
-from . import answers as _answers
-from . import profile as _store
+from ..record import answers as _answers
+from ..record import profile as _store
 
 StoreUnreadable = _store.StoreUnreadable
 log = _store.log

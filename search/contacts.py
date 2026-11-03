@@ -17,8 +17,8 @@ import io
 import json
 from datetime import UTC, date, datetime
 
-from . import profile as _store
-from .companies import company_hint_key, company_key
+from ..record import profile as _store
+from ..record.companies import company_hint_key, company_key
 
 StoreUnreadable = _store.StoreUnreadable
 

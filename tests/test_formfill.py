@@ -19,14 +19,14 @@ def formfill(plugin, iso, monkeypatch):
     """The plugin's ``formfill`` module, with an isolated store (the same ``CAREERCOACH_DIR`` the
     ``tools`` and ``answers`` fixtures use, so a test may mix the three)."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".formfill")
+    return importlib.import_module(plugin.__name__ + ".applying.formfill")
 
 
 @pytest.fixture
 def answers(plugin, iso, monkeypatch):
     """The plugin's ``answers`` module, sharing ``formfill``'s store."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".answers")
+    return importlib.import_module(plugin.__name__ + ".record.answers")
 
 
 # ── synthetic form helpers ──────────────────────────────────────────────────────────────
@@ -801,7 +801,7 @@ def test_re_planning_the_same_application_keeps_its_id(formfill):
 def test_formfill_has_no_host_imports():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "formfill.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "applying" / "formfill.py").read_text(encoding="utf-8")
     assert "import graph" not in src and "from graph" not in src
 
 

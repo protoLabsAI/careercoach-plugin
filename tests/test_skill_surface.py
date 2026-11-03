@@ -157,7 +157,7 @@ def test_no_operator_specific_names_in_skills():
 # workflow file. A load_skill call that names a folded-away skill fails silently — the
 # autonomous crew has no operator watching it — so these are held to the six live names.
 RUNTIME_SURFACES = {
-    "profile.py": ROOT / "profile.py",
+    "record/profile.py": ROOT / "record" / "profile.py",
     "__init__.py": ROOT / "__init__.py",
     "workflows/apply.yaml": ROOT / "workflows/apply.yaml",
 }
@@ -192,7 +192,7 @@ def test_no_runtime_surface_names_a_folded_away_skill():
 def test_the_always_on_write_gate_points_at_the_live_writing_style_skill():
     """The gate injects every turn and names the skill that carries the writing discipline.
     It uses the bare-prose `load_skill` form, not a paren call, so it is checked by name."""
-    text = (ROOT / "profile.py").read_text(encoding="utf-8")
+    text = (ROOT / "record" / "profile.py").read_text(encoding="utf-8")
     gate = re.search(r"WRITE_GATE\s*=\s*\((.*?)\n\)", text, flags=re.S)
     assert gate, "WRITE_GATE constant not found"
     body = gate.group(1)

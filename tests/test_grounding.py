@@ -15,7 +15,7 @@ import pytest
 @pytest.fixture
 def grounding(plugin):
     """The plugin's host-free ``grounding`` module (fresh per test — ``load_plugin`` purges it)."""
-    return importlib.import_module(plugin.__name__ + ".grounding")
+    return importlib.import_module(plugin.__name__ + ".record.grounding")
 
 
 def _kinds(flags):

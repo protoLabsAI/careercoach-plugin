@@ -31,9 +31,9 @@ SCHEMA = {
 @pytest.fixture
 def setup(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    ats = importlib.import_module(plugin.__name__ + ".ats")
-    answers = importlib.import_module(plugin.__name__ + ".answers")
-    formfill = importlib.import_module(plugin.__name__ + ".formfill")
+    ats = importlib.import_module(plugin.__name__ + ".applying.ats")
+    answers = importlib.import_module(plugin.__name__ + ".record.answers")
+    formfill = importlib.import_module(plugin.__name__ + ".applying.formfill")
     calls = []
 
     async def fetch(board, job_id):

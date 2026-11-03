@@ -13,7 +13,7 @@ from _plugin_testkit import FakeRegistry
 @pytest.fixture
 def st(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".state")
+    return importlib.import_module(plugin.__name__ + ".record.state")
 
 
 @pytest.fixture

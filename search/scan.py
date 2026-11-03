@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import boards
 from . import watchlist as wl
-from .companies import company_hint_key, role_key
+from ..record.companies import company_hint_key, role_key
 
 ACTIVE = ("applied", "interviewing", "offer")
 
@@ -30,7 +30,7 @@ class ScanResult:
 def tracked_index(rows: list[dict]) -> tuple[dict, dict, dict]:
     """``(by_role, by_url, by_company)`` lookups over the tracker rows, keyed on the loose company
     hint ("Arize AI" ~ "Arize") — they only decide what to SHOW as tracked / applied-here."""
-    from .state import job_specific_url
+    from ..record.state import job_specific_url
 
     by_role, by_url, by_company = {}, {}, {}
     for r in rows:

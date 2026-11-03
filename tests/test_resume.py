@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture
 def resume(plugin):
     """The plugin's host-free ``resume`` module (no store needed for the pure functions)."""
-    return importlib.import_module(plugin.__name__ + ".resume")
+    return importlib.import_module(plugin.__name__ + ".applying.resume")
 
 
 # A clean, employer-facing résumé body — the ONLY thing (plus the name) a résumé is built from. No
@@ -286,7 +286,7 @@ def test_annotation_lines_does_not_flag_ordinary_resume_prose(resume):
 
 # ── the module honours the host-free contract ──────────────────────────────────────────
 def test_resume_module_imports_no_host():
-    src = (ROOT / "resume.py").read_text(encoding="utf-8")
+    src = (ROOT / "applying" / "resume.py").read_text(encoding="utf-8")
     assert not re.search(r"^\s*(from|import)\s+graph(\.|\s|$)", src, re.M), "resume.py imports the host"
 
 

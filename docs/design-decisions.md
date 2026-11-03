@@ -13,7 +13,7 @@ The point is to make you clearer and better prepared, not to send more applicati
 The full application comes in two shapes. The `apply` workflow runs research, evaluation and the apply kit
 in one go. The role-packet skill does the same work with your approval before every phase, and files the
 result as editable artifacts. A static workflow can't pause between steps, so the gated flow is a skill that
-stops and asks, plus tested scaffolding tools (`packet.py`) for the file mechanics.
+stops and asks, plus tested scaffolding tools (`applying/packet.py`) for the file mechanics.
 
 ## The profile is state, and it's always in front of the model
 

@@ -30,8 +30,8 @@ def card(jid="one", **overrides):
 @pytest.fixture
 def stores(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
-    state = importlib.import_module(plugin.__name__ + ".state")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    state = importlib.import_module(plugin.__name__ + ".record.state")
     return wl, state
 
 
@@ -173,7 +173,7 @@ def test_the_keep_route_still_works(plugin, iso, monkeypatch):
     prefix, router = next((p, r) for p, r in reg.routers if p == "/api/plugins/careercoach")
     app = FastAPI()
     app.include_router(router, prefix=prefix)
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     wl.add_to_inbox([card()])
     client = TestClient(app)
     res = client.post(f"{prefix}/inbox/keep", json={"id": "one"})

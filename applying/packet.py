@@ -155,7 +155,7 @@ def resolve_root(configured: str = "") -> Path:
     if raw:
         root = Path(raw).expanduser()
     else:
-        from . import profile
+        from ..record import profile
 
         root = profile._dir() / "workspace"
         notice = legacy_workspace_notice(configured)

@@ -605,7 +605,7 @@ def test_a_relative_packet_root_lands_under_home_not_the_servers_cwd(plugin, iso
     record depends on. A relative value is anchored to the home directory."""
     import importlib
 
-    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet = importlib.import_module(plugin.__name__ + ".applying.packet")
     monkeypatch.chdir("/")
     root = packet.resolve_root("CareerCoach")
     assert root == Path.home() / "CareerCoach" and root.is_dir()

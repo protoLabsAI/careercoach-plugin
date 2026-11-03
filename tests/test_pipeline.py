@@ -19,7 +19,7 @@ from _plugin_testkit import FakeRegistry
 def st(plugin, iso, monkeypatch):
     """The ``state`` module with an isolated store."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".state")
+    return importlib.import_module(plugin.__name__ + ".record.state")
 
 
 @pytest.fixture
@@ -130,7 +130,7 @@ def test_needs_followup_edges(st):
 # ── r4: gated routes ────────────────────────────────────────────────────────────
 def test_jobs_route_shape(plugin, client):
     tc, _reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     st.track_application(company="Acme", role="ML Engineer", status="applied")
     body = tc.get("/api/plugins/careercoach/jobs").json()
     assert set(body) == {"inbox", "applications", "columns", "followup_days", "watch_last_run"}
@@ -142,8 +142,8 @@ def test_jobs_route_shape(plugin, client):
 
 def test_keep_promotes_inbox_item_and_removes_it(plugin, client):
     tc, reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
-    st = importlib.import_module(plugin.__name__ + ".state")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     _inbox_job(wl, "j1")
 
     r = tc.post("/api/plugins/careercoach/inbox/j1/keep")
@@ -174,8 +174,8 @@ def test_keep_unknown_item_is_4xx(client):
 @pytest.mark.parametrize("match", ["url", "company_role"])
 def test_keep_preserves_existing_application(plugin, client, monkeypatch, status, match, body_route):
     tc, reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
-    st = importlib.import_module(plugin.__name__ + ".state")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     _inbox_job(wl, "123456")
     monkeypatch.setattr(st, "_today", lambda: "2026-10-01")
     existing = st.track_application(
@@ -205,7 +205,7 @@ def test_keep_preserves_existing_application(plugin, client, monkeypatch, status
 @pytest.mark.parametrize("encoded", [False, True])
 def test_inbox_routes_accept_market_search_ids(plugin, client, action, encoded):
     tc, _reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     item_id = "market:https://jobs.example/companies/acme/jobs/123456"
     _inbox_job(wl, item_id)
     path_id = quote(item_id, safe="") if encoded else item_id
@@ -220,10 +220,10 @@ def test_inbox_routes_accept_market_search_ids(plugin, client, action, encoded):
 @pytest.mark.parametrize("operation", ["inbox_item", "mark_kept", "track_application", "dismiss"])
 def test_inbox_routes_unreadable_store_returns_conflict(plugin, client, monkeypatch, operation, body_route):
     tc, _reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     _inbox_job(wl)
 
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     module = st if operation == "track_application" else wl
 
     def unreadable(*args, **kwargs):
@@ -255,7 +255,7 @@ def test_track_application_history_only_records_status_changes(st, monkeypatch):
 
 def test_jobs_says_when_the_watch_last_ran(plugin, client):
     http, _ = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     assert http.get("/api/plugins/careercoach/jobs").json()["watch_last_run"] == ""
     wl.record_watch_run()
     assert http.get("/api/plugins/careercoach/jobs").json()["watch_last_run"]
@@ -263,7 +263,7 @@ def test_jobs_says_when_the_watch_last_ran(plugin, client):
 
 def test_dismiss_removes_and_sticks(plugin, client):
     tc, _reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     _inbox_job(wl, "j1")
 
     assert tc.post("/api/plugins/careercoach/inbox/j1/dismiss").status_code == 200
@@ -276,7 +276,7 @@ def test_dismiss_removes_and_sticks(plugin, client):
 
 def test_move_route_bad_status_is_4xx_and_good_move_works(plugin, client):
     tc, reg = client
-    st = importlib.import_module(plugin.__name__ + ".state")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     app_id = st.track_application(company="Acme", role="ML Engineer", status="considering")["id"]
 
     bad = tc.post(f"/api/plugins/careercoach/applications/{app_id}/move", json={"status": "bogus"})
@@ -295,8 +295,8 @@ def test_move_route_bad_status_is_4xx_and_good_move_works(plugin, client):
 @pytest.mark.parametrize("action", ["keep", "dismiss"])
 def test_inbox_body_routes_accept_url_ids(plugin, client, action):
     tc, reg = client
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
-    st = importlib.import_module(plugin.__name__ + ".state")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    st = importlib.import_module(plugin.__name__ + ".record.state")
     item_id = "himalayas:https://himalayas.app/companies/acme/jobs/123?ref=x&y=1"
     _inbox_job(wl, item_id)
     response = tc.post(f"/api/plugins/careercoach/inbox/{action}", json={"id": item_id})

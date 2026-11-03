@@ -122,8 +122,8 @@ def test_handoff_invalidates_the_pre_handoff_verification_and_grant(handoff, mon
     middleware (``formfill.is_verified`` + a live grant) must then refuse the stale state."""
     import importlib
 
-    formfill = importlib.import_module(handoff.plugin.__name__ + ".formfill")
-    submitgate = importlib.import_module(handoff.plugin.__name__ + ".submitgate")
+    formfill = importlib.import_module(handoff.plugin.__name__ + ".applying.formfill")
+    submitgate = importlib.import_module(handoff.plugin.__name__ + ".applying.submitgate")
 
     plan = formfill.build_plan([{"label": "Email", "kind": "text", "required": True}], {"email": "ada@example.com"}, {})
     sid = plan["session_id"]
