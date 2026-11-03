@@ -801,8 +801,10 @@ def test_re_planning_the_same_application_keeps_its_id(formfill):
 def test_formfill_has_no_host_imports():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "applying" / "formfill.py").read_text(encoding="utf-8")
-    assert "import graph" not in src and "from graph" not in src
+    from hostfree import host_imports
+
+    found = host_imports((Path(__file__).resolve().parent.parent / "applying" / "formfill.py"))
+    assert not found, found
 
 
 # ── the tools round-trip through register() and never raise ────────────────────────────────

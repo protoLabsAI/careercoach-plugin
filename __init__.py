@@ -412,13 +412,20 @@ def _register_apply_kit_tool(registry) -> None:
             if no_form_questions is not None:  # omitted → preserved; set → stored on the kit
                 parts["no_form_questions"] = no_form_questions
             saved = state.set_kit(app_id, **parts)
-            # a Saved (considering) row is now being readied → move it to preparing with a history entry
-            if saved.get("status") == "considering":
-                saved = state.move(app_id, "preparing")
         except state.StoreUnreadable as e:
             return f"Apply kit not saved: {e}"
         except Exception as e:  # noqa: BLE001 — a tool never raises
             return f"Apply kit not saved: {e}"
+        # a Saved (considering) row is now being readied → move it to preparing with a history entry.
+        # The kit is already stored, so a failure here must not be reported as a lost kit.
+        if saved.get("status") == "considering":
+            try:
+                saved = state.move(app_id, "preparing")
+            except Exception as e:  # noqa: BLE001 — a tool never raises
+                return (
+                    f"Saved the apply kit, but couldn't move the role to preparing: {e}. "
+                    "The kit is stored; move the card on the board, or try again."
+                )
         try:
             registry.emit(
                 "application_tracked",

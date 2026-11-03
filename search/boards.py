@@ -49,7 +49,10 @@ def _iso(value) -> str:
             if n > 1e12:  # epoch milliseconds
                 n /= 1000
             return datetime.fromtimestamp(n, UTC).isoformat(timespec="seconds")
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC).isoformat(timespec="seconds")
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:  # a board's naive timestamp means UTC, not this host's local time
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat(timespec="seconds")
     except (ValueError, OSError, OverflowError):
         return ""
 

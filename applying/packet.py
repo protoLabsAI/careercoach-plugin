@@ -36,6 +36,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -168,6 +169,25 @@ def resolve_root(configured: str = "") -> Path:
     return root
 
 
+def _write(path: Path, text: str) -> None:
+    """Write via a temp file and rename, so a crash mid-write never leaves an operator's packet
+    file empty or half-written: a reader sees the old file or the new one, nothing in between."""
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def role_path(root, company: str, role: str, req: str = "") -> Path:
     """``<root>/Companies/<Company>/Roles/<Role - Req>`` — pure path math, creates nothing."""
     return Path(root) / "Companies" / safe_name(company) / "Roles" / role_dirname(role, req)
@@ -185,7 +205,7 @@ def append_log(root, company: str, role: str, req: str, line: str) -> Path:
     path = artifact_path(root, company, role, req, "process-log")
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text(f"# Process log — {role}\n\n", encoding="utf-8")
+        _write(path, f"# Process log — {role}\n\n")
     with path.open("a", encoding="utf-8") as fh:
         fh.write(f"- {_now()} — {line}\n")
     return path
@@ -205,14 +225,14 @@ def scaffold_role(root, company: str, role: str, req: str = "", raw_jd: str = ""
     jd = folder / ARTIFACTS["job-description-raw"]
     placeholder = f"# Job description (raw) — {role}\n\n_Paste the full, unedited posting here._\n"
     if not jd.exists():
-        jd.write_text((raw_jd.strip() + "\n") if raw_jd.strip() else placeholder, encoding="utf-8")
+        _write(jd, (raw_jd.strip() + "\n") if raw_jd.strip() else placeholder)
         created.append(ARTIFACTS["job-description-raw"])
     elif raw_jd.strip() and jd.read_text(encoding="utf-8").strip() == placeholder.strip():
-        jd.write_text(raw_jd.strip() + "\n", encoding="utf-8")
+        _write(jd, raw_jd.strip() + "\n")
 
     log = folder / ARTIFACTS["process-log"]
     if not log.exists():
-        log.write_text(f"# Process log — {role} @ {company}\n\n", encoding="utf-8")
+        _write(log, f"# Process log — {role} @ {company}\n\n")
         created.append(ARTIFACTS["process-log"])
     append_log(root, company, role, req, "Intake — role folder scaffolded" + ("" if existed else " (new)"))
 
@@ -225,7 +245,7 @@ def write_artifact(root, company: str, role: str, req: str, artifact: str, conte
     path = artifact_path(root, company, role, req, artifact)
     path.parent.mkdir(parents=True, exist_ok=True)
     replaced = path.exists() and bool(path.read_text(encoding="utf-8").strip())
-    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    _write(path, (content or "").rstrip() + "\n")
     append_log(root, company, role, req, f"{'Updated' if replaced else 'Wrote'} {ARTIFACTS[artifact]}")
     return {"path": str(path), "artifact": artifact, "replaced": replaced}
 
@@ -261,7 +281,7 @@ def assemble_packet(root, company: str, role: str, req: str = "") -> dict:
     if missing:
         parts.append("\n---\n\n## Not yet produced\n")
         parts.extend(f"- {ARTIFACTS[k]}" for k in missing)
-    (folder / ARTIFACTS["role-packet"]).write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
+    _write(folder / ARTIFACTS["role-packet"], "\n".join(parts).strip() + "\n")
 
     status = role_status(root, company, role, req)
     orch = [
@@ -272,7 +292,7 @@ def assemble_packet(root, company: str, role: str, req: str = "") -> dict:
         "## Artifacts",
         *[f"- [{'x' if k in status['present'] else ' '}] {name}" for k, name in ARTIFACTS.items()],
     ]
-    (folder / ARTIFACTS["orchestration-log"]).write_text("\n".join(orch) + "\n", encoding="utf-8")
+    _write(folder / ARTIFACTS["orchestration-log"], "\n".join(orch) + "\n")
     append_log(root, company, role, req, f"QA — assembled packet ({len(present)}/{len(PACKET_BODY)} sections)")
 
     return {"path": str(folder / ARTIFACTS["role-packet"]), "present": present, "missing": missing}
@@ -362,7 +382,7 @@ def write_source(root, doc: str, content: str) -> dict:
     path = source_path(root, doc)
     path.parent.mkdir(parents=True, exist_ok=True)
     replaced = path.exists() and bool(path.read_text(encoding="utf-8").strip())
-    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    _write(path, (content or "").rstrip() + "\n")
     return {"path": str(path), "doc": doc, "replaced": replaced}
 
 
@@ -371,5 +391,5 @@ def write_export(root, content: str) -> dict:
     ``Resume/Experience.md``, whatever state that file is in. Regenerated on every export."""
     path = Path(root) / EXPERIENCE_EXPORT
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text((content or "").rstrip() + "\n", encoding="utf-8")
+    _write(path, (content or "").rstrip() + "\n")
     return {"path": str(path)}
