@@ -119,10 +119,10 @@ your toolset, say so and stop: there is no form to fill without it.
   there is nothing to prepare up front; `careercoach_prepare_application` returns the live-form path.
   Ashby ALWAYS requires a résumé file and its "autofill from résumé" can overwrite typed values, so
   upload the résumé FIRST and re-read every field after.
-- **Lever and Workday are NOT supported yet.** There is no adapter and no schema prep for them. You
-  can still apply through the live-form path below, but say so plainly to the operator first, go
-  slowly, and lean harder on the read-back diff — treat every field as unverified until
-  `careercoach_verify_fill` reports VERIFIED.
+- **Lever and Workable** — recognized from their URLs only, with no schema prep. Use the live-form path
+  below, but say so plainly to the operator first, go slowly, and lean harder on the read-back diff:
+  treat every field as unverified until `careercoach_verify_fill` reports VERIFIED.
+- **Workday is NOT supported.** There is no adapter for it.
 
 ### The loop
 
