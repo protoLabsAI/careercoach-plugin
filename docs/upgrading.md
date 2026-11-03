@@ -3,6 +3,14 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.13.10
+
+- **The code moved into folders.** The logic modules now live in `record/`, `search/` and `applying/`, and the
+  Jobs view is `view/jobs.html`. Installing or updating through protoAgent handles this. If you import a module
+  directly, for example `careercoach.profile`, use the new path: `careercoach.record.profile`.
+- **Packet files are private to you.** They're written atomically now, and a new file is readable by your user
+  only, the same as the profile.
+
 ## 0.13.9
 
 The coach's voice rules now ride on every turn, and the writing guide is its own `writing-style` skill. If a
