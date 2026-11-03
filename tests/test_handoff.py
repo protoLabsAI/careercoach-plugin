@@ -202,14 +202,14 @@ def test_apply_form_skill_parses_and_declares_the_loop_tools(plugin):
 
 def test_apply_form_skill_states_the_two_hard_rules_and_the_support_scope():
     """The doctrine must say plainly: never submit without the approval card, never solve a captcha,
-    and Lever/Workday aren't supported yet (use the live-form path with care)."""
+    Lever and Workable fill through the live-form path with care, and Workday isn't supported."""
     _, body = _frontmatter(SKILL)
     flat = " ".join(body.split())
     assert "Never submit without the approval card" in flat
     assert "Never solve or bypass a captcha" in flat
     # the loop names both the submit gate and the handoff
     assert "careercoach_request_submit" in flat and "careercoach_handoff" in flat
-    # support scope: Greenhouse + Ashby supported, Lever/Workday not yet
+    # support scope: Greenhouse + Ashby supported, Lever/Workable live-form only, Workday not at all
     assert "Greenhouse" in flat and "Ashby" in flat
-    assert "Lever and Workday are NOT supported yet" in flat
+    assert "Lever and Workable" in flat and "Workday is NOT supported" in flat
     assert "live-form path" in flat

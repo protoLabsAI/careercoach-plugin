@@ -119,7 +119,7 @@ def test_apply_preserves_kit_default_and_verbatim_browser_beta():
     # Snapshot of the complete S3b beta, including verification, handoff and grant
     # lifetime. A wording change must be reviewed as a deliberate contract change.
     assert (
-        hashlib.sha256(beta.encode()).hexdigest() == "c650c911eb9c2db74787db54e70f41acdd4376df5234eb157ab65038c751177b"
+        hashlib.sha256(beta.encode()).hexdigest() == "0e37f59b153e97a887dbe19dfe537480a97a2b88d97b1a1bf3cdb75ff0bc00af"
     )
 
 
