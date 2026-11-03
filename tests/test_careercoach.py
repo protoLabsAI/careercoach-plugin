@@ -97,7 +97,7 @@ def test_dashboard_is_the_jobs_shell(plugin):
 
 # ── the pure fit rubric ───────────────────────────────────────────────────────
 def test_rubric_defaults_and_presets_sum_to_100(plugin):
-    rubric = importlib.import_module(plugin.__name__ + ".rubric")
+    rubric = importlib.import_module(plugin.__name__ + ".record.rubric")
     assert sum(rubric.DEFAULT_WEIGHTS.values()) == 100
     for name, preset in rubric.PRESETS.items():
         assert sum(preset.values()) == 100, name
@@ -105,7 +105,7 @@ def test_rubric_defaults_and_presets_sum_to_100(plugin):
 
 
 def test_rubric_weighted_overall_and_verdict(plugin):
-    rubric = importlib.import_module(plugin.__name__ + ".rubric")
+    rubric = importlib.import_module(plugin.__name__ + ".record.rubric")
     # All-80s → 80 regardless of weights; verdict Strong Fit.
     assert rubric.weighted_overall({d: 80 for d in rubric.DIMENSIONS}) == 80.0
     assert rubric.verdict(80.0)[0] == "Strong Fit"
@@ -123,7 +123,7 @@ def test_rubric_weighted_overall_and_verdict(plugin):
 def test_state_roundtrip_and_dedupe(plugin, monkeypatch, tmp_path):
     monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
     monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
-    state = importlib.import_module(plugin.__name__ + ".state")
+    state = importlib.import_module(plugin.__name__ + ".record.state")
 
     state.track_application(company="Acme", role="ML Engineer", fit_score=82, status="considering")
     state.track_application(company="Globex", role="Data Scientist", fit_score=61, status="applied")
@@ -141,7 +141,7 @@ def test_state_roundtrip_and_dedupe(plugin, monkeypatch, tmp_path):
 
 # ── the role-packet workspace (folder-per-role artifact tree) ─────────────────
 def test_packet_paths_and_scaffold(plugin, tmp_path):
-    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet = importlib.import_module(plugin.__name__ + ".applying.packet")
 
     # safe_name preserves human-readable names, strips only path-hostile chars.
     assert packet.safe_name("Associate Director, Technical PM") == "Associate Director, Technical PM"
@@ -164,7 +164,7 @@ def test_packet_paths_and_scaffold(plugin, tmp_path):
 
 
 def test_packet_write_assemble_and_status(plugin, tmp_path):
-    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet = importlib.import_module(plugin.__name__ + ".applying.packet")
     packet.scaffold_role(tmp_path, "Acme", "ML Engineer")
 
     packet.write_artifact(tmp_path, "Acme", "ML Engineer", "", "evidence-map", "## Map\nreq → proof")
@@ -197,7 +197,7 @@ def test_packet_write_assemble_and_status(plugin, tmp_path):
 
 
 def test_packet_init_workspace_never_clobbers(plugin, tmp_path):
-    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet = importlib.import_module(plugin.__name__ + ".applying.packet")
     templates = ROOT / "templates"
 
     first = packet.init_workspace(tmp_path, templates)
@@ -218,7 +218,7 @@ def test_packet_source_read_write_and_guards(plugin, tmp_path):
     project, can tell a seeded-but-untouched template from a filled-in one, and writes only the
     story bank — not the discipline files that bind it, and not the operator's own Experience.md
     (their history lives in the profile; that file only flows in by import)."""
-    packet = importlib.import_module(plugin.__name__ + ".packet")
+    packet = importlib.import_module(plugin.__name__ + ".applying.packet")
     templates = ROOT / "templates"
 
     # Unseeded workspace — reported missing, not silently empty.
@@ -264,7 +264,7 @@ def test_profile_store_completeness_and_context(plugin, monkeypatch, tmp_path):
     context block that names what's missing — the thing that stops the agent re-interviewing."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
     monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
-    profile = importlib.import_module(plugin.__name__ + ".profile")
+    profile = importlib.import_module(plugin.__name__ + ".record.profile")
 
     # Cold start: well-formed but empty, and it injects NOTHING (an empty block is noise).
     cov = profile.completeness()
@@ -333,7 +333,7 @@ def test_profile_concurrent_writes_lose_nothing(plugin, monkeypatch, tmp_path):
     store is load-edit-save, so without a lock the last writer wins."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(tmp_path))
     monkeypatch.delenv("PROTOAGENT_INSTANCE", raising=False)
-    profile = importlib.import_module(plugin.__name__ + ".profile")
+    profile = importlib.import_module(plugin.__name__ + ".record.profile")
 
     import json as _json
     import threading
@@ -457,7 +457,7 @@ def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
     per rubric weight at its default (plus every preset), and the crew can pull the full skill."""
     import graph.sdk  # the testkit stub module
 
-    rubric = importlib.import_module(plugin.__name__ + ".rubric")
+    rubric = importlib.import_module(plugin.__name__ + ".record.rubric")
     made = {}
 
     class _RecordingKnobs:
@@ -492,7 +492,7 @@ def test_full_surface_with_host_stubs(plugin, registry, monkeypatch):
 
 # ── Phase 3: live job source (pure parsers + selection + prescore) ────────────
 def test_jobsource_parsers(plugin):
-    js = importlib.import_module(plugin.__name__ + ".jobsource")
+    js = importlib.import_module(plugin.__name__ + ".search.jobsource")
     jsearch = {
         "data": [
             {
@@ -526,7 +526,7 @@ def test_jobsource_parsers(plugin):
 
 
 def test_provider_selection_and_prescore(plugin):
-    js = importlib.import_module(plugin.__name__ + ".jobsource")
+    js = importlib.import_module(plugin.__name__ + ".search.jobsource")
     assert js.choose_provider("auto", "") == "himalayas"  # Remotive's API went dead in 2026-10
     assert js.choose_provider("auto", "KEY") == "jsearch"
     assert js.choose_provider("jsearch", "") == "jsearch"
@@ -549,7 +549,7 @@ def test_watch_surface_and_verifier_when_enabled(plugin):
 
 def test_every_turn_carries_the_voice_and_the_implied_claim_rule(plugin, iso):
     """The persona in SOUL.md only applies if it was pasted in, so the voice rides with the profile."""
-    profile = importlib.import_module(f"{plugin.__name__}.profile")
+    profile = importlib.import_module(f"{plugin.__name__}.record.profile")
     block = profile.context_block({"identity": {"name": "Sam"}, "sections": {"do_not_claim": "Kubernetes"}})
     assert "HOW YOU SOUND" in block and "Have an opinion" in block
     assert "implied experience" in block

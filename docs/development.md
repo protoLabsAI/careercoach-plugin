@@ -7,25 +7,29 @@ and feedback filed upstream.
 
 ```
 careercoach-plugin/
+├─ __init__.py              register(): tools, knobs, subagents, the Jobs view routes, the job-watch
 ├─ protoagent.plugin.yaml   manifest: config, secrets, settings, view, events, provenance
 ├─ SOUL.md                  the recommended coach persona
-├─ __init__.py              register(): tools, knobs, subagents, the Jobs view, the job-watch
-├─ profile.py               the operator profile, its store, and the always-on block (voice and write rules)
-├─ state.py                 the application tracker
-├─ rubric.py                the weighted fit rubric
-├─ jobsource.py             market search: Himalayas, Hacker News, JSearch, Remotive
-├─ boards.py                company job boards: Ashby, Greenhouse, Lever
-├─ watchlist.py             the watchlist, the first-seen log, ghost-job flags
-├─ scan.py                  one watchlist scan, shared by the tool, the digest and the watch
-├─ companies.py             company and role normalization for every dedup
-├─ contacts.py              LinkedIn Connections import, referrals, follow-ups
-├─ hunt.py                  the job-hunt tools
-├─ answers.py               standard form answers, draft and confirmed
-├─ grounding.py             tracing a draft's figures back to the record
-├─ resume.py                résumé rendering
-├─ packet.py                the role-packet workspace
-├─ ats.py, formfill.py      the browser-fill beta: per-ATS planning and read-back
-├─ submitgate.py            the consent gate for a submit click
+├─ record/                  your record
+│  ├─ profile.py            the operator profile, its store, and the always-on block (voice and write rules)
+│  ├─ state.py              the application tracker
+│  ├─ answers.py            standard form answers, draft and confirmed
+│  ├─ rubric.py             the weighted fit rubric
+│  ├─ grounding.py          tracing a draft's figures back to the record
+│  └─ companies.py          company and role normalization for every dedup
+├─ search/                  finding roles
+│  ├─ boards.py             company job boards: Ashby, Greenhouse, Lever
+│  ├─ jobsource.py          market search: Himalayas, Hacker News, JSearch, Remotive
+│  ├─ watchlist.py          the watchlist, the first-seen log, ghost-job flags
+│  ├─ scan.py               one watchlist scan, shared by the tool, the digest and the watch
+│  ├─ contacts.py           LinkedIn Connections import, referrals, follow-ups
+│  └─ hunt.py               the job-hunt tools
+├─ applying/                applying
+│  ├─ packet.py             the role-packet workspace
+│  ├─ resume.py             résumé rendering
+│  ├─ ats.py, formfill.py   the browser-fill beta: per-ATS planning and read-back
+│  └─ submitgate.py         the consent gate for a submit click
+├─ view/jobs.html           the Career Coach console view
 ├─ skills/                  apply-form (apply), career-strategy (strategy), interview-coach (interview),
 │                           job-hunt, resume, writing-style
 ├─ templates/               workspace starters: Experience.md, story bank, reviewer, Humanize, improvements
@@ -35,12 +39,16 @@ careercoach-plugin/
 └─ tests/                   host-free tests with a vendored testkit
 ```
 
+The root `__init__.py` keeps `register()` and the wiring. The modules under `record/`, `search/` and
+`applying/` hold the logic, with relative imports between them, and the host imports the repo directory as one
+package. The Jobs view's page is a plain file, `view/jobs.html`, read once at load and served as is.
+
 Skill directory names are kept for history. The name the agent loads is the frontmatter `name`, shown in
 parentheses above.
 
 ## Tests
 
-The suite runs with no protoAgent present. The pure logic (`rubric.py`, `state.py`, `packet.py` and the
+The suite runs with no protoAgent present. The pure logic (`record/rubric.py`, `record/state.py`, `applying/packet.py` and the
 rest) has no host imports and is tested directly, and the host-touching paths are guarded so the plugin
 loads and its tests run against the vendored testkit (`tests/_plugin_testkit.py`).
 
@@ -62,11 +70,11 @@ This repo also serves as a worked example of how far a protoAgent plugin can go 
 | Skills, loaded on demand | `skills/` | Six skills. `apply` and `resume` keep reference sub-files beside their `SKILL.md` |
 | Composition, not new tools (ADR 0039) | `skills/resume/` | The `resume` skill adds no tools. It names tools the artifact, agent_browser and execute_code plugins own, and cowork's `docx` skill, with a fallback for each |
 | A slash command | `skills/job-hunt/` | `/setup-coach`, the first-run interview |
-| A gated, filed pipeline | `skills/apply-form/packet-flow.md`, `packet.py`, `templates/` | Your approval before every phase, with artifacts filed per role |
+| A gated, filed pipeline | `skills/apply-form/packet-flow.md`, `applying/packet.py`, `templates/` | Your approval before every phase, with artifacts filed per role |
 | A static workflow (ADR 0002) | `workflows/apply.yaml` | `research → evaluate → build and save the apply kit`, chained with `depends_on` |
 | Subagents | `__init__.py` | `company_researcher`, `job_evaluator` and `application_writer` |
-| Agent tools | `__init__.py`, `hunt.py` | A lean default set measured by an eval, with older names behind `extended_tools` |
-| Plugin middleware (ADR 0032) | `profile.py`, `__init__.py` | The `<operator_profile>` block on every model call, via `wrap_model_call` (ADR 0108 D2), and the submit gate's `wrap_tool_call` |
+| Agent tools | `__init__.py`, `search/hunt.py` | A lean default set measured by an eval, with older names behind `extended_tools` |
+| Plugin middleware (ADR 0032) | `record/profile.py`, `__init__.py` | The `<operator_profile>` block on every model call, via `wrap_model_call` (ADR 0108 D2), and the submit gate's `wrap_tool_call` |
 | Live controls (`graph.sdk`) | `__init__.py` | The fit rubric's weights as knobs, with presets |
 | A background surface (ADR 0018) | `__init__.py` | The supervised job-watch loop |
 | A goal verifier (ADR 0028, 0067) | `__init__.py` | `careercoach:new_matches`, for `create_watch` |

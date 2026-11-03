@@ -186,7 +186,7 @@ def test_verifier_counts_only_pending_inbox(plugin, iso, monkeypatch):
     reg = FakeRegistry()
     plugin._register_watch_verifier(reg)
     verify = reg.verifiers["careercoach:new_matches"]
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
 
     assert verify(min_score=75).value == "0"  # empty tracker + inbox → nothing to action
     wl.add_to_inbox([job()])

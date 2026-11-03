@@ -24,14 +24,14 @@ JOB_UUID = "4b9c2d1e-7a3f-4c8b-9e2d-1f6a8c3b5d47"
 @pytest.fixture
 def ats(plugin):
     """The plugin's ``ats`` module (pure — no store, no network)."""
-    return importlib.import_module(plugin.__name__ + ".ats")
+    return importlib.import_module(plugin.__name__ + ".applying.ats")
 
 
 @pytest.fixture
 def formfill(plugin, iso, monkeypatch):
     """The plugin's ``formfill`` module with an isolated store (its own ``CAREERCOACH_DIR``)."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".formfill")
+    return importlib.import_module(plugin.__name__ + ".applying.formfill")
 
 
 # ── synthetic Ashby form helpers ────────────────────────────────────────────────────────────
@@ -255,5 +255,5 @@ def test_plan_fill_tool_threads_the_ashby_flag_and_renders_the_note(tools):
 
 # ── the module is host-free ────────────────────────────────────────────────────────────────
 def test_ats_ashby_detection_is_host_free():
-    src = (Path(__file__).resolve().parent.parent / "ats.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "applying" / "ats.py").read_text(encoding="utf-8")
     assert "import graph" not in src and "from graph" not in src

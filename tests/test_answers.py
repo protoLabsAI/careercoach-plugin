@@ -17,7 +17,7 @@ def answers(plugin, iso, monkeypatch):
     """The plugin's ``answers`` module, with an isolated store (same ``CAREERCOACH_DIR`` the ``tools``
     fixture uses, so a test may mix the two)."""
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".answers")
+    return importlib.import_module(plugin.__name__ + ".record.answers")
 
 
 # ── the core state machine: draft → confirmed → (edit) → draft ─────────────────────────

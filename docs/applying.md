@@ -41,15 +41,16 @@ the live form itself. It runs one fixed loop, using tools this plugin tests with
 8. **Submit once, behind the gate.** `careercoach_request_submit` asks you, you approve, and exactly one
    submit click is allowed. Then it checks the confirmation page and marks the role applied.
 
-**What's supported.** Greenhouse (public schema plus live form) and Ashby (live form only, so the résumé
-uploads first and every field is re-read after autofill). Lever and Workday have no adapter yet: the coach
-uses the same live-form path with extra care, and says so.
+**What's supported.** Greenhouse gets public schema prep plus the live form. Ashby uses the live form only,
+so the résumé uploads first and every field is re-read after autofill. Lever and Workable are recognized
+from their URLs and filled through the live form, with no schema prep, so the coach says so and leans on the
+read-back. Workday isn't supported.
 
 ## The submit gate
 
 Submitting without your explicit consent is the one thing this plugin must never do. A rule in a skill
 can't enforce that, and neither can a tool the agent decides to call, so the gate has two parts
-(`submitgate.py`, tested without a host).
+(`applying/submitgate.py`, tested without a host).
 
 **Consent comes through an interrupt, not a model decision.** `careercoach_request_submit` refuses, without
 asking anyone, unless the fill session is `VERIFIED` and hasn't been re-planned or changed since. Any new or

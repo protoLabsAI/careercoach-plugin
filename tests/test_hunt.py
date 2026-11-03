@@ -138,6 +138,17 @@ def net(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_route), **kw))
 
 
+# Which subpackage each module lives in.
+PACKAGE_OF = {
+    "boards": "search",
+    "companies": "record",
+    "watchlist": "search",
+    "contacts": "search",
+    "scan": "search",
+    "state": "record",
+}
+
+
 @pytest.fixture
 def mods(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
@@ -147,7 +158,7 @@ def mods(plugin, iso, monkeypatch):
 
     m = M()
     for name in ("boards", "companies", "watchlist", "contacts", "scan", "state"):
-        setattr(m, name, importlib.import_module(f"{plugin.__name__}.{name}"))
+        setattr(m, name, importlib.import_module(f"{plugin.__name__}.{PACKAGE_OF[name]}.{name}"))
     return m
 
 
@@ -549,7 +560,7 @@ def test_a_pass_where_every_source_failed_is_not_a_run(watch_env, mods, monkeypa
         raise RuntimeError("down")
 
     monkeypatch.setattr(mods.scan, "scan_watchlist", down)
-    monkeypatch.setattr(importlib.import_module(plugin.__name__ + ".jobsource"), "search_jobs", down)
+    monkeypatch.setattr(importlib.import_module(plugin.__name__ + ".search.jobsource"), "search_jobs", down)
     asyncio.run(plugin._watch_tick(reg, cfg, 75))
     assert mods.watchlist.watch_last_run() == ""
 
@@ -630,7 +641,10 @@ def test_job_specific_url(mods):
 
 
 def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
-    bp = mods.boards and importlib.import_module(mods.state.__name__.rsplit(".", 1)[0] + ".jobsource").best_prescore
+    bp = (
+        mods.boards
+        and importlib.import_module(mods.state.__name__.rsplit(".", 2)[0] + ".search.jobsource").best_prescore
+    )
     roles = "AI Engineer, Forward Deployed Engineer"
     assert bp({"title": "Solutions Engineer"}, roles) < 75  # "AI" counts — not just "engineer"
     assert bp({"title": "Senior AI Engineer"}, roles) == 100

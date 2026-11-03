@@ -21,7 +21,7 @@ def test_empty_profile_hint_updates_after_write(plugin, profile):
 
 @pytest.mark.parametrize("blank", ["", "   ", None])
 def test_profile_filter_fallback_and_settings_precedence(plugin, profile, blank):
-    hunt = importlib.import_module(plugin.__name__ + ".hunt")
+    hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
     profile.update_field("target_roles", "Software Engineer")
     profile.update_field("target_locations", "Remote")
     f = hunt.filters({"target_roles": blank, "locations": blank})
@@ -39,8 +39,8 @@ def test_default_market_is_keyless_and_feeds_view(plugin, profile, monkeypatch, 
     tools = {t.name: t for t in reg.tools}
     for field, value in [("target_roles", "Software Engineer"), ("target_locations", "Remote")]:
         tools["careercoach_profile"].invoke({"action": "update", "field": field, "content": value})
-    source = importlib.import_module(plugin.__name__ + ".jobsource")
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    source = importlib.import_module(plugin.__name__ + ".search.jobsource")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     calls = []
 
     async def fetch(query, country):
@@ -75,7 +75,7 @@ def test_default_market_is_keyless_and_feeds_view(plugin, profile, monkeypatch, 
     assert "From the background watch" not in digest
     assert len(wl.inbox_for_view()) == 1
     tools["careercoach_answers"].invoke({"action": "get"})
-    answers = importlib.import_module(plugin.__name__ + ".answers")
+    answers = importlib.import_module(plugin.__name__ + ".record.answers")
     stored, error = answers.load_checked()
     assert not error
     assert stored
@@ -111,15 +111,15 @@ def test_unreadable_profile_is_not_onboarding(plugin, profile):
     mw = next(m for f in reg.middlewares if type(m := f(None)).__name__ == "_ProfileMiddleware")
     assert "unreadable" in mw._current()
     assert "First run:" not in mw._current()
-    hunt = importlib.import_module(plugin.__name__ + ".hunt")
+    hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
     with pytest.raises(profile.StoreUnreadable):
         hunt.filters({})
     assert hunt.filters({"target_roles": "Designer", "locations": "Remote"})["roles"] == "Designer"
 
 
 def test_home_location_does_not_restrict_existing_searches(plugin, profile):
-    hunt = importlib.import_module(plugin.__name__ + ".hunt")
-    boards = importlib.import_module(plugin.__name__ + ".boards")
+    hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
+    boards = importlib.import_module(plugin.__name__ + ".search.boards")
     profile.update_field("location", "Portland, OR")
     profile.update_field("target_roles", "Software Engineer")
     for blank in ("", "   ", None):

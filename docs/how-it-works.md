@@ -5,7 +5,7 @@ The parts that make the coach grounded, honest and human. The reasoning behind e
 
 ## Your profile is the source of truth
 
-Who the coach works for lives in a structured profile (`profile.json`, managed by `profile.py`) in this
+Who the coach works for lives in a structured profile (`profile.json`, managed by `record/profile.py`) in this
 agent's own plugin store, `<instance_root>/careercoach/`, beside the tracker's `applications.json`. Each
 agent, sandbox and container keeps its own.
 
@@ -61,11 +61,11 @@ form-filling beta, are in [applying.md](applying.md).
 ## Job sources
 
 Ashby, Greenhouse and Lever publish keyless posting APIs with the date a role first went up. They don't
-search, so `boards.py` filters each whole board locally, and a first-seen log (`seen.json`) decides what's
+search, so `search/boards.py` filters each whole board locally, and a first-seen log (`seen.json`) decides what's
 new and spots reposts, because boards reset a posting's date when it's relisted.
 
 Market search is provider-abstracted and keyless by default: Himalayas and Hacker News, or JSearch with a
-key. Only `jobsource.py` and `boards.py` make outbound calls, and the manifest declares exactly those hosts.
+key. Only `search/jobsource.py` and `search/boards.py` make outbound calls, and the manifest declares exactly those hosts.
 LinkedIn and Indeed are never scraped.
 
 ## The background watch

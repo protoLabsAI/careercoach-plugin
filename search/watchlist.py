@@ -18,10 +18,10 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import profile as _store
-from . import state
+from ..record import profile as _store
+from ..record import state
 from .boards import age_days
-from .companies import company_key, role_key
+from ..record.companies import company_key, role_key
 
 StoreUnreadable = _store.StoreUnreadable
 

@@ -54,7 +54,7 @@ _SAME_FOR_EVERY_QUERY = {
 
 @pytest.fixture
 def js(plugin):
-    return importlib.import_module(plugin.__name__ + ".jobsource")
+    return importlib.import_module(plugin.__name__ + ".search.jobsource")
 
 
 def _as_himalayas(payload: dict) -> dict:

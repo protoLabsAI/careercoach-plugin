@@ -40,7 +40,7 @@ def filters(cfg) -> dict:
 
     Identity location is a home location, never an implicit restriction on job searches.
     """
-    from . import profile
+    from ..record import profile
 
     roles = cfg.get("target_roles", "") or ""
     locations = cfg.get("locations", "") or ""
@@ -63,7 +63,7 @@ def filters(cfg) -> dict:
 def _guarded(fn):
     """A store file that can't be read (corrupt JSON) answers as a message, like the tracker tools,
     instead of raising through the turn — and nothing gets written over it."""
-    from .profile import StoreUnreadable
+    from ..record.profile import StoreUnreadable
 
     msg = "A Career Coach store file is unreadable, so I stopped: {}. Tell the operator; don't overwrite it."
     if inspect.iscoroutinefunction(fn):
@@ -92,7 +92,8 @@ def register_hunt_tools(registry, cfg, extended: bool):
     so ``careercoach_find_roles`` can reuse it. The default surface keeps watchlist, log_contact and
     digest; scan_boards is reached through careercoach_find_roles(source="watched"); the past-apps,
     LinkedIn-connections and referral importers register only behind ``extended_tools``."""
-    from . import boards, contacts, scan, state
+    from . import boards, contacts, scan
+    from ..record import state
     from . import watchlist as wl
 
     def _companies(names: str) -> list[str]:
@@ -182,7 +183,7 @@ def register_hunt_tools(registry, cfg, extended: bool):
             return "No target roles to match — set Target roles in Settings → Career Coach, or pass `roles`."
         rows = wl.load_watchlist()
         if companies.strip():
-            from .companies import company_key
+            from ..record.companies import company_key
 
             want = {company_key(c) for c in _companies(companies)}
             rows = [r for r in rows if company_key(r["company"]) in want]
@@ -252,7 +253,7 @@ def register_hunt_tools(registry, cfg, extended: bool):
         return out
 
     def _resolve(path: str) -> Path:
-        from . import packet
+        from ..applying import packet
 
         p = Path(path).expanduser()
         if not p.is_absolute():

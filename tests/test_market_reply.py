@@ -26,8 +26,8 @@ def posting(n, location, remote=False):
 @pytest.fixture
 def market(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    source = importlib.import_module(plugin.__name__ + ".jobsource")
-    wl = importlib.import_module(plugin.__name__ + ".watchlist")
+    source = importlib.import_module(plugin.__name__ + ".search.jobsource")
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     reg = FakeRegistry({"jobs_provider": "himalayas"}, plugin_id="careercoach")
     plugin.register(reg)
     tool = next(t for t in reg.tools if t.name == "careercoach_find_roles")

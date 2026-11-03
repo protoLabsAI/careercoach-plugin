@@ -441,7 +441,7 @@ def slug_candidates(company: str) -> list[str]:
     raw = re.findall(r"[A-Za-z0-9]+", company.replace(".", ""))
     if not raw:
         return []
-    from .companies import _GENERIC, _LEGAL, _key
+    from ..record.companies import _GENERIC, _LEGAL, _key
 
     # the loose key ("Scale AI" → scale) is a guess; probe() checks a board found that way names
     # the right company before trusting it
@@ -464,7 +464,7 @@ def slug_candidates(company: str) -> list[str]:
 def _board_name_ok(company: str, jobs: list[dict]) -> bool:
     """Greenhouse names the company on every posting; a board found under a shortened slug must name
     the company we asked for ("Mercury Systems" must not land on the Mercury fintech board)."""
-    from .companies import company_key
+    from ..record.companies import company_key
 
     names = {j.get("company", "") for j in jobs if j.get("ats") == "greenhouse"}
     if not names:

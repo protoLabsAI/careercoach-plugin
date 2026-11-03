@@ -22,7 +22,7 @@ from _plugin_testkit import FakeRegistry
 # ── fixtures ────────────────────────────────────────────────────────────────────────────────
 @pytest.fixture
 def submitgate(plugin):
-    return importlib.import_module(plugin.__name__ + ".submitgate")
+    return importlib.import_module(plugin.__name__ + ".applying.submitgate")
 
 
 @pytest.fixture
@@ -41,9 +41,9 @@ def gate(plugin, iso, monkeypatch):
         plan_fill=tools["careercoach_plan_fill"],
         verify_fill=tools["careercoach_verify_fill"],
         middleware=middleware,
-        formfill=importlib.import_module(plugin.__name__ + ".formfill"),
-        submitgate=importlib.import_module(plugin.__name__ + ".submitgate"),
-        answers=importlib.import_module(plugin.__name__ + ".answers"),
+        formfill=importlib.import_module(plugin.__name__ + ".applying.formfill"),
+        submitgate=importlib.import_module(plugin.__name__ + ".applying.submitgate"),
+        answers=importlib.import_module(plugin.__name__ + ".record.answers"),
     )
 
 

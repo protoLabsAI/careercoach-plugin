@@ -9,13 +9,13 @@ import pytest
 
 @pytest.fixture
 def ats(plugin):
-    return importlib.import_module(plugin.__name__ + ".ats")
+    return importlib.import_module(plugin.__name__ + ".applying.ats")
 
 
 @pytest.fixture
 def formfill(plugin, iso, monkeypatch):
     monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
-    return importlib.import_module(plugin.__name__ + ".formfill")
+    return importlib.import_module(plugin.__name__ + ".applying.formfill")
 
 
 @pytest.mark.parametrize(
@@ -139,7 +139,7 @@ def test_split_location_and_hidden_fields(formfill):
 
 
 def test_city_does_not_use_drafts_or_override_explicit_answer(formfill, plugin):
-    answers = importlib.import_module(plugin.__name__ + ".answers")
+    answers = importlib.import_module(plugin.__name__ + ".record.answers")
     answers.propose("current_location", "Portland, Oregon, USA")
     field = {"label": "City", "id": "city", "kind": "text", "required": True}
     plan = formfill.build_plan([field], answers.confirmed())
