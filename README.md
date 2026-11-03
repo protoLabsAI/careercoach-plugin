@@ -1,435 +1,101 @@
-# Career Coach — a protoAgent plugin
+<p align="center">
+  <img src="docs/assets/hero.webp" alt="Career Coach in protoAgent: the coach replies to news of a phone screen and two rejections while the Jobs board updates beside it" width="100%">
+</p>
 
-Your **career coach and job-hunt copilot**, built as a drop-in [protoAgent](https://github.com/protoLabsAI/protoAgent)
-plugin. It coaches — strategy and positioning, mock interviews with honest feedback, a straight
-critique of your CV, weighing an offer, rehearsing a salary negotiation — and, when you want it
-done for you, it executes: evaluate a posting, tailor the CV + cover letter, prep the interview.
+<p align="center">
+  <a href="https://github.com/protoLabsAI/careercoach-plugin/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/protoLabsAI/careercoach-plugin/ci.yml?branch=main&label=CI"></a>
+  <a href="https://github.com/protoLabsAI/careercoach-plugin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/protoLabsAI/careercoach-plugin?label=release"></a>
+  <a href="https://github.com/protoLabsAI/protoAgent"><img alt="protoAgent 0.34+" src="https://img.shields.io/badge/protoAgent-%E2%89%A5%200.34-7c5cff"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-22c55e"></a>
+</p>
 
-> It's a **coach, not an auto-applier.** The autonomous "evaluate → tailor → draft" pipeline is
-> one mode. The point is to make *you* clearer and more prepared, not to spray applications.
+# Career Coach
 
-It's also a **deliberate deep-dive reference for the plugin system** — one repo that exercises the
-whole contribution surface, so it doubles as a worked example of how far a plugin can go without
-forking core.
+A career coach for your job search, built as a [protoAgent](https://github.com/protoLabsAI/protoAgent)
+plugin. It helps you apply to fewer jobs, better: it researches the company, tells you honestly how well
+you fit, and gets you past the blank page on a cover letter, an application answer or a counteroffer.
 
----
+It never submits an application on its own, and it never makes up experience. You stay in charge of
+what gets sent and where.
 
-## What it does
+## What you get
 
-**Setup (once):**
-- **`/setup-coach`** — works out what it already knows about you, asks only about the real gaps, and records
-  the result as a profile it carries into every future turn. It harvests first (memory, saved artifacts, any
-  CV in your workspace, a resume PDF you've shared) so it never asks for what it already has.
-- **See what it knows.** The **Career Coach** view lists every field the coach holds, every one still missing,
-  and — behind a disclosure — the exact block it's told each turn. Your record, visible to you, not a file you
-  have to go find. That part is read-only: to change anything, tell the coach in chat.
+- **A board for your search.** Every role you're tracking moves through Saved, Preparing, Applied,
+  Interviewing and Offer. Drag a card, or tell the coach what happened and it updates the board for you.
+- **New roles each morning.** It watches the job boards of companies you pick, sweeps the wider market,
+  and puts fresh matches in an inbox you keep or dismiss. It warns you about likely ghost jobs.
+- **An apply kit in about a minute.** A tailored résumé PDF, a cover letter when the posting asks for one,
+  and drafted answers to the form's questions. You review it, paste it in and submit it yourself.
+- **Practice before the real call.** Mock interviews with straight feedback. It catches the slip you'd
+  regret on a real call, like naming the wrong employer, and swaps vague claims for your real numbers.
+- **Help with the hard messages.** Follow-ups when an application goes quiet, a comparison of two offers
+  with the math shown, and a counteroffer built on what you've actually done.
+- **Honest feedback and a plan.** A real critique of your CV, and a skills-gap plan for the roles you're
+  chasing.
+- **It sounds like a person.** It reacts to your news, tells you what it thinks, and writes messages a
+  human would send.
+- **Nothing hidden.** The **About you** panel shows everything the coach knows about you, and what it
+  still doesn't.
 
-**Coaching (the default):**
-- **Career strategy** — positioning, what roles to target, whether to take a job, comparing offers, salary negotiation (skill: `career-strategy`).
-- **Interview practice** — a STAR answer bank and realistic **mock interviews with per-answer feedback** (skill: `interview-coach`).
-- **Honest material feedback** — a real critique of your CV/cover letter against an anti-slop, anti-fabrication standard (skill: `apply`, with the writing-style discipline + `my-writing-style`).
-- **Upskilling** — turns the jobs you're chasing into a prioritized gap heatmap + a learning plan with real resources (skill: `strategy`).
+## How it stays honest
 
-**Execution (when you ask):**
-- **Find fresh roles** (skill: `job-hunt`) — keep a **company watchlist** and `careercoach_find_roles` reads
-  those companies' own Ashby / Greenhouse / Lever job boards (keyless, with the date each role first went up),
-  filtered to your target roles, locations and max age, marking what's **new**, what you've **already tracked
-  or applied to**, and **ghost-job warnings** (long-open, reposted, thin). `careercoach_find_roles(source="market")` sweeps the
-  wider market: the keyless **Himalayas** remote board, this month's **Hacker News "Who is hiring?"**, or
-  JSearch (Google-for-Jobs) with an API key.
-- **Go in through people** — with `extended_tools` on, import your LinkedIn Connections export and the coach
-  tells you who you know at each company before you apply; `careercoach_log_contact` keeps follow-ups from slipping.
-- **A morning digest** — `careercoach_digest`: new roles from the last few days, follow-ups due, applications
-  gone quiet. Past applications kept elsewhere can be imported into the tracker so sweeps never re-suggest
-  them; the tracker dedups by posting URL and normalized company ("Arize AI" = "Arize") and
-  warns past 3 live applications at one company.
-- **Evaluate fit** against a weighted, tunable rubric, with sourced company research.
-- **Tailor a CV + cover letter** — reframing emphasis, never fabricating (the interview-backtrack test).
-- **Build, import, export and ATS-check the resume itself** — the `resume` skill. Your resume lives as
-  **one versioned artifact** (not five diverging markdown files), built from ATS-safe templates, tailored
-  per role as its own artifact, exported to a real PDF or `.docx` you can attach, and checked against an
-  ATS three ways: what a parser actually extracts from the file, a rules checklist, and keyword coverage
-  against the posting. It adds **no tools** — it composes the artifact, browser and cowork plugins.
-- Run the whole thing with the **`apply` workflow**: `run_workflow("apply", {"posting": "<url or text>"})`.
-- **Work up a full, filed role packet** — the gated **`role-packet`** flow files a folder per role
-  (`Companies/<Co>/Roles/<Role - Req>/`) and produces each artifact — recruiter brief, evidence map,
-  tailored resume, ATS skills list, cover letter, assembled packet — **one human-approved step at a
-  time**, anchored to your operator profile. Say *"build the role packet."*
+Everything it writes traces back to your profile. Things you've said never to claim stay out, including
+softer wording that implies them. Every draft has to pass the interview test: could you explain this
+line in an interview without backtracking? If you ask it to stretch the truth, it says no and writes the
+strongest honest version instead.
 
-**In the background (opt-in):** turn on the **job-watch** and it periodically scans your watchlist's
-boards and sweeps the job source for your target roles, queues postings it has never seen before for
-the digest (it never writes your pipeline), and lights the rail icon — or arm a **WATCH**
-on your pipeline yourself via the `careercoach:new_matches` verifier.
-
-Work it all from the **Career Coach view** (a console rail view): triage new roles with Keep or Dismiss, drag
-applications through a pipeline board, and open a role for its apply kit, with a copy button on every answer.
-You file the application yourself. **Nothing ever auto-submits.**
-
----
-
-## The plugin system, exercised (the deep dive)
-
-Every protoAgent extension surface, in one plugin:
-
-| Surface | Where | What it shows |
-|---------|-------|---------------|
-| **SKILL.md skills** (progressive disclosure) | `skills/` (auto-loaded) | 6 skills (`job-hunt`, `apply`, `resume`, `interview`, `strategy`, `writing-style`); `apply` + `resume` use **sub-files** (`evidence-map.md`, `ats-check.md`, …) read on demand; `apply` builds a tailored apply kit for the operator to file (browser fill is an opt-in beta) |
-| **Composition, not new tools** (ADR 0039) | `skills/resume/` | the `resume` skill adds **zero** tools: it names tools the **artifact**, **agent_browser** and **execute_code** plugins own, and **cowork**'s `docx` skill, states the owner and the fallback for each, and ships its assets (ATS-safe HTML templates) beside the SKILL.md. Never imports another plugin |
-| **User-facing slash skill** | `skills/job-hunt/` (`user_facing` + `slash`) | `/setup-coach` — the first-run interview that grounds every other skill; files are the truth, memory is a derived recall index |
-| **Gated, filed pipeline** (skill-driven) | `skills/apply-form/packet-flow.md` + `packet.py` + `templates/` | the role-packet flow: a **human-approved gate before every phase**, artifacts filed to `Companies/<Co>/Roles/…` via tested scaffolding tools, seeded from fill-in templates |
-| **Static-DAG workflow** (ADR 0002) | `workflows/apply.yaml` (auto-loaded) | `research → evaluate → build & save apply kit` chained via `depends_on` + `{{steps.*.output}}` (the *autonomous* counterpart to the gated role-packet flow) |
-| **Subagent crew** | `register_subagent` in `__init__.py` | 3 purpose-built delegates (`company_researcher`, `job_evaluator`, `application_writer`) the workflow chains |
-| **Agent tools** | `register_tools` | 12 by default, built around the core loop and measured with a tool-selection eval (`evals/tool_selection/`): `careercoach_find_roles`, `careercoach_watchlist`, `careercoach_track` (pipeline and inbox), `careercoach_digest`, `careercoach_log_contact`, `careercoach_profile`, `careercoach_answers`, `careercoach_read_sources`, `careercoach_save_apply_kit`, `careercoach_render_resume`, `careercoach_role_packet`, `careercoach_prepare_application`. Every older tool name still works behind the `extended_tools` setting |
-| **Plugin middleware** (ADR 0032) | `register_middleware` | the `<operator_profile>` block — always-on operator context + completeness + the voice gate, delivered on every model call as an ephemeral context frame (`wrap_model_call`, the host's ADR 0108 D2 contract) |
-| **Tunable Knobs** (`graph.sdk`) | `register_tools(make_knob_tools(...))` | the fit rubric's four weights as live knobs + presets (`careercoach_preset growth-first`) |
-| **Background surface + watchdog** (ADR 0018) | `register_surface` + `graph.sdk.supervise` | the opt-in job-watch — a supervised loop that scans, records new matches, and emits an event |
-| **Goal verifier** (ADR 0028/0067) | `register_goal_verifier` | `careercoach:new_matches` — arm a **WATCH** on your pipeline with `create_watch` |
-| **Console rail view** (ADR 0026) | `register_router` + manifest `views:` | the Jobs view — public page + **gated** `/api/plugins/careercoach` data routes, fleet-proxy-safe fetch |
-| **Config / secrets / Settings** (ADR 0019) | manifest + `registry.config` | profile + `render_format` + the job-watch knobs in Settings; `jobs_api_key` → `secrets.yaml` |
-| **Event bus** (ADR 0039) | `registry.emit` | `careercoach.application_tracked` / `careercoach.new_matches` light the rail icon |
-| **Consumption SDK** (ADR 0043) | lazy `graph.sdk` imports | `Knobs` / `make_knob_tools` / `supervise`, kept lazy + guarded so it loads and tests host-free |
-
-Read `__init__.py` top to bottom — it's commented as a tour. The pure logic (`rubric.py`, `state.py`)
-has **no host imports**, so it's unit-tested directly; the host-touching paths are guarded so the
-plugin loads and its suite runs with **no protoAgent present**.
-
-### Layout
-```
-careercoach-plugin/
-├─ protoagent.plugin.yaml     # manifest: config/secrets/settings, views, emits, provenance
-├─ SOUL.md                    # recommended agent persona — copy into your agent's SOUL.md
-├─ __init__.py                # register(): tools + knobs + crew + Jobs view + the job-watch
-├─ rubric.py                  # the weighted fit rubric — pure, tested
-├─ state.py                   # the application tracker — instance-scoped JSON, tested
-├─ profile.py                 # the operator profile + the shared store (instance root, lock, atomic write)
-├─ jobsource.py               # market search (Himalayas / HN / JSearch / Remotive) — parsers + prescore, tested
-├─ boards.py                  # company job boards (Ashby / Greenhouse / Lever) — parsers, filters, probe, tested
-├─ watchlist.py               # the company watchlist + first-seen log + ghost flags — tested
-├─ scan.py                    # one watchlist scan, shared by the scan tool, the digest and the watch
-├─ companies.py               # company/role normalization ("Arize AI" = "Arize") for every dedup
-├─ contacts.py                # LinkedIn Connections import, referrals, follow-ups — tested
-├─ hunt.py                    # the job-hunt tools (watchlist, scan, history, contacts, digest)
-├─ answers.py                 # standard form answers with draft and confirmed states — tested
-├─ resume.py                  # resume rendering — tested
-├─ ats.py + formfill.py       # the opt-in browser-fill beta — per-ATS planning and read-back, tested
-├─ submitgate.py              # the consent gate for a submit click — tested
-├─ packet.py                  # the role-packet workspace (folder-per-role scaffold/assemble) — pure, tested
-├─ skills/                         # 6 skills; directory names kept, frontmatter name in parens
-│  ├─ apply-form/                  # name: apply — evaluate fit, CV/cover-letter / job-evaluation, the gated packet-flow, and the opt-in browser-fill beta
-│  ├─ writing-style/               # how anything in the operator's name should read: human voice, anti-slop, honesty test
-│  ├─ resume/                      # the resume as a versioned artifact: SKILL.md + import / master-and-tailor / export / ats-check + templates/*.html
-│  ├─ job-hunt/                    # sourcing: watchlist + board scans, market sweeps, referrals, the digest; absorbs the setup-coach first-run interview
-│  ├─ interview-coach/             # name: interview — STAR bank + mock interviews with feedback
-│  └─ career-strategy/             # name: strategy — positioning, offers, negotiation, decisions, and the upskilling gap heatmap + learning plan
-├─ templates/                  # fill-in workspace starters (an importable Experience.md, story bank, reviewer, Humanize, improvements)
-├─ workflows/apply.yaml        # the autonomous research → evaluate → write pipeline
-└─ tests/                      # host-free (vendored testkit): rubric, state, packet, register() surface
-```
-
----
+By default it hands you an apply kit and you file the application. An opt-in beta can fill a live form,
+but even then it can't click submit until you approve that one application. See
+[Applying through ATS forms](docs/applying.md).
 
 ## Quick start
 
-**Fastest:** in the protoAgent desktop app (v0.221.0 or later), create a new agent and pick **Career Coach**.
-It installs the plugin and the coach persona for you. Paste your resume or a LinkedIn PDF and it builds your
-profile, then runs a first scan from keyless job sources. Steps 1 to 5 below are the manual route for an
-agent you already have.
+**Fastest:** in the protoAgent desktop app (v0.221.0 or later), create a new agent and pick
+**Career Coach**. It installs the plugin and the coach persona for you.
 
-1. **Install it.** In a running protoAgent: **Console → Plugins → Discover → _Career Coach_ → Install**. Or from the shell:
-   ```sh
-   python -m server plugin install https://github.com/protoLabsAI/careercoach-plugin
-   ```
-2. **Enable it.** Toggle it on in **Console → Plugins**, or ask the agent to `enable_plugin("careercoach")`.
-   (Install ≠ enable ≠ trust — enabling is the trust decision.)
-3. **Set your profile.** **Settings → Career Coach**: your name, location, and target roles. That's all it needs to start.
-4. **Give it the coach's persona _(recommended)_.** The plugin ships a recommended persona in
-   [`SOUL.md`](./SOUL.md). Enabling a plugin never touches your agent's identity — by design
-   (see [#1771](https://github.com/protoLabsAI/protoAgent/issues/1771)) — so adopt it explicitly:
-   paste it into **Settings → Identity** (or your agent's `config/SOUL.md`) and rename the identity
-   line to your agent's name. Without it you still have the coaching *tools*; with it, the agent *is*
-   a coach.
-5. **Run `/setup-coach`.** The first-run interview: it builds your operator profile (importing an
-   `Experience.md` you already keep, rather than re-asking), fills your story bank, captures your writing
-   voice, and distills the lot into memory the coach recalls later. Everything downstream is anchored to what you say here, so this is
-   the difference between a coach that knows you and one that guesses. Every step is skippable, and you can
-   stop and resume any time.
-6. **Talk to your agent.** A few things to try:
-   - **Coach me** — "Help me think about what roles to target." · "Run a mock interview for the Acme ML role." · "Critique my CV for this posting." · "I got the offer — help me negotiate the salary."
-   - **Find & apply** — "Find remote ML engineer jobs." · "Here's a posting, is it worth applying to?" (paste a URL or the text) · `run_workflow("apply", {"posting": "<url>"})`
-   - **Work on the resume itself** — "Import this resume" (drop the PDF, or give it a path) · "Build my master resume" · "Tailor it for this role" · "Make me a PDF" · "Will this get through an ATS?"
-   - **Work up a full packet** — "Build the role packet for this posting." The coach files a folder per role and produces each artifact one approved step at a time (see the workspace note below).
+**On an agent you already have:**
 
-### Optional
-- **Choose where your workspace lives.** `/setup-coach` seeds it for you, but you can point it somewhere
-  specific first via **Settings → Career Coach → Role-packet workspace**. Blank uses this agent's own
-  folder inside its data directory (`<agent data dir>/workspace`), so agents on one machine never share files.
-  It lays down fill-in starters — `Resume/Experience.md`, `Agent/story-bank.md`, reviewer + Humanize
-  rules, an improvements log — and never clobbers your edits. These are plain markdown you can open and edit
-  directly at any time. If you'd rather write your history into `Experience.md` than be interviewed, do
-  that and ask the coach to import it: it previews what it will add to your profile and records it once you
-  confirm. The coach never writes over that file.
-- **Native Word (`.docx`) export.** Set **Settings → Career Coach → Document format = `docx`** and the CV +
-  cover letter are produced as real, editable **Word files** (saved as versioned, downloadable artifacts)
-  instead of HTML→PDF. **This path builds the document by running Python (`python-docx`), so it requires:**
-  the [cowork](https://github.com/protoLabsAI/cowork-plugin) plugin (its `docx` skill), the **`execute_code`**
-  plugin **enabled** — ⚠️ **`execute_code` lets the agent run arbitrary code; enabling it is a deliberate
-  trust decision** — the `artifact` plugin, and a protoAgent **v0.108.0+** host. If any is missing, the
-  coach **falls back to HTML→PDF and tells you what's absent**. Leave `render_format` on `html` if you'd
-  rather not enable code execution.
-  > **On the desktop app, v0.108.0 is the floor — not v0.107.0.** 0.107.0 bundled the document libraries,
-  > but `execute_code` was hard-disabled on the packaged app (no standalone interpreter to spawn), so
-  > `.docx` generation could not run there at all. protoAgent **0.108.0** ships the **managed Python
-  > runtime** (ADR 0094): the first `execute_code` call provisions a pinned CPython plus the document
-  > libraries — **one consented download, once per machine** — after which the docx path works on desktop.
-  > On a server / Docker install there's nothing to provision.
-- **Point the search at you.** In **Settings → Career Coach** set **Target roles** (comma-separated; each is an
-  all-words title match), **Locations** (places plus `remote` = remote and open to the US, e.g.
-  `remote, portland`), **Exclude titles with** and **Max posting age**. Then build the watchlist:
-  *"add Anthropic, OpenAI, Vercel to my watchlist"* — each company is looked up on Ashby, Greenhouse and Lever.
-- **Sharper market search.** Add a [RapidAPI **JSearch**](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key
-  under **Settings → Career Coach → Job-source API key** for Google-for-Jobs breadth (LinkedIn and Indeed
-  listings, local roles). Without a key, search uses the keyless **Himalayas** remote-jobs board (set
-  **Search country** to narrow it) or Hacker News. Keyless search is loose, so postings are filtered and
-  ranked against your query locally, and every result says which source answered. (Remotive, the old
-  default, now returns one fixed feed whatever you search; it's only used if you pick it explicitly.)
-- **Background job-watch.** Turn on **Background job-watch** in Settings and every **Watch interval** it
-  queues new roles matching your filters for the daily digest (and lights the rail icon). It never adds
-  roles to your pipeline by itself. Off by default.
-- **Tune the fit rubric.** `careercoach_preset growth-first` (or `careercoach_tune weight_career 45`) reweights
-  scoring live.
+```sh
+python -m server plugin install https://github.com/protoLabsAI/careercoach-plugin
+```
 
----
+Then turn it on in **Console → Plugins**, set your name, location and target roles in
+**Settings → Career Coach**, and run **`/setup-coach`**. Setup works out what it already knows, asks only
+about the gaps, and builds the profile everything else is anchored to. The full steps, including the
+optional coach persona, are in [Install and setup](docs/install.md).
 
-## Design decisions
+## Using it
 
-- **A print-correct HTML artifact, not LaTeX.** The upstream project's biggest tax is LaTeX page-break
-  firefighting. We build the CV as an HTML artifact with a real `@page` and `break-inside: avoid` on every
-  entry, so a print paginates the way it was laid out — and keep `.tex`/moderncv as an
-  option (with the upstream gotchas preserved, credited).
-- **The resume is an artifact, and that's the whole design.** A resume kept as chat text or markdown
-  multiplies: six weeks in there are five variants, three stale, and no answer to "which one did I send".
-  So the master resume is **one `html` artifact** — versioned, previewed, edited in place with
-  `update_artifact` / `rewrite_artifact` — each tailored variant is its own artifact, and the role packet's
-  `tailored resume.md` becomes a *snapshot that records which artifact and version it came from* rather
-  than a competing copy — and, because the panel keeps a bounded history (20 artifacts by default), that
-  snapshot plus the profile are the durable record (the approved master's wording is written to a
-  workspace file where `execute_code` is on); the artifact is the working surface. The `resume`
-  skill adds **no tools at all**: it composes the artifact plugin
-  (create/edit/read/save), `browser_pdf` (agent_browser) and the `docx` skill (cowork) for exports, and
-  `show_component` for results — naming the owner and the fallback for each, per ADR 0039's
-  reference-by-name rule. The **ATS check** falls out of the same composition: `save_file_artifact`
-  already extracts a PDF's text for its preview, so `get_artifact` reads back *what a parser sees* and the
-  skill diffs it against the document — real evidence, not a rules-only opinion.
-  **`browser_pdf` arrives with protoAgent [#3451](https://github.com/protoLabsAI/protoAgent/pull/3451),
-  so the agent-produced PDF route is inert until a core release includes it**; until then a real file
-  comes from the DOCX route (cowork), or the operator downloads the HTML artifact and prints it.
-- **Native `.docx` too (`render_format: docx`).** Set it and the CV + cover letter are produced as
-  real, editable **Word files** via [cowork](https://github.com/protoLabsAI/cowork-plugin)'s `docx`
-  skill, then saved with `save_file_artifact` as **versioned, downloadable** artifacts (ADR 0092) — what
-  most ATS forms actually want. It runs `python-docx`, so it needs cowork + the **`execute_code`** plugin
-  enabled (which runs code — a trust decision) + a **v0.108.0+** host; falls back to HTML→PDF (and says
-  what's missing) otherwise. A soft pairing: no hard dependency, `html` stays default. On desktop, 0.108.0
-  is the floor because that's where `execute_code` gained a **managed Python runtime** (ADR 0094) —
-  provisioned on first use; before it, code execution was unavailable on the packaged app entirely.
-- **The operator profile is state, not a document — and it's always in front of the model.** Who the coach
-  works for lives in a structured `profile.json` (`profile.py`) in the plugin's per-instance store —
-  `<instance_root>/careercoach/`, via the host's `graph.sdk.plugin_store`, beside the tracker's
-  `applications.json` — so the dev sandbox, each fleet member and a container's volume keep their own.
-  (v0.6 used `~/.protoagent/careercoach/<instance>/`; a store found there is copied forward once and the
-  old folder gets a `MIGRATED-TO` note. The old files stay put for a rollback, but they're never adopted
-  again, so wiping the new store really does start over — and if you restore the machine from a pre-0.7
-  backup, that note is already there, so copy those files across by hand, or delete the note.) It reaches the model every call as an
-  `<operator_profile>` block
-  via plugin middleware (ADR 0032), carrying an explicit **completeness** picture: what's known, what's
-  missing, how much of the picture exists. That's what stops the coach re-interviewing for facts it already
-  holds — a real first run was abandoned partway through for exactly that reason, because a recall tool
-  can't help an agent that doesn't already suspect there's something to recall.
-- **One rule for the career record: the profile is the single source of truth.** Everything that reads
-  your history — the always-on block, `careercoach_profile(action="read", doc="experience")`, the drafting and scoring
-  crew — reads the profile, and nothing reads `Resume/Experience.md` as a source. That file takes part in
-  two explicit, one-way moves: **import** and **export** (`careercoach_profile(action="export_experience")` writes a snapshot
-  to `Resume/Experience (profile export).md`). The coach never writes `Experience.md` itself.
-- **The import is previewed, then bound to that preview.** `careercoach_profile(action="import_experience")` parses what you
-  wrote (by its headings, skipping the template's hint text and anything already recorded), shows the exact
-  lines it would add or remove, and hands back a `preview_id`. Applying takes that id and is refused if the
-  file, the profile or the options changed since — so what you approve is what gets written. It writes
-  through the profile's own rules: sections merge line by line (a bullet you added under a role lands under
-  that role, and re-importing an unedited file changes nothing), a `do_not_claim` line can't be dropped
-  without your say-so, and everything lands in one save, so one `.bak` restore undoes the whole import.
-  Nothing is moved between sections: a heading the profile doesn't know stays in the section it sits in, and
-  the import says so.
-- **Nothing can quietly fill every model call.** `do_not_claim` rides in front of the model in full, so it's
-  capped (3,000 characters), identity facts are one line each (500), and the narrative sections are capped
-  too (20,000) — a write past a cap is refused with the reason, and the always-on block clips anything an
-  older version stored. One import of a pasted job posting used to put ~80k tokens in every turn.
-- **The block is a per-call frame, never state.** It's appended to the request with `wrap_model_call` —
-  the host's own contract for derived context (ADR 0108 D2) — so it's never checkpointed and there's exactly
-  one copy per call. The system prompt is untouched and the frame sits after the host's cache breakpoints,
-  so it can't cost prompt caching. (v0.6 wrote it to a `context` state channel that protoAgent v0.155.0
-  removed, so it silently stopped arriving — the test now drives a real `create_agent` and asserts on what
-  the model receives.) The subagents the host builds without plugin middleware — `job_evaluator` and
-  `application_writer` — read the profile through the profile tools instead.
-- **The profile can't be lost to one bad write.** Writes are serialized (a thread lock everywhere, plus
-  `flock` across processes on POSIX) and atomic, and each one first saves the version it replaces to
-  `profile.json.bak`, so the last change can always be undone. A write that finds the file unreadable
-  refuses instead of saving one field over everything else, and the agent and panel say why (an empty file
-  is just an empty profile). Sections append by default, so recording roles one at a time keeps them all;
-  a correction rewrites the section with `mode="replace"`.
-- **Transparency is the differentiator.** The console panel shows every field held, every field missing, and
-  the verbatim block the agent receives. The person being described should never have to open a file in
-  Finder to see their own record.
-- **The voice gate is always-on, not a step in one skill.** The writing discipline used to live only inside
-  the `apply` skill's writing-style guide, so a side-door request ("just convert my resume to a docx") produced a real
-  deliverable at 16 em-dashes per 1000 words against the operator's stated limit of 3, carrying a phrase
-  they'd explicitly retired. A rule that only binds when you enter through the front door isn't a rule, so
-  it now rides in the always-on block alongside the `do_not_claim` guardrails.
-- **The agent can't rewrite its own guardrails.** `careercoach_profile(action="write")` accepts only `story-bank`
-  (`Experience.md` is the operator's own, and reaches the profile by import). The discipline files it's
-  *bound by* (experience-reviewer,
-  Humanize, the improvements log) are read-only to the agent by design, and the profile's `do_not_claim`
-  hard stops can be added to freely but not dropped or reworded without `confirm_removal=true` — the
-  operator's explicit say-so. Profile values are defanged before injection, so recorded text can't close
-  the `<operator_profile>` block and speak as it.
-- **"Seeded" is not "filled in."** `read_source` compares the workspace copy against the shipped template
-  instead of sniffing for placeholder syntax — the templates are full of realistic-looking hint text, so
-  any "looks empty" heuristic gets it wrong. An untouched template reports as unfilled and the coach
-  refuses to draft from it, which is the whole anti-fabrication contract holding.
-- **A coach, not an autopilot.** `career-strategy` + `interview-coach` are human-in-the-loop by
-  design; the `apply` workflow is the opt-in "do it for me" path.
-- **Gated vs. autonomous, on purpose.** The full application exists in two shapes: the `apply`
-  *workflow* runs research → evaluate → build-and-save-an-apply-kit autonomously (fast), while the `role-packet` *skill*
-  drives the same work with a **human-approval gate before every phase** and files the result as
-  editable artifacts. A static-DAG workflow can't pause between steps, so the gated flow is a
-  skill (which stops and asks) plus tested scaffolding tools (`packet.py`) for the file mechanics —
-  the artifacts are anchored to the operator profile so nothing unfounded reaches a resume.
-- **Two control surfaces, on purpose.** The candidate *profile* is operator config (Settings, ADR 0019);
-  the rubric *weights* are agent-tunable **Knobs** — because "score these more on growth than raw
-  skills" is a live retune, not a settings edit.
-- **Honesty is enforced, not hoped for.** The writing-style discipline's interview-backtrack test
-  and "verify every company claim against a source" rule are load-bearing — the candidate has to
-  defend every line in an interview.
-- **Your voice, if you've taught it.** When the [cowork](https://github.com/protoLabsAI/cowork-plugin)
-  `writing-voice` skill has saved a `my-writing-style` profile, the coach layers it over the writing
-  discipline so drafts sound like *you* — detected at runtime via `list_skills`, ignored if absent
-  (the honesty rules still win on any conflict). A soft pairing: no dependency, works standalone.
-- **The employer's own board beats an aggregator.** Ashby, Greenhouse and Lever publish keyless, documented
-  posting APIs with the date a role first went up — fresher than any re-lister and no scraping. They don't
-  search, so the whole board is filtered locally (`boards.py`), and a first-seen log (`seen.json`) is the
-  source of truth for "new" and for reposts, because boards reset a posting's date when it's re-listed.
-  Market search stays provider-abstracted and keyless by default (Himalayas, Hacker News; JSearch with a key).
-  Only `jobsource.py` and `boards.py` make outbound calls, and the manifest declares exactly those hosts.
-  LinkedIn and Indeed are never scraped.
+| To | Say something like |
+|---|---|
+| Find roles | "Add Anthropic and Vercel to my watchlist." · "Find remote frontend roles." |
+| Update the board | "Cedar & Slate wants a phone screen, and Mossbank turned me down." |
+| Check a posting | "Here's a posting. Is it worth applying to?" |
+| Build an apply kit | "Build my apply kit for the Tidewater Tools job." |
+| Practice | "Mock interview me for the Cedar & Slate phone screen." |
+| Follow up | "Ember Ridge hasn't replied in 18 days. Draft a follow-up." |
+| Weigh offers | "Which offer should I take?" · "Draft my counter asking for $178k." |
+| Plan | "What skills am I missing for these roles?" |
 
-### Applying through ATS forms
+Or work it by hand in the **Career Coach** view in the console's rail. More in [Using it](docs/usage.md).
 
-By default the coach **builds an apply kit and hands it to the operator** — it never drives the
-employer's form. It tailors the résumé and renders it to a PDF (`careercoach_render_resume` →
-`browser_open` → `browser_pdf`), writes a cover letter only when the posting asks, gathers every
-form answer (confirmed answers plus drafts for anything new), saves it all with
-`careercoach_save_apply_kit`, and tells the operator to open the role in the **Career Coach view**,
-copy the answers into the form with the copy buttons, attach the PDF, and press **Mark applied**
-after submitting it themselves. Nothing auto-submits.
+## Documentation
 
-**Browser fill (opt-in beta).** Only when an ATS is enabled in the `browser_fill` setting (a
-comma-separated list of ATS types; blank = off) does the coach fill the live form itself, running
-one deterministic loop (the `apply-form` skill is the doctrine; the pieces this plugin owns are
-tested, host-free):
+| Doc | What's in it |
+|---|---|
+| [Install and setup](docs/install.md) | Requirements, install, the persona, `/setup-coach`, optional extras |
+| [Using it](docs/usage.md) | The view, the skills, things to try, the apply workflow, role packets |
+| [How it works](docs/how-it-works.md) | The profile, the voice and write rules, job sources, the watch |
+| [Applying through ATS forms](docs/applying.md) | The apply kit, the browser-fill beta, the submit gate |
+| [Configuration](docs/configuration.md) | Every setting, its default, and what it does |
+| [Tools](docs/tools.md) | Every agent tool |
+| [Design decisions](docs/design-decisions.md) | Why it's built the way it is |
+| [Development](docs/development.md) | Layout, tests, the plugin-system tour, releasing |
+| [Upgrading](docs/upgrading.md) | Notes for versions that change behavior |
 
-1. **Confirm the standard answers.** Only values the operator has CONFIRMED
-   (`careercoach_answers`, actions `get` and `confirm`) ever fill a form — a draft never does.
-2. **Render + capture the résumé.** `careercoach_render_resume` → `browser_open` → `browser_pdf`,
-   so an upload-able PDF lands in the browser's capture folder.
-3. **Prepare, then read the live form.** On Greenhouse, `careercoach_prepare_application` fetches the
-   job's public question schema up front; either way the live form is read with `browser_form_read`
-   and turned into a plan by `careercoach_plan_fill`, drawing values **only** from confirmed answers.
-4. **Ask only about what's unmapped** — the required fields with no confirmed answer, the selects
-   whose answer matched no option. Never guess, never fuzzy-match a dropdown.
-5. **Fill** with `browser_select` (country before number on phone fields), `browser_fill` and
-   `browser_upload` — résumé first on Ashby, whose autofill can overwrite typed values.
-6. **Verify the read-back.** `browser_form_read` again → `careercoach_verify_fill` until it reports
-   `VERIFIED`; a silently-reverted react-select is exactly what this catches.
-7. **Hand off for a captcha, login or attestation.** `careercoach_handoff` pauses for the operator to
-   complete that one human-only step in a **visible browser** — the console **Browser panel** (a live
-   CDP screencast viewport), or the real window the browser plugin's `headed` setting opens. The coach
-   **never solves or bypasses a captcha**; it fills everything else. Because a captcha or login can
-   re-render the form and clear fields, a completed handoff requires a fresh read-back + verify before
-   any submit.
-8. **Submit once, behind the gate.** `careercoach_request_submit` → the operator approves → exactly
-   one `browser_click` on submit. Then confirm the confirmation page and
-   `careercoach_track` with status `applied`.
+## Credits and license
 
-**Support scope.** **Greenhouse** (public schema prep + live form) and **Ashby** (live form; no public
-per-job schema, so a résumé upload leads and every field is re-read after autofill) are supported.
-**Lever and Workday are not supported yet** — there's no adapter, so the coach uses the same live-form
-path with extra care and says so.
-
-### Submit gate
-
-Phase 3's one hard non-goal is **submitting an application without explicit operator consent**. A
-line in a skill can't enforce that, and neither can a tool the agent decides to call on its own, so
-the gate is built in two unforgeable halves (`submitgate.py`, host-free and tested):
-
-- **Consent comes through an interrupt, not a model decision.** `careercoach_request_submit` first
-  refuses — *without asking anyone* — unless the fill session is `VERIFIED` (its latest
-  `careercoach_verify_fill` read-back diff was empty) and was not re-planned or changed since. A
-  (re)built plan starts unverified — `formfill` resets verification on every plan write — so a plan
-  that was re-planned, or a different plan, is never already-verified and is refused here. Only when
-  it is genuinely verified does the tool pause the turn with `langgraph.types.interrupt` and show the
-  operator an approval card (company, role, the planned field→value table). It grants a
-  **one-shot, time-limited** authorization (120s) **only** on an explicit approve; a decline, a vague
-  answer, or a **headless/autonomous turn with no operator to answer** all refuse, and the headless
-  case never interrupts. Nothing else in the plugin creates a grant.
-- **Submit clicks are blocked, not trusted.** An `AgentMiddleware` (`wrap_tool_call`) inspects every
-  tool call and short-circuits any **submit-like** browser call — a submit/finish click, an
-  Enter/Return press, a `.submit()` / `requestSubmit` eval — unless a live grant exists **and the
-  session it was approved for is still `VERIFIED`**, which it then consumes. A browser click carries
-  no session id, so that `VERIFIED` recheck is how the gate ties the grant to the session it was
-  approved for: a grant whose plan was re-planned or changed (verification reset) is inert, so it
-  can't authorize a submit against a form that is no longer the one the operator saw. A blocked call
-  returns a `ToolMessage` on the same `tool_call_id` and the browser tool never runs. A job board's
-  "Apply" / "Apply now" button (which only **opens** the form, before any fill session exists) and an
-  "Apply filters" listing control are **not** submit-like, so they pass through untouched — gating
-  them would dead-end the flow and could spend the grant on a harmless click. Every other non-submit
-  call passes through too.
-
-**The limits, stated plainly.** This is **defense in depth over the browser tools — it does not
-sandbox the browser.** It stops the *agent* from clicking submit without an operator's unforgeable
-approval; it cannot stop a human. The **operator can always submit by hand** in the visible browser,
-and on a host without the middleware seam the gate degrades to the browser tools' own confirmations.
-
-## Upgrading
-
-- **0.13.2** — a blank `packet_root` now uses this agent's own folder inside its data directory
-  (`<agent data dir>/workspace`), so agents on one machine never share files. If your agent relied on
-  the old blank setting to read `~/CareerCoach`, set `packet_root: ~/CareerCoach` in
-  **Settings → Career Coach → Role-packet workspace** **BEFORE upgrading** to keep using that folder.
-  Otherwise, your role packets and `Experience.md` stay behind; they are not moved automatically.
-  The plugin logs a one-time warning when it sees a populated `~/CareerCoach` it no longer reads.
-- **0.8.0** — a *relative* `packet_root` setting or `CAREERCOACH_PACKET_DIR` value now resolves under the
-  home directory, not the server's working directory. This only matters for source / dev runs: on the
-  desktop app the working directory is `/` (read-only), so a relative workspace never worked there. An
-  absolute path or `~/…` behaves exactly as before. For the blank setting, see the 0.13.2 note above:
-  it now uses this agent's own folder inside its data directory.
-
-## Found while building (filed upstream)
-
-Building this surfaced protoAgent SDK/DX feedback, filed as issues on the host repo:
-
-- **DX papercut** — a scaffolded standalone plugin that registers a subagent fails its own host-free
-  smoke test, because `graph.subagents.config.SubagentConfig` isn't in the testkit's default host
-  stubs (the import raises before `register()` can wire it). We guard for it here (`_register_subagents`),
-  but the scaffolder encourages subagents, so the default stubs should include a permissive
-  `SubagentConfig` (and `Knobs` / `make_knob_tools`). *(Filed as [protoAgent #1764](https://github.com/protoLabsAI/protoAgent/issues/1764),
-  since fixed: the testkit ships record-only stand-ins for both, and this repo's vendored copy has them.)*
-- **Missing seam** — this plugin ships a recommended persona ([`SOUL.md`](./SOUL.md)), but there's no
-  host mechanism to *offer* it: `register_*` has no persona hook and the manifest has no key, so adopting
-  it is a manual copy. The fix has to stay opt-in / load-on-demand (like `load_skill`) and must never
-  auto-clobber the user's own SOUL. *(Filed as [protoAgent #1771](https://github.com/protoLabsAI/protoAgent/issues/1771).)*
-
-If you find more, please open an issue on protoAgent — that feedback loop is half the point of this repo.
-
-## Credits & license
-
-MIT (see [`LICENSE`](./LICENSE)). Prompt-engineering IP adapted with credit from
-[`MadsLorentzen/ai-job-search`](https://github.com/MadsLorentzen/ai-job-search) (MIT) — details in
-[`CREDITS.md`](./CREDITS.md).
+MIT, see [LICENSE](LICENSE). The coaching prompts and writing rules are adapted with credit from
+Mads Lorentzen's [ai-job-search](https://github.com/MadsLorentzen/ai-job-search) (MIT). Details are in
+[CREDITS.md](CREDITS.md).
