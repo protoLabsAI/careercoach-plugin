@@ -89,9 +89,10 @@ def _guarded(fn):
 
 def register_hunt_tools(registry, cfg, extended: bool):
     """Register the job-hunt tools and return ``careercoach_scan_boards`` (the watchlist-board scan)
-    so ``careercoach_find_roles`` can reuse it. The default surface keeps watchlist, log_contact and
-    digest; scan_boards is reached through careercoach_find_roles(source="watched"); the past-apps,
-    LinkedIn-connections and referral importers register only behind ``extended_tools``."""
+    so ``careercoach_find_roles`` can reuse it. The default surface keeps watchlist, log_contact,
+    digest, import_connections and find_referrals. scan_boards is reached through
+    careercoach_find_roles(source="watched"); scan_boards and import_history register only behind
+    ``extended_tools``."""
     from . import boards, contacts, scan
     from ..record import state
     from . import watchlist as wl
@@ -436,16 +437,22 @@ def register_hunt_tools(registry, cfg, extended: bool):
         wl.drop_from_inbox([j["id"] for j in shown_inbox] + stale)
         return out
 
-    # Default surface: the watchlist, the daily digest and contact logging stay first-class;
+    # Default surface: watchlist, digest, contact logging and referrals stay first-class;
     # careercoach_find_roles(source="watched") is the default way to the board scan.
-    registry.register_tools([careercoach_watchlist, careercoach_log_contact, careercoach_digest])
+    registry.register_tools(
+        [
+            careercoach_watchlist,
+            careercoach_log_contact,
+            careercoach_digest,
+            careercoach_import_connections,
+            careercoach_find_referrals,
+        ]
+    )
     if extended:  # legacy names behind extended_tools — same implementations
         registry.register_tools(
             [
                 careercoach_scan_boards,
                 careercoach_import_history,
-                careercoach_import_connections,
-                careercoach_find_referrals,
             ]
         )
     return careercoach_scan_boards

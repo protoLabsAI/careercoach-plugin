@@ -1,6 +1,6 @@
 """S4b: the consolidated default tool surface.
 
-The plugin registered ~31 tools. The DEFAULT set is now lean (10-12) around the core loop — find
+The plugin registered ~31 tools. The DEFAULT set is now lean (12-14) around the core loop — find
 roles → evaluate → apply kit → track → interview prep — with every pre-consolidation ("legacy") tool
 name reachable behind ``extended_tools`` as a thin wrapper over the SAME implementation, and the four
 browser-fill tools gated on ``browser_fill`` (S3a). These tests pin that contract; the behaviour of
@@ -36,6 +36,8 @@ KEPT_ON_DEFAULT = frozenset(
         "careercoach_watchlist",
         "careercoach_digest",
         "careercoach_log_contact",
+        "careercoach_import_connections",
+        "careercoach_find_referrals",
         "careercoach_render_resume",
         "careercoach_prepare_application",
     }
@@ -99,7 +101,7 @@ def _tools(plugin, cfg):
 def test_default_surface_is_lean_and_keeps_the_digest(plugin, iso):
     names = _names(plugin, {})
     non_knob = names - KNOBS
-    assert 10 <= len(non_knob) <= 12, sorted(non_knob)
+    assert 12 <= len(non_knob) <= 14, sorted(non_knob)
     assert "careercoach_digest" in non_knob  # the jobCoach 7:30 report, by its exact name
     # the merged façades are all present
     assert {
@@ -157,6 +159,15 @@ def test_read_sources_is_read_only_and_mirrors_the_facade_reads(plugin, iso, mon
     assert "Unknown source" in rs.invoke({"source": "confirm"})
 
 
+@pytest.mark.parametrize("cfg", [{}, {"extended_tools": False}, {"extended_tools": True}])
+def test_referral_tools_are_always_registered_once(plugin, iso, cfg):
+    names = [t.name for t in _register(plugin, cfg).tools]
+    for name in ("careercoach_find_referrals", "careercoach_import_connections"):
+        assert names.count(name) == 1
+    for name in ("careercoach_scan_boards", "careercoach_import_history"):
+        assert names.count(name) == int(cfg.get("extended_tools", False))
+
+
 def test_default_surface_hides_the_legacy_names(plugin, iso):
     names = _names(plugin, {})
     sample = {
@@ -167,8 +178,6 @@ def test_default_surface_hides_the_legacy_names(plugin, iso):
         "careercoach_track_application",
         "careercoach_get_answers",
         "careercoach_import_history",
-        "careercoach_import_connections",
-        "careercoach_find_referrals",
         "careercoach_scaffold_role",
     }
     assert not (sample & names), sorted(sample & names)
