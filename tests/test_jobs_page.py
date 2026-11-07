@@ -1448,3 +1448,122 @@ def test_a_long_target_list_stays_on_one_line_and_keeps_the_full_text(plugin):
     css = plugin._DASHBOARD_HTML
     assert "#sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }" in css
     assert "sub.title = roles" in css
+
+
+# ── a load() mid-drag defers the paint so the drop lands (careercoach#97) ───────────────
+def _drag_ctx(plugin):
+    """A view context with load() loaded on top of the renderers, and api/render/openDetail stubbed so
+    load()'s promise chain runs synchronously. ``RES`` is a resolved-thenable that drives ``.then(onF)``
+    inline (ignoring the reject arg on the success path); ``__data`` feeds the /jobs and /state reads and
+    ``__renders`` counts paints."""
+    ctx = _view_ctx(plugin)
+    html = plugin._DASHBOARD_HTML
+    ctx.eval(html[html.index("  function load()") : html.index("  function subscribe()")])
+    ctx.eval(r"""
+      function RES(v) { return { then: function (f) { var out = f ? f(v) : v; return (out && out.then) ? out : RES(out); } }; }
+      var __data = { '/jobs': null, '/state': null };
+      api = function (p) { return RES(__data[p]); };
+      var __renders = 0; render = function () { __renders++; };
+      var __opens = []; openDetail = function (id) { __opens.push(id); };
+    """)
+    return ctx
+
+
+def test_load_during_a_drag_updates_data_but_defers_the_paint(plugin):
+    """r1: with DRAG_ID set, a completing load() refreshes JOBS/STATE but does NOT call render(); the
+    dragged card element (a sentinel in #body that only render() would rebuild) stays in the DOM."""
+    ctx = _drag_ctx(plugin)
+    jobs = {
+        "applications": [{"id": "drag-me", "role": "R", "company": "C", "status": "applied"}],
+        "columns": COLUMNS,
+        "inbox": [],
+        "followup_days": 10,
+    }
+    ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + ";")
+    ctx.eval("document.getElementById('body').innerHTML = '<div class=\"pcard\" data-id=\"drag-me\"></div>';")
+    # a drag is in flight; a fresh load lands with a new role appearing mid-drag
+    ctx.eval("DRAG_ID = 'drag-me'; RENDER_PENDING = false; __renders = 0;")
+    fresh = {
+        "applications": [
+            {"id": "drag-me", "role": "R", "company": "C", "status": "applied"},
+            {"id": "fresh", "role": "New", "company": "C2", "status": "considering"},
+        ],
+        "columns": COLUMNS,
+        "inbox": [],
+        "followup_days": 10,
+    }
+    ctx.eval("__data['/jobs'] = " + json.dumps(fresh) + "; __data['/state'] = {settings: {}};")
+    ctx.eval("load();")
+    # the fetched data is applied...
+    assert json.loads(ctx.eval("JSON.stringify(JOBS.applications.map(function (a) { return a.id; }))")) == [
+        "drag-me",
+        "fresh",
+    ]
+    assert json.loads(ctx.eval("JSON.stringify(STATE)")) == {"settings": {}}
+    assert ctx.eval("LOADING") is False
+    # ...but the board is not rebuilt: no render(), the paint is queued, and the dragged node survives
+    assert ctx.eval("__renders") == 0
+    assert ctx.eval("RENDER_PENDING") is True
+    assert ctx.eval("DRAG_ID") == "drag-me"  # the drag itself is untouched
+    assert 'data-id="drag-me"' in ctx.eval("document.getElementById('body').innerHTML")
+
+
+def test_dragend_flushes_a_deferred_render_exactly_once(plugin):
+    """r2: endDrag() (what both dragend handlers call) clears DRAG_ID and runs the deferred paint once;
+    a second dragend, with nothing pending, does not paint again."""
+    ctx = _view_ctx(plugin)
+    ctx.eval("var __renders = 0; render = function () { __renders++; };")
+    ctx.eval("var __opens = []; openDetail = function (id) { __opens.push(id); };")
+    ctx.eval("DRAG_ID = 'x'; RENDER_PENDING = true; DETAIL_ID = null;")
+    ctx.eval("endDrag();")
+    assert ctx.eval("DRAG_ID") is None
+    assert ctx.eval("RENDER_PENDING") is False
+    assert ctx.eval("__renders") == 1  # the deferred paint runs exactly once
+    ctx.eval("endDrag();")
+    assert ctx.eval("__renders") == 1  # nothing pending → no second paint
+
+
+def test_dragend_without_a_pending_render_does_not_paint(plugin):
+    """r2: a plain drag that triggered no mid-drag load() clears DRAG_ID on dragend and paints nothing."""
+    ctx = _view_ctx(plugin)
+    ctx.eval("var __renders = 0; render = function () { __renders++; };")
+    ctx.eval("DRAG_ID = 'x'; RENDER_PENDING = false;")
+    ctx.eval("endDrag();")
+    assert ctx.eval("DRAG_ID") is None
+    assert ctx.eval("__renders") == 0
+
+
+def test_dragend_flush_reopens_the_detail_drawer_when_it_was_open(plugin):
+    """The deferred flush mirrors load()'s tail: an open job drawer is re-opened with the latest state."""
+    ctx = _view_ctx(plugin)
+    ctx.eval("var __renders = 0; render = function () { __renders++; };")
+    ctx.eval("var __opens = []; openDetail = function (id) { __opens.push(id); };")
+    ctx.eval("document.getElementById('detail').classList.add('open'); DETAIL_ID = 'job-1';")
+    ctx.eval("DRAG_ID = 'x'; RENDER_PENDING = true; endDrag();")
+    assert ctx.eval("__renders") == 1
+    assert json.loads(ctx.eval("JSON.stringify(__opens)")) == ["job-1"]
+
+
+def test_load_without_a_drag_renders_immediately(plugin):
+    """r3: with no drag in progress, load() paints at once and queues nothing."""
+    ctx = _drag_ctx(plugin)
+    jobs = {"applications": [], "columns": COLUMNS, "inbox": [], "followup_days": 10}
+    ctx.eval("__data['/jobs'] = " + json.dumps(jobs) + "; __data['/state'] = {settings: {}};")
+    ctx.eval("DRAG_ID = null; RENDER_PENDING = false; __renders = 0;")
+    ctx.eval("load();")
+    assert ctx.eval("__renders") == 1
+    assert ctx.eval("RENDER_PENDING") is False
+    assert json.loads(ctx.eval("JSON.stringify(JOBS)")) == jobs
+    assert ctx.eval("LOADING") is False
+
+
+def test_drag_defer_and_enddrag_flush_are_wired(plugin):
+    """The page source wires the guard: load() defers while DRAG_ID is set, every dragend/drop routes
+    through endDrag(), and a drop still reads the dragged id from DRAG_ID (else the dataTransfer payload)."""
+    html = plugin._DASHBOARD_HTML
+    assert "if (DRAG_ID) { RENDER_PENDING = true; return; }" in html  # load() defers mid-drag
+    assert "function endDrag()" in html
+    assert html.count("card.addEventListener('dragend', function () { endDrag(); });") == 2  # both boards
+    assert html.count("colEl.getAttribute('data-col')); endDrag();") == 2  # both drop handlers
+    # a drop uses the card's id even if state refreshed meanwhile
+    assert "var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));" in html
