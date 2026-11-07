@@ -101,7 +101,7 @@ def _tools(plugin, cfg):
 def test_default_surface_is_lean_and_keeps_the_digest(plugin, iso):
     names = _names(plugin, {})
     non_knob = names - KNOBS
-    assert 12 <= len(non_knob) <= 14, sorted(non_knob)
+    assert 12 <= len(non_knob) <= 15, sorted(non_knob)
     assert "careercoach_digest" in non_knob  # the jobCoach 7:30 report, by its exact name
     # the merged façades are all present
     assert {
@@ -110,6 +110,7 @@ def test_default_surface_is_lean_and_keeps_the_digest(plugin, iso):
         "careercoach_track",
         "careercoach_answers",
         "careercoach_role_packet",
+        "careercoach_settings",  # get/set the search + watch config keys
     } <= non_knob
     # no pre-consolidation legacy-only name leaks into the default surface
     legacy_only = PRE_CHANGE_TOOL_NAMES - KEPT_ON_DEFAULT

@@ -66,6 +66,7 @@ def register(registry) -> None:
     search_jobs = _register_jobsearch_tool(registry, cfg, extended)
     scan_boards = _register_hunt_tools(registry, cfg, extended)
     _register_find_roles_tool(registry, scan_boards, search_jobs)
+    _register_settings_tool(registry)  # get/set the search + watch config keys (lean default surface)
     get_profile, read_profile = _register_packet_tools(registry, cfg, extended)
     get_answers = _register_answers_tools(registry, extended)
     # The delegate crew reads the verified record through this one read-only tool, so it can ground a
@@ -86,7 +87,7 @@ def register(registry) -> None:
     # skills/ and workflows/ auto-load from their conventional dirs — no call needed.
     log.info(
         "[careercoach] registered: lean default surface (find_roles + profile + track + answers + "
-        "role_packet + apply kit + digest + watchlist + log_contact), browser-fill tools %s, legacy "
+        "role_packet + apply kit + digest + watchlist + log_contact + settings), browser-fill tools %s, legacy "
         "surface %s, submit gate, rubric knobs, crew, profile injection, dashboard, watch",
         "on" if fill_on else "off",
         "on" if extended else "off",
@@ -627,6 +628,200 @@ def _register_hunt_tools(registry, cfg, extended: bool):
     from .search.hunt import register_hunt_tools
 
     return register_hunt_tools(registry, cfg, extended)
+
+
+# ── agent tool: the search + watch settings (get / set the config keys the scan reads) ────────────
+# A read-and-WRITE surface for the handful of search/watch config keys an operator would otherwise
+# have to open Settings ▸ Career Coach to change. The allowlist is exactly the keys the board scan and
+# the background watch read (hunt.filters + _register_job_watch); anything NOT on it — the jobs_api_key
+# secret, the document/workspace knobs, an unknown key — is refused and never echoed. A set applies to
+# the in-process config at once (every registered tool holds registry.config by reference, so the next
+# scan sees it with no restart) AND persists through the host's plugin-config store (ADR 0019) so it
+# survives one. YAML is never hand-edited.
+_SETTINGS_STR_KEYS = ("target_roles", "title_exclude", "locations", "search_country")
+_SETTINGS_INT_KEYS = ("max_age_days", "watch_interval_min", "watch_min_score", "followup_days")
+_SETTINGS_BOOL_KEYS = ("watch_enabled",)
+_SETTINGS_KEYS = _SETTINGS_STR_KEYS + _SETTINGS_INT_KEYS + _SETTINGS_BOOL_KEYS
+_SECRET_KEYS = frozenset({"jobs_api_key"})  # mirrors the manifest `secrets:` — refused, never read back
+# Manifest defaults, so `get` shows the effective value for a key the operator never set.
+_SETTINGS_DEFAULTS = {
+    "target_roles": "",
+    "title_exclude": "intern, internship, new grad",
+    "locations": "",
+    "search_country": "",
+    "max_age_days": 30,
+    "watch_interval_min": 180,
+    "watch_min_score": 75,
+    "followup_days": 10,
+    "watch_enabled": False,
+}
+# Sensible bounds for the number keys, matching the manifest/usage (watch_interval_min floors at 5,
+# watch_min_score is a 0-100 score). Type validation is the hard requirement; these keep a stored
+# value in range the way the Settings surface would.
+_SETTINGS_INT_BOUNDS = {
+    "max_age_days": (0, None, "0 or more (0 = any age)"),
+    "watch_interval_min": (5, None, "at least 5 (minutes)"),
+    "watch_min_score": (0, 100, "between 0 and 100"),
+    "followup_days": (1, None, "at least 1 (days)"),
+}
+
+
+def _live_cfg(registry) -> dict:
+    """The freshest plugin config: the host re-reads its store via ``live_config()``; with no host that
+    falls back to the register-time snapshot (``registry.config``), which is the same dict a set mutates."""
+    live = getattr(registry, "live_config", None)
+    if callable(live):
+        try:
+            cfg = live()
+            if isinstance(cfg, dict):
+                return cfg
+        except Exception:  # noqa: BLE001 — a flaky host read must not break a read-only tool
+            pass
+    cfg = getattr(registry, "config", None)
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _fmt_setting_value(value) -> str:
+    """How a setting reads back to the operator: booleans as true/false, a blank as ``(blank)``."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None or value == "":
+        return "(blank)"
+    return str(value)
+
+
+def _show_setting(cfg, key: str) -> str:
+    """The display value for one key — normalized to its type so a value stored as a string
+    (``"30"``, ``"true"``) still reads back as a number/bool."""
+    raw = cfg.get(key, _SETTINGS_DEFAULTS.get(key))
+    if key in _SETTINGS_BOOL_KEYS:
+        return _fmt_setting_value(_as_bool(raw))
+    if key in _SETTINGS_INT_KEYS:
+        try:
+            return _fmt_setting_value(int(str(raw).strip()))
+        except (TypeError, ValueError):
+            return _fmt_setting_value(raw)
+    return _fmt_setting_value(raw)
+
+
+def _refuse_setting(key: str) -> str:
+    """A clear refusal for a key careercoach_settings won't touch — a secret or anything off the
+    allowlist. The value is never read or echoed."""
+    if key in _SECRET_KEYS:
+        return (
+            f"{key} is a secret and can't be read or changed here — set it in Settings ▸ Career Coach "
+            "(it's stored in secrets.yaml and never shown). Nothing changed."
+        )
+    return (
+        f"{key!r} isn't a Career Coach search/watch setting this tool can change. "
+        f"Changeable keys: {', '.join(_SETTINGS_KEYS)}. Other settings (and the job-source API key) "
+        "live in Settings ▸ Career Coach. Nothing changed."
+    )
+
+
+def _coerce_setting(key: str, raw: str):
+    """Parse + validate ``raw`` for one allowlisted key. Returns ``(value, None)`` on success, or
+    ``(None, message)`` with a ready-to-return refusal. Number keys reject non-numeric input and
+    out-of-range values; the bool key accepts only the usual truthy/falsey words."""
+    text = (raw or "").strip()
+    if key in _SETTINGS_STR_KEYS:
+        return text, None  # strings pass through (trimmed); "" validly clears a key
+    if key in _SETTINGS_BOOL_KEYS:
+        low = text.lower()
+        if low in ("1", "true", "yes", "on"):
+            return True, None
+        if low in ("0", "false", "no", "off"):
+            return False, None
+        return None, f"{key} is a true/false setting — pass true or false, not {raw!r}."
+    if key in _SETTINGS_INT_KEYS:
+        try:
+            number = int(text)
+        except (TypeError, ValueError):
+            return None, f"{key} is a number — pass a whole number, not {raw!r}."
+        lo, hi, desc = _SETTINGS_INT_BOUNDS.get(key, (None, None, ""))
+        if (lo is not None and number < lo) or (hi is not None and number > hi):
+            return None, f"{key} must be {desc}; got {number}."
+        return number, None
+    return None, _refuse_setting(key)  # unreachable for an allowlisted key
+
+
+def _write_plugin_config(registry, key: str, value) -> bool:
+    """Persist ONE config key to the host's durable plugin-config store (ADR 0019) — the same write path
+    Settings ▸ Career Coach uses — so the value survives a restart. Lazy + guarded like every other host
+    seam here: returns True if a host store accepted the write, False when no host is present (the
+    host-free suite, which monkeypatches this seam). Never hand-edits YAML."""
+    section = getattr(registry, "config_section", None) or getattr(registry, "plugin_id", "") or "careercoach"
+    # Forward-compatible: use a registry-level writer if the host grows one (the write pair to
+    # live_config()); most hosts expose the config store as a module function instead (below).
+    writer = getattr(registry, "set_config", None)
+    if callable(writer):
+        try:
+            writer(key, value)
+            return True
+        except Exception as exc:  # noqa: BLE001 — fall through to the module path
+            log.warning("[careercoach] registry.set_config(%s) failed: %s", key, exc)
+    try:
+        from ops.config import set_config  # the host's plugin-config writer (src/ops/config.py)
+    except Exception:  # noqa: BLE001 — no host, or a host without this module
+        return False
+    try:
+        set_config(section, {key: value})
+        return True
+    except Exception as exc:  # noqa: BLE001 — the in-process update already applied; log and degrade
+        log.warning("[careercoach] durable config write for %s failed: %s", key, exc)
+        return False
+
+
+def _register_settings_tool(registry) -> None:
+    @tool
+    def careercoach_settings(action: str = "get", key: str = "", value: str = "") -> str:
+        """Read or change the Career Coach search + background-watch settings — the keys that decide which
+        roles the board scan and the daily watch surface. action="get" (default): with no `key`, list every
+        changeable key and its current value; with a `key`, show just that one. action="set": write `key` to
+        `value` and report the old → new change — it takes effect on the next scan (no restart) and is saved
+        for later. Changeable keys: target_roles, title_exclude, locations, search_country, max_age_days,
+        watch_enabled, watch_interval_min, watch_min_score, followup_days. The job-source API key and every
+        other setting are off-limits here — change those in Settings ▸ Career Coach."""
+        act = (action or "get").strip().lower()
+        k = (key or "").strip()
+        if act == "get":
+            cfg = _live_cfg(registry)
+            if not k:
+                lines = [f"- {name}: {_show_setting(cfg, name)}" for name in _SETTINGS_KEYS]
+                return 'Career Coach search + watch settings (change one with action="set"):\n' + "\n".join(lines)
+            if k not in _SETTINGS_KEYS:
+                return _refuse_setting(k)
+            return f"{k}: {_show_setting(cfg, k)}"
+        if act == "set":
+            if not k:
+                return (
+                    'To change a setting, pass its key and value, e.g. action="set", key="max_age_days", '
+                    'value="14". Call action="get" to list the changeable keys.'
+                )
+            if k not in _SETTINGS_KEYS:  # a secret or unknown key — refused before any value is read
+                return _refuse_setting(k)
+            new_value, err = _coerce_setting(k, value)
+            if err:
+                return f"Not changed: {err}"
+            cfg = _live_cfg(registry)
+            old_value = cfg.get(k, _SETTINGS_DEFAULTS.get(k))
+            # Authoritative in-process update: every registered tool holds registry.config by reference,
+            # so the next board scan / watch read sees this at once, with no restart.
+            try:
+                registry.config[k] = new_value
+            except Exception:  # noqa: BLE001 — a tool never raises
+                return "Not changed: the plugin config isn't writable in this context."
+            saved = _write_plugin_config(registry, k, new_value)
+            tail = (
+                ""
+                if saved
+                else " (applied for this session; the host didn't confirm a durable save, so it may not "
+                "survive a restart — set it in Settings ▸ Career Coach to make it stick)"
+            )
+            return f"Set {k}: {_fmt_setting_value(old_value)} → {_fmt_setting_value(new_value)}.{tail}"
+        return f'Unknown action {action!r} — use "get" or "set".'
+
+    registry.register_tool(careercoach_settings)
 
 
 def _import_detail(row: dict) -> str:
