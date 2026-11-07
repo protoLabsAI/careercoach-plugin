@@ -6,12 +6,14 @@ watch_interval_min, watch_min_score, followup_days). The jobs_api_key secret and
 allowlist are refused and never echoed. A set applies to the in-process config at once — so a
 subsequent get and the next ``hunt.filters`` scan read see it with no restart — and persists through
 the host's plugin-config store. That durable write is a seam (``_write_plugin_config``); the suite runs
-host-free, so these tests monkeypatch it to prove it is (and isn't) reached.
+host-free, including stand-ins matching the async host config writer contract.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -30,6 +32,10 @@ ALLOWED = (
 )
 
 
+def invoke(tool, args):
+    return asyncio.run(tool.ainvoke(args))
+
+
 def _settings_tool(plugin, cfg):
     """Register the plugin host-free and return (registry, the careercoach_settings tool)."""
     reg = FakeRegistry(cfg, plugin_id="careercoach")
@@ -44,7 +50,7 @@ def test_get_lists_every_allowed_key_and_never_the_secret(plugin, iso):
         plugin,
         {"target_roles": "AI Engineer", "max_age_days": 14, "watch_enabled": True, "jobs_api_key": "SEEKRIT"},
     )
-    out = tool.invoke({"action": "get"})
+    out = invoke(tool, {"action": "get"})
     for key in ALLOWED:
         assert f"{key}:" in out, key
     # the secret is neither listed nor echoed
@@ -58,7 +64,7 @@ def test_get_lists_every_allowed_key_and_never_the_secret(plugin, iso):
 
 def test_get_shows_manifest_defaults_for_unset_keys(plugin, iso):
     _reg, tool = _settings_tool(plugin, {})
-    out = tool.invoke({"action": "get"})
+    out = invoke(tool, {"action": "get"})
     assert "max_age_days: 30" in out
     assert "watch_interval_min: 180" in out
     assert "watch_min_score: 75" in out
@@ -70,30 +76,30 @@ def test_get_shows_manifest_defaults_for_unset_keys(plugin, iso):
 
 def test_get_one_key_shows_just_that_value(plugin, iso):
     _reg, tool = _settings_tool(plugin, {"max_age_days": 21})
-    assert tool.invoke({"action": "get", "key": "max_age_days"}) == "max_age_days: 21"
+    assert invoke(tool, {"action": "get", "key": "max_age_days"}) == "max_age_days: 21"
 
 
 def test_get_single_secret_or_unknown_key_is_refused(plugin, iso):
     _reg, tool = _settings_tool(plugin, {"jobs_api_key": "SEEKRIT"})
-    out = tool.invoke({"action": "get", "key": "jobs_api_key"})
+    out = invoke(tool, {"action": "get", "key": "jobs_api_key"})
     assert "secret" in out.lower()
     assert "SEEKRIT" not in out
-    assert "search/watch setting" in tool.invoke({"action": "get", "key": "bogus"})
+    assert "search/watch setting" in invoke(tool, {"action": "get", "key": "bogus"})
 
 
 # ── r2: set applies in-process (next scan sees it) and persists ──────────────────────────────────
 def test_set_applies_in_process_so_the_next_scan_sees_it(plugin, iso):
     hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
     reg, tool = _settings_tool(plugin, {"target_roles": "AI Engineer", "locations": "remote", "max_age_days": 30})
-    out = tool.invoke({"action": "set", "key": "max_age_days", "value": "14"})
+    out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "14"})
     assert "Set max_age_days: 30 → 14" in out
     # a subsequent get sees it
-    assert "max_age_days: 14" in tool.invoke({"action": "get"})
-    assert tool.invoke({"action": "get", "key": "max_age_days"}) == "max_age_days: 14"
+    assert "max_age_days: 14" in invoke(tool, {"action": "get"})
+    assert invoke(tool, {"action": "get", "key": "max_age_days"}) == "max_age_days: 14"
     # the next board scan reads the SAME registry.config dict through hunt.filters
     assert hunt.filters(reg.config)["max_age_days"] == 14
     # a string key, too — stored verbatim (trimmed) and visible to the scan
-    tool.invoke({"action": "set", "key": "target_roles", "value": "ML Engineer, Data Scientist"})
+    invoke(tool, {"action": "set", "key": "target_roles", "value": "ML Engineer, Data Scientist"})
     assert reg.config["target_roles"] == "ML Engineer, Data Scientist"
     assert hunt.filters(reg.config)["roles"] == "ML Engineer, Data Scientist"
 
@@ -101,8 +107,12 @@ def test_set_applies_in_process_so_the_next_scan_sees_it(plugin, iso):
 def test_set_reaches_the_host_persist_path(plugin, iso, monkeypatch):
     reg, tool = _settings_tool(plugin, {"watch_min_score": 75})
     calls = []
-    monkeypatch.setattr(plugin, "_write_plugin_config", lambda registry, key, value: calls.append((key, value)) or True)
-    out = tool.invoke({"action": "set", "key": "watch_min_score", "value": "80"})
+    monkeypatch.setattr(
+        plugin,
+        "_write_plugin_config",
+        AsyncMock(side_effect=lambda registry, key, value: calls.append((key, value)) or True),
+    )
+    out = invoke(tool, {"action": "set", "key": "watch_min_score", "value": "80"})
     assert calls == [("watch_min_score", 80)]  # the durable write got the typed value
     assert reg.config["watch_min_score"] == 80
     assert "Set watch_min_score: 75 → 80" in out
@@ -111,11 +121,11 @@ def test_set_reaches_the_host_persist_path(plugin, iso, monkeypatch):
 
 def test_bool_key_parses_true_false_and_rejects_junk(plugin, iso):
     reg, tool = _settings_tool(plugin, {"watch_enabled": False})
-    tool.invoke({"action": "set", "key": "watch_enabled", "value": "true"})
+    invoke(tool, {"action": "set", "key": "watch_enabled", "value": "true"})
     assert reg.config["watch_enabled"] is True
-    tool.invoke({"action": "set", "key": "watch_enabled", "value": "off"})
+    invoke(tool, {"action": "set", "key": "watch_enabled", "value": "off"})
     assert reg.config["watch_enabled"] is False
-    out = tool.invoke({"action": "set", "key": "watch_enabled", "value": "maybe"})
+    out = invoke(tool, {"action": "set", "key": "watch_enabled", "value": "maybe"})
     assert "true/false" in out
     assert reg.config["watch_enabled"] is False  # a bad value changes nothing
 
@@ -125,7 +135,7 @@ def test_secret_is_refused_echoes_nothing_and_does_not_persist(plugin, iso, monk
     reg, tool = _settings_tool(plugin, {"jobs_api_key": "SEEKRIT"})
     calls = []
     monkeypatch.setattr(plugin, "_write_plugin_config", lambda *a: calls.append(a) or True)
-    out = tool.invoke({"action": "set", "key": "jobs_api_key", "value": "newkey"})
+    out = invoke(tool, {"action": "set", "key": "jobs_api_key", "value": "newkey"})
     assert "secret" in out.lower()
     assert "Nothing changed" in out
     assert "newkey" not in out and "SEEKRIT" not in out  # neither the new nor the old secret is echoed
@@ -139,7 +149,7 @@ def test_unknown_key_is_refused_and_does_not_persist(plugin, iso, monkeypatch):
     monkeypatch.setattr(plugin, "_write_plugin_config", lambda *a: calls.append(a) or True)
     # full_name / render_format are real config keys but NOT search/watch keys this tool owns
     for key in ("full_name", "render_format", "bogus"):
-        out = tool.invoke({"action": "set", "key": key, "value": "x"})
+        out = invoke(tool, {"action": "set", "key": key, "value": "x"})
         assert "search/watch setting" in out
         assert "Nothing changed" in out
     assert reg.config.get("full_name") == "Jo"  # not overwritten
@@ -153,26 +163,26 @@ def test_number_key_rejects_non_numeric_value(plugin, iso, monkeypatch):
     reg, tool = _settings_tool(plugin, {"max_age_days": 30})
     calls = []
     monkeypatch.setattr(plugin, "_write_plugin_config", lambda *a: calls.append(a) or True)
-    out = tool.invoke({"action": "set", "key": "max_age_days", "value": "soon"})
+    out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "soon"})
     assert "Not changed" in out and "number" in out
     assert reg.config["max_age_days"] == 30  # unchanged
     assert calls == []
-    assert "Not changed" in tool.invoke({"action": "set", "key": "watch_interval_min", "value": "abc"})
+    assert "Not changed" in invoke(tool, {"action": "set", "key": "watch_interval_min", "value": "abc"})
 
 
 def test_number_key_rejects_out_of_range_value(plugin, iso):
     reg, tool = _settings_tool(plugin, {})
-    assert "between 0 and 100" in tool.invoke({"action": "set", "key": "watch_min_score", "value": "150"})
-    assert "at least 5" in tool.invoke({"action": "set", "key": "watch_interval_min", "value": "2"})
-    assert "0 or more" in tool.invoke({"action": "set", "key": "max_age_days", "value": "-3"})
+    assert "between 0 and 100" in invoke(tool, {"action": "set", "key": "watch_min_score", "value": "150"})
+    assert "at least 5" in invoke(tool, {"action": "set", "key": "watch_interval_min", "value": "2"})
+    assert "0 or more" in invoke(tool, {"action": "set", "key": "max_age_days", "value": "-3"})
     assert "watch_min_score" not in reg.config  # nothing was stored
 
 
 # ── misc: unknown action and a set with no key both report cleanly ───────────────────────────────
 def test_unknown_action_and_missing_key_are_handled(plugin, iso):
     _reg, tool = _settings_tool(plugin, {})
-    assert "Unknown action" in tool.invoke({"action": "frobnicate"})
-    assert "pass its key and value" in tool.invoke({"action": "set"})
+    assert "Unknown action" in invoke(tool, {"action": "frobnicate"})
+    assert "pass its key and value" in invoke(tool, {"action": "set"})
 
 
 @pytest.mark.parametrize("key", ALLOWED)
@@ -186,7 +196,142 @@ def test_every_allowed_key_round_trips_through_set_then_get(plugin, iso, key):
         "watch_min_score": "60",
         "followup_days": "5",
     }.get(key, "something")
-    out = tool.invoke({"action": "set", "key": key, "value": value})
+    out = invoke(tool, {"action": "set", "key": key, "value": value})
     assert out.startswith(f"Set {key}:")
     assert key in reg.config
-    assert tool.invoke({"action": "get", "key": key}).startswith(f"{key}:")
+    assert invoke(tool, {"action": "get", "key": key}).startswith(f"{key}:")
+
+
+def install_host_writer(monkeypatch, writer):
+    import sys
+    from types import ModuleType
+
+    ops = ModuleType("ops")
+    config = ModuleType("ops.config")
+    config.set_config = writer
+    ops.config = config
+    monkeypatch.setitem(sys.modules, "ops", ops)
+    monkeypatch.setitem(sys.modules, "ops.config", config)
+
+
+def test_async_host_write_updates_live_and_captured_scan_config(plugin, iso, monkeypatch):
+    reg, tool = _settings_tool(plugin, {"max_age_days": 30, "locations": "remote"})
+    reg.config_section = "custom_section"
+    captured = reg.config
+    live = {"max_age_days": 21, "locations": "remote"}
+    reg.live_config = lambda: live
+    calls = []
+
+    async def set_config(updates, *, ctx=None, apply_settings=None):
+        nonlocal live
+        calls.append(updates)
+        live = {**live, **updates["plugin_config"]["custom_section"]}
+        return {"ok": True}
+
+    install_host_writer(monkeypatch, set_config)
+    out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "7"})
+    assert "21 → 7" in out
+    assert "didn't confirm" not in out
+    assert calls == [{"plugin_config": {"custom_section": {"max_age_days": 7}}}]
+    assert invoke(tool, {"key": "max_age_days"}) == "max_age_days: 7"
+    hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
+    assert hunt.filters(captured)["max_age_days"] == 7
+    assert live["locations"] == "remote"
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("save failed"), False, {"error": "save failed"}])
+def test_failed_host_save_reports_session_only(plugin, iso, monkeypatch, failure):
+    reg, tool = _settings_tool(plugin, {"max_age_days": 30})
+    live = dict(reg.config)
+    reg.live_config = lambda: live
+
+    async def set_config(updates, *, ctx=None, apply_settings=None):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    install_host_writer(monkeypatch, set_config)
+    out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "7"})
+    assert "didn't confirm a durable save" in out
+    assert live["max_age_days"] == reg.config["max_age_days"] == 7
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_registry_writer_is_awaited_when_needed(plugin, monkeypatch, asynchronous):
+    reg = FakeRegistry()
+    calls = []
+
+    def write(key, value):
+        calls.append((key, value))
+
+    reg.set_config = AsyncMock(side_effect=write) if asynchronous else write
+    assert asyncio.run(plugin._write_plugin_config(reg, "max_age_days", 7))
+    assert calls == [("max_age_days", 7)]
+
+
+def test_watch_uses_live_enable_interval_and_score(plugin, iso, monkeypatch):
+    import sys
+    import time
+    from types import SimpleNamespace
+
+    now = [0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    work = []
+    stopped = []
+
+    def supervise(scan, **kwargs):
+        work.append(scan)
+        return SimpleNamespace(start=lambda: None, stop=lambda: stopped.append(True))
+
+    monkeypatch.setattr(sys.modules["graph.sdk"], "supervise", supervise, raising=False)
+    tick = AsyncMock()
+    monkeypatch.setattr(plugin, "_watch_tick", tick)
+    reg, tool = _settings_tool(plugin, {"watch_enabled": False, "watch_interval_min": 180})
+    live = dict(reg.config)
+    reg.live_config = lambda: live
+    install_host_writer(monkeypatch, AsyncMock(return_value={"ok": True}))
+    start, stop, _reload = reg.surface_specs["careercoach-watch"]
+    asyncio.run(start())
+    scan = work[0]
+    asyncio.run(scan())
+    tick.assert_not_awaited()
+    invoke(tool, {"action": "set", "key": "watch_enabled", "value": "true"})
+    asyncio.run(scan())
+    assert tick.await_count == 1
+    now[0] = 300
+    asyncio.run(scan())
+    assert tick.await_count == 1
+    invoke(tool, {"action": "set", "key": "watch_interval_min", "value": "5"})
+    invoke(tool, {"action": "set", "key": "watch_min_score", "value": "0"})
+    asyncio.run(scan())
+    assert tick.await_count == 2
+    assert tick.call_args.args[2] == 0
+    invoke(tool, {"action": "set", "key": "watch_interval_min", "value": "60"})
+    now[0] = 600
+    asyncio.run(scan())
+    assert tick.await_count == 2
+    invoke(tool, {"action": "set", "key": "watch_enabled", "value": "false"})
+    now[0] = 5000
+    asyncio.run(scan())
+    assert tick.await_count == 2
+    asyncio.run(stop())
+    assert stopped == [True]
+
+
+def test_registry_writer_failure_falls_back_to_host(plugin, monkeypatch):
+    reg = FakeRegistry(plugin_id="careercoach")
+    reg.set_config = AsyncMock(side_effect=RuntimeError("unavailable"))
+    writer = AsyncMock(return_value={"ok": True})
+    install_host_writer(monkeypatch, writer)
+    assert asyncio.run(plugin._write_plugin_config(reg, "max_age_days", 7))
+    writer.assert_awaited_once_with({"plugin_config": {"careercoach": {"max_age_days": 7}}})
+
+
+def test_no_host_save_is_explicitly_session_only(plugin, iso, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "ops.config", None)
+    reg, tool = _settings_tool(plugin, {})
+    out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "7"})
+    assert "didn't confirm a durable save" in out
+    assert reg.config["max_age_days"] == 7

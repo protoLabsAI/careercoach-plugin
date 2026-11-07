@@ -678,8 +678,7 @@ def test_connections_import_reports_a_bad_zip(hunt_tools, iso):
 
 
 def test_the_watch_waits_its_interval_between_scans(plugin, iso, monkeypatch):
-    """`interval` is only supervise()'s watchdog period; the pause between scans is `breath`.
-    Passing the scan period as `interval` ran the scan every 3 s on the live agent."""
+    """The supervisor polls locally; the scheduler separately gates network scans by elapsed time."""
     import sys
 
     from _plugin_testkit import FakeRegistry
@@ -702,7 +701,7 @@ def test_the_watch_waits_its_interval_between_scans(plugin, iso, monkeypatch):
     plugin.register(reg)
     start, _stop, _reload = reg.surface_specs["careercoach-watch"]
     asyncio.run(start())
-    assert seen.get("breath") == 180 * 60 and "interval" not in seen
+    assert seen.get("breath") == 30 and "interval" not in seen
 
 
 def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):

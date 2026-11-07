@@ -447,7 +447,7 @@ def test_register_runs_host_free(plugin, registry):
     mw_names = {type(f(None)).__name__ for f in registry.middlewares}
     assert mw_names == {"_ProfileMiddleware", "_SubmitGateMiddleware"}
     assert "careercoach:new_matches" in registry.verifiers  # goal verifier wired (VerifyResult is stubbed)
-    assert "careercoach-watch" not in registry.surfaces  # auto-scan off by default
+    assert "careercoach-watch" in registry.surfaces  # scheduler idles while auto-scan is off
 
 
 # ── register() — the rubric knobs, with the host seam recorded ─────────────────

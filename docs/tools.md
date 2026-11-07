@@ -9,6 +9,7 @@ ask. The default set is kept small on purpose and checked with a tool-selection 
 | Tool | What it does |
 |---|---|
 | `careercoach_find_roles` | Find roles: your watchlist's own job boards (`source="watched"`, the default) or the wider market (`source="market"`). Results land in the Inbox |
+| `careercoach_settings` | Read or change search and background-watch settings without restart |
 | `careercoach_watchlist` | Manage the companies whose job boards are scanned |
 | `careercoach_track` | Manage the pipeline and the Inbox: track or update a role, list, keep or dismiss |
 | `careercoach_digest` | The morning digest: fresh fitting roles, follow-ups due, quiet applications, the pipeline at a glance |

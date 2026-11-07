@@ -635,9 +635,8 @@ def _register_hunt_tools(registry, cfg, extended: bool):
 # have to open Settings ▸ Career Coach to change. The allowlist is exactly the keys the board scan and
 # the background watch read (hunt.filters + _register_job_watch); anything NOT on it — the jobs_api_key
 # secret, the document/workspace knobs, an unknown key — is refused and never echoed. A set applies to
-# the in-process config at once (every registered tool holds registry.config by reference, so the next
-# scan sees it with no restart) AND persists through the host's plugin-config store (ADR 0019) so it
-# survives one. YAML is never hand-edited.
+# live config and the snapshot captured by scan tools, and persists through the host's plugin-config
+# store (ADR 0019) so it survives a restart. YAML is never hand-edited.
 _SETTINGS_STR_KEYS = ("target_roles", "title_exclude", "locations", "search_country")
 _SETTINGS_INT_KEYS = ("max_age_days", "watch_interval_min", "watch_min_score", "followup_days")
 _SETTINGS_BOOL_KEYS = ("watch_enabled",)
@@ -713,7 +712,7 @@ def _refuse_setting(key: str) -> str:
             "(it's stored in secrets.yaml and never shown). Nothing changed."
         )
     return (
-        f"{key!r} isn't a Career Coach search/watch setting this tool can change. "
+        "That key isn't a Career Coach search/watch setting this tool can change. "
         f"Changeable keys: {', '.join(_SETTINGS_KEYS)}. Other settings (and the job-source API key) "
         "live in Settings ▸ Career Coach. Nothing changed."
     )
@@ -745,19 +744,24 @@ def _coerce_setting(key: str, raw: str):
     return None, _refuse_setting(key)  # unreachable for an allowlisted key
 
 
-def _write_plugin_config(registry, key: str, value) -> bool:
+async def _write_plugin_config(registry, key: str, value) -> bool:
     """Persist ONE config key to the host's durable plugin-config store (ADR 0019) — the same write path
     Settings ▸ Career Coach uses — so the value survives a restart. Lazy + guarded like every other host
     seam here: returns True if a host store accepted the write, False when no host is present (the
     host-free suite, which monkeypatches this seam). Never hand-edits YAML."""
+    from inspect import isawaitable
+
     section = getattr(registry, "config_section", None) or getattr(registry, "plugin_id", "") or "careercoach"
     # Forward-compatible: use a registry-level writer if the host grows one (the write pair to
     # live_config()); most hosts expose the config store as a module function instead (below).
     writer = getattr(registry, "set_config", None)
     if callable(writer):
         try:
-            writer(key, value)
-            return True
+            result = writer(key, value)
+            if isawaitable(result):
+                result = await result
+            if result is not False and not (isinstance(result, dict) and result.get("error")):
+                return True
         except Exception as exc:  # noqa: BLE001 — fall through to the module path
             log.warning("[careercoach] registry.set_config(%s) failed: %s", key, exc)
     try:
@@ -765,16 +769,16 @@ def _write_plugin_config(registry, key: str, value) -> bool:
     except Exception:  # noqa: BLE001 — no host, or a host without this module
         return False
     try:
-        set_config(section, {key: value})
-        return True
-    except Exception as exc:  # noqa: BLE001 — the in-process update already applied; log and degrade
+        result = await set_config({"plugin_config": {section: {key: value}}})
+        return result is not False and not (isinstance(result, dict) and result.get("error"))
+    except Exception as exc:  # noqa: BLE001 — report session-only persistence to the caller
         log.warning("[careercoach] durable config write for %s failed: %s", key, exc)
         return False
 
 
 def _register_settings_tool(registry) -> None:
     @tool
-    def careercoach_settings(action: str = "get", key: str = "", value: str = "") -> str:
+    async def careercoach_settings(action: str = "get", key: str = "", value: str = "") -> str:
         """Read or change the Career Coach search + background-watch settings — the keys that decide which
         roles the board scan and the daily watch surface. action="get" (default): with no `key`, list every
         changeable key and its current value; with a `key`, show just that one. action="set": write `key` to
@@ -805,13 +809,14 @@ def _register_settings_tool(registry) -> None:
                 return f"Not changed: {err}"
             cfg = _live_cfg(registry)
             old_value = cfg.get(k, _SETTINGS_DEFAULTS.get(k))
-            # Authoritative in-process update: every registered tool holds registry.config by reference,
-            # so the next board scan / watch read sees this at once, with no restart.
+            saved = await _write_plugin_config(registry, k, new_value)
+            # Persistence may replace the live mapping. Refresh it and the snapshot captured by
+            # existing tools, also when only a session-local update is available.
             try:
+                _live_cfg(registry)[k] = new_value
                 registry.config[k] = new_value
             except Exception:  # noqa: BLE001 — a tool never raises
-                return "Not changed: the plugin config isn't writable in this context."
-            saved = _write_plugin_config(registry, k, new_value)
+                return "The config write completed, but the in-process config couldn't be refreshed."
             tail = (
                 ""
                 if saved
@@ -2831,18 +2836,27 @@ def _register_job_watch(registry, cfg) -> None:
     the pipeline yourself (create_watch, ADR 0067) even with the auto-scan off."""
     _register_watch_verifier(registry)
 
-    if not _as_bool(cfg.get("watch_enabled", False)):
-        return
+    import time
 
-    interval_s = max(300, int(cfg.get("watch_interval_min", 180) or 180) * 60)
-    min_score = int(cfg.get("watch_min_score", 75) or 75)
-    holder: dict = {"engine": None}
+    # Keep a cheap scheduler alive while disabled so enabling requires no restart.
+    holder: dict = {"engine": None, "last_scan": None}
 
     async def _scan() -> None:
         # Never raise out of a tick: a crash skips `breath`, and the watchdog would re-kick a full
         # board scan every `interval` instead of every `watch_interval_min`.
         try:
-            await _watch_tick(registry, cfg, min_score)
+            current = {**cfg, **_live_cfg(registry)}
+            if not _as_bool(current.get("watch_enabled", False)):
+                holder["last_scan"] = None
+                return
+            interval_s = max(300, int(current.get("watch_interval_min", 180) or 180) * 60)
+            last_scan = holder["last_scan"]
+            if last_scan is not None and time.monotonic() - last_scan < interval_s:
+                return
+            try:
+                await _watch_tick(registry, current, int(current.get("watch_min_score", 75)))
+            finally:
+                holder["last_scan"] = time.monotonic()
         except Exception as e:  # noqa: BLE001
             log.warning("[careercoach] watch tick failed: %s", e)
 
@@ -2852,12 +2866,10 @@ def _register_job_watch(registry, cfg) -> None:
         except Exception as e:  # noqa: BLE001
             log.info("[careercoach] job-watch unavailable (host-free?): %s", e)
             return
-        # `breath` is the pause between work units; `interval` is only the watchdog's check period.
-        # Passing the scan period as `interval` ran the scan back-to-back every 3 s (breath's
-        # default) — 41 boards hammered continuously.
-        holder["engine"] = supervise(_scan, name="careercoach-watch", breath=interval_s)
+        # Poll settings locally; network scans remain gated by the configured scan period.
+        holder["engine"] = supervise(_scan, name="careercoach-watch", breath=30)
         holder["engine"].start()
-        log.info("[careercoach] job-watch started (every %d min, >= %d)", interval_s // 60, min_score)
+        log.info("[careercoach] job-watch scheduler started")
 
     async def _stop() -> None:
         engine = holder.get("engine")
