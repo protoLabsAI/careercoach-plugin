@@ -417,6 +417,50 @@ def test_named_variant_preserves_master_and_renders_separately(tools, profile, i
     assert profile.load_profile()["sections"]["resume"].encode() == master
 
 
+@pytest.mark.parametrize("reader", ["careercoach_get_profile", "careercoach_profile"])
+def test_variant_read_correct_and_append(tools, profile, reader):
+    _seed_clean(tools)
+    master = profile.load_profile()["sections"]["resume"].encode()
+    body = "Contact: ada@example.com\n\n## Experience\n- Tailored for PostHog"
+    profile.update_field("resume", body, variant="posthog", mode="replace")
+    profile.update_field("resume", "Contact: other@example.com", variant="other")
+    before = profile._path().read_bytes()
+    read = tools[reader]
+    selected = {"field": "resume", "variant": "posthog"}
+    assert read.invoke(selected) == body
+    assert read.invoke({"field": "resume"}).encode() == master
+    assert read.invoke({"field": "resume", "variant": ""}).encode() == master
+    assert profile._path().read_bytes() == before
+
+    corrected = read.invoke(selected).replace("Tailored for PostHog", "Corrected for PostHog")
+    tools["careercoach_profile"].invoke({"action": "update", **selected, "content": corrected, "mode": "replace"})
+    assert read.invoke(selected) == corrected
+    tools["careercoach_update_profile"].invoke({**selected, "content": "- Additional confirmed work"})
+    assert read.invoke(selected) == corrected + "\n\n- Additional confirmed work"
+    assert profile.load_profile()["sections"]["resume"].encode() == master
+    assert read.invoke({"field": "resume", "variant": "other"}) == "Contact: other@example.com"
+
+
+@pytest.mark.parametrize("reader", ["careercoach_get_profile", "careercoach_profile"])
+@pytest.mark.parametrize(
+    "field,variant,expected",
+    [
+        ("resume", "missing", "Unknown résumé variant 'missing'"),
+        ("resume", "../escape", "Invalid résumé variant"),
+        ("resume", " ", "Invalid résumé variant"),
+        ("roles", "posthog", "only supported for field='resume'"),
+        ("", "posthog", "only supported for field='resume'"),
+    ],
+)
+def test_variant_read_refuses_invalid_selection(tools, profile, reader, field, variant, expected):
+    _seed_clean(tools)
+    before = profile._path().read_bytes()
+    out = tools[reader].invoke({"field": field, "variant": variant})
+    assert expected in out
+    assert CLEAN_RESUME not in out
+    assert profile._path().read_bytes() == before
+
+
 @pytest.mark.parametrize("variant", ["unknown", "../escape", "PostHog", "a/b", " ", "a--b"])
 def test_unknown_or_invalid_variant_writes_nothing(tools, profile, iso, variant):
     _seed_clean(tools)

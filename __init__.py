@@ -895,14 +895,22 @@ def _register_packet_tools(registry, cfg, extended: bool):
         )
 
     @tool
-    def careercoach_get_profile(field: str = "") -> str:
+    def careercoach_get_profile(field: str = "", variant: str = "") -> str:
         """Read the operator's verified profile. No `field`: the completeness index (same as the <operator_profile>
         block). With `field` (roles, education, skills, do_not_claim, stories, notes, name, location, work_auth,
-        contact, headlines): that section in full — read it before drafting from it."""
+        contact, headlines, resume): that section in full — read it before drafting from it.
+        For field="resume", `variant` selects a saved tailored body; empty reads the master."""
         prof, err = profile.load_profile_checked()
         if err:
             return profile.unreadable_block(err)
         field = (field or "").strip()
+        if variant:
+            if field != "resume":
+                return "variant is only supported for field='resume'."
+            try:
+                prof = profile.select_resume(prof, variant)
+            except ValueError as e:
+                return str(e)
         if not field:
             cov = profile.completeness(prof)
             if cov["empty"]:
@@ -934,7 +942,8 @@ def _register_packet_tools(registry, cfg, extended: bool):
         — appends). To correct, read it with careercoach_get_profile and write the whole section back with
         mode="replace". Dropping or rewording a do_not_claim line needs confirm_removal=true, only when the operator
         explicitly asked. For field="resume", `variant` is a lowercase hyphen-separated slug for an
-        operator-approved tailored body stored alongside the master; empty variant updates the master."""
+        operator-approved tailored body stored alongside the master; empty variant updates the master.
+        To correct a variant, pass the same variant to careercoach_get_profile and this tool."""
         try:
             saved = profile.update_field(field, content, mode=mode, confirm_removal=confirm_removal, variant=variant)
         except (KeyError, ValueError, PermissionError, profile.StoreUnreadable) as e:
@@ -1247,7 +1256,8 @@ def _register_packet_tools(registry, cfg, extended: bool):
     ) -> str:
         """Read and maintain the operator's verified profile — the anti-fabrication anchor every CV,
         letter and answer traces to. action: "get" (the completeness index, or one `field`: roles,
-        education, skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines);
+        education, skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines, resume;
+        `variant` selects a saved résumé for field="resume", empty = master);
         "read" (a `doc`: experience, story-bank, reviewer, humanize, improvements); "update" (record one
         `field` the operator confirmed — `content`, mode append/replace, confirm_removal to drop a
         do_not_claim line; `variant` selects a named résumé for field="resume", empty = master);
@@ -1258,7 +1268,7 @@ def _register_packet_tools(registry, cfg, extended: bool):
         "get"."""
         act = (action or "get").strip().lower()
         if act == "get":
-            return careercoach_get_profile.invoke({"field": field})
+            return careercoach_get_profile.invoke({"field": field, "variant": variant})
         if act == "read":
             return careercoach_read_profile.invoke({"doc": doc})
         if act == "update":
