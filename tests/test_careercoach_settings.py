@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import pytest
@@ -202,6 +203,11 @@ def test_every_allowed_key_round_trips_through_set_then_get(plugin, iso, key):
     assert invoke(tool, {"action": "get", "key": key}).startswith(f"{key}:")
 
 
+@dataclass
+class ConfigSetResult:
+    ok: bool
+
+
 def install_host_writer(monkeypatch, writer):
     import sys
     from types import ModuleType
@@ -221,25 +227,33 @@ def test_async_host_write_updates_live_and_captured_scan_config(plugin, iso, mon
     live = {"max_age_days": 21, "locations": "remote"}
     reg.live_config = lambda: live
     calls = []
+    disk = {"custom_section": dict(live)}
 
     async def set_config(updates, *, ctx=None, apply_settings=None):
-        nonlocal live
         calls.append(updates)
-        live = {**live, **updates["plugin_config"]["custom_section"]}
-        return {"ok": True}
+        # The host's disk-only path merges top-level sections, leaving live config untouched.
+        for section, values in updates.items():
+            disk.setdefault(section, {}).update(values)
+        return ConfigSetResult(ok=True)
 
     install_host_writer(monkeypatch, set_config)
     out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "7"})
     assert "21 → 7" in out
     assert "didn't confirm" not in out
-    assert calls == [{"plugin_config": {"custom_section": {"max_age_days": 7}}}]
+    assert calls == [{"custom_section": {"max_age_days": 7}}]
+    restarted, restarted_tool = _settings_tool(plugin, dict(disk["custom_section"]))
+    assert invoke(restarted_tool, {"key": "max_age_days"}) == "max_age_days: 7"
+    assert restarted.config["locations"] == "remote"
     assert invoke(tool, {"key": "max_age_days"}) == "max_age_days: 7"
     hunt = importlib.import_module(plugin.__name__ + ".search.hunt")
     assert hunt.filters(captured)["max_age_days"] == 7
     assert live["locations"] == "remote"
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("save failed"), False, {"error": "save failed"}])
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("save failed"), False, {"error": "save failed"}, {"ok": False}, ConfigSetResult(ok=False)],
+)
 def test_failed_host_save_reports_session_only(plugin, iso, monkeypatch, failure):
     reg, tool = _settings_tool(plugin, {"max_age_days": 30})
     live = dict(reg.config)
@@ -324,7 +338,7 @@ def test_registry_writer_failure_falls_back_to_host(plugin, monkeypatch):
     writer = AsyncMock(return_value={"ok": True})
     install_host_writer(monkeypatch, writer)
     assert asyncio.run(plugin._write_plugin_config(reg, "max_age_days", 7))
-    writer.assert_awaited_once_with({"plugin_config": {"careercoach": {"max_age_days": 7}}})
+    writer.assert_awaited_once_with({"careercoach": {"max_age_days": 7}})
 
 
 def test_no_host_save_is_explicitly_session_only(plugin, iso, monkeypatch):
@@ -335,3 +349,25 @@ def test_no_host_save_is_explicitly_session_only(plugin, iso, monkeypatch):
     out = invoke(tool, {"action": "set", "key": "max_age_days", "value": "7"})
     assert "didn't confirm a durable save" in out
     assert reg.config["max_age_days"] == 7
+
+
+@pytest.mark.parametrize("threshold, expected", [(None, 75), ("", 75), (0, 0), ("0", 0), (80, 80)])
+def test_watch_scans_with_cleared_or_explicit_threshold(plugin, iso, monkeypatch, threshold, expected):
+    import sys
+    from types import SimpleNamespace
+
+    work = []
+
+    def supervise(scan, **kwargs):
+        work.append(scan)
+        return SimpleNamespace(start=lambda: None, stop=lambda: None)
+
+    monkeypatch.setattr(sys.modules["graph.sdk"], "supervise", supervise, raising=False)
+    tick = AsyncMock()
+    monkeypatch.setattr(plugin, "_watch_tick", tick)
+    reg, _tool = _settings_tool(plugin, {"watch_enabled": True, "watch_min_score": threshold})
+    start, stop, _reload = reg.surface_specs["careercoach-watch"]
+    asyncio.run(start())
+    asyncio.run(work[0]())
+    tick.assert_awaited_once_with(reg, reg.config, expected)
+    asyncio.run(stop())

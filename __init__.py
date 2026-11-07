@@ -744,6 +744,13 @@ def _coerce_setting(key: str, raw: str):
     return None, _refuse_setting(key)  # unreachable for an allowlisted key
 
 
+def _config_write_succeeded(result) -> bool:
+    """Honor the host's ConfigSetResult.ok and older registry writer responses."""
+    if isinstance(result, dict):
+        return bool(result.get("ok", True)) and not result.get("error")
+    return result is not False and bool(getattr(result, "ok", True))
+
+
 async def _write_plugin_config(registry, key: str, value) -> bool:
     """Persist ONE config key to the host's durable plugin-config store (ADR 0019) — the same write path
     Settings ▸ Career Coach uses — so the value survives a restart. Lazy + guarded like every other host
@@ -760,7 +767,7 @@ async def _write_plugin_config(registry, key: str, value) -> bool:
             result = writer(key, value)
             if isawaitable(result):
                 result = await result
-            if result is not False and not (isinstance(result, dict) and result.get("error")):
+            if _config_write_succeeded(result):
                 return True
         except Exception as exc:  # noqa: BLE001 — fall through to the module path
             log.warning("[careercoach] registry.set_config(%s) failed: %s", key, exc)
@@ -769,8 +776,9 @@ async def _write_plugin_config(registry, key: str, value) -> bool:
     except Exception:  # noqa: BLE001 — no host, or a host without this module
         return False
     try:
-        result = await set_config({"plugin_config": {section: {key: value}}})
-        return result is not False and not (isinstance(result, dict) and result.get("error"))
+        # The disk writer merges top-level YAML sections; plugin_config is only a runtime field.
+        result = await set_config({section: {key: value}})
+        return _config_write_succeeded(result)
     except Exception as exc:  # noqa: BLE001 — report session-only persistence to the caller
         log.warning("[careercoach] durable config write for %s failed: %s", key, exc)
         return False
@@ -2854,7 +2862,11 @@ def _register_job_watch(registry, cfg) -> None:
             if last_scan is not None and time.monotonic() - last_scan < interval_s:
                 return
             try:
-                await _watch_tick(registry, current, int(current.get("watch_min_score", 75)))
+                min_score = current.get("watch_min_score", 75)
+                # Cleared Settings fields use the default, while an explicit zero is valid.
+                if min_score is None or min_score == "":
+                    min_score = 75
+                await _watch_tick(registry, current, int(min_score))
             finally:
                 holder["last_scan"] = time.monotonic()
         except Exception as e:  # noqa: BLE001
