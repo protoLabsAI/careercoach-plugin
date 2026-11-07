@@ -440,16 +440,20 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def resume_path(root) -> Path:
-    """Absolute path to the résumé file under the workspace root (``<root>/Resume/resume.html``)."""
+def resume_path(root, variant: str = "") -> Path:
+    """Master HTML path, or ``Resume/resume-<variant>.html`` for a named body."""
+    if variant:
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant):
+            raise ValueError("Invalid résumé variant slug.")
+        return Path(root) / "Resume" / f"resume-{variant}.html"
     return Path(root) / RESUME_RELPATH
 
 
-def write_resume_html(root, prof: dict) -> Path:
-    """Render the profile to résumé HTML and write it atomically to ``<root>/Resume/resume.html``.
+def write_resume_html(root, prof: dict, variant: str = "") -> Path:
+    """Render the selected profile view to its master or named HTML path atomically.
     Returns the path. Callers check ``missing_for_resume`` first and don't call this when it's
     non-empty — a résumé is never written from an incomplete profile."""
-    path = resume_path(root)
+    path = resume_path(root, variant)
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(path, render_resume_html(prof))
     return path
