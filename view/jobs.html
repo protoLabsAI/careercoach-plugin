@@ -364,6 +364,12 @@
   var STATE = null, STATE_FAILED = false, JOBS_FAILED = false, LOADING = true;
   var TAB = 'pipeline', TODAY_ALL = false, LAST_VISIT = 0;
   var DRAG_ID = null, DETAIL = null, DETAIL_ID = null, DETAIL_RETURN = null, DETAIL_REQUEST = 0;
+  // A load() that lands mid-drag (the Inbox dismiss delayed save ~6s on, or a live `careercoach.#`
+  // bus event) must NOT re-render: rebuilding the board destroys the node being dragged and the drop
+  // never lands. While DRAG_ID is set, load() still updates JOBS/STATE but sets RENDER_PENDING instead
+  // of painting; endDrag() (both dragend handlers / a completed drop) clears DRAG_ID and, if a render
+  // is pending, paints once with the latest state.
+  var RENDER_PENDING = false;
   var CLOSED_Q = '', CLOSED_OUT = 'all', CLOSED_PAGE = 0;
   var NOTE_DRAFTS = Object.create(null), NOTE_WRITES = Object.create(null), NOTE_PENDING = Object.create(null);
   // Keyboard board move (WCAG 2.5.7): LIFT_ID is the card currently picked up, LIFT_COL the column
@@ -1264,31 +1270,41 @@
       row.addEventListener('keydown', function (ev) { stageKey(ev, b, row); });
     });
   }
+  // End of a drag (a dragend, or a drop whose move has been dispatched): drop the DRAG_ID guard and,
+  // if a load() came in mid-drag and deferred its paint, render once now with the latest state. Idempotent
+  // — a drop calls it and the dragend that follows is then a no-op.
+  function endDrag() {
+    DRAG_ID = null;
+    if (!RENDER_PENDING) return;
+    RENDER_PENDING = false;
+    render();
+    if (DETAIL_ID && document.getElementById('detail').classList.contains('open')) openDetail(DETAIL_ID);
+  }
   // Board wiring: pointer drag (dragstart/over/drop) + keyboard pick-up + click-to-open. No select.
   function wireBoard(b) {
     b.querySelectorAll('.pcard').forEach(function (card) {
       card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
-      card.addEventListener('dragend', function () { DRAG_ID = null; });
+      card.addEventListener('dragend', function () { endDrag(); });
       card.addEventListener('click', function () { if (!LIFT_ID) openDetail(card.getAttribute('data-id')); });
       card.addEventListener('keydown', function (ev) { boardKey(ev, b, card); });
     });
     b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
       colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
       colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
-      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); endDrag(); });
     });
   }
   // Carried wiring for the Closed-tab cards (drag + click + the Move-to select); the board uses wireBoard.
   function wireCards(b) {
     b.querySelectorAll('.pcard').forEach(function (card) {
       card.addEventListener('dragstart', function (ev) { DRAG_ID = card.getAttribute('data-id'); try { ev.dataTransfer.setData('text/plain', DRAG_ID); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {} });
-      card.addEventListener('dragend', function () { DRAG_ID = null; });
+      card.addEventListener('dragend', function () { endDrag(); });
       card.addEventListener('click', function (ev) { if (ev.target && ev.target.closest && ev.target.closest('.movesel')) return; openDetail(card.getAttribute('data-id')); });
     });
     b.querySelectorAll('.col[data-col]').forEach(function (colEl) {
       colEl.addEventListener('dragover', function (ev) { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; colEl.classList.add('over'); });
       colEl.addEventListener('dragleave', function () { colEl.classList.remove('over'); });
-      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); });
+      colEl.addEventListener('drop', function (ev) { ev.preventDefault(); colEl.classList.remove('over'); var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')); if (id) moveToColumn(id, colEl.getAttribute('data-col')); endDrag(); });
     });
     b.querySelectorAll('.movesel').forEach(function (sel) {
       var card = sel.closest('.pcard');
@@ -1922,7 +1938,11 @@
       return api('/state').then(function (s) { STATE = s; STATE_FAILED = false; },
                                function () { STATE = null; STATE_FAILED = true; });
     }, function () { JOBS_FAILED = true; STATE = null; STATE_FAILED = false; }).then(function () {
-      LOADING = false; render();
+      LOADING = false;
+      // Mid-drag: keep the fresh JOBS/STATE but defer the paint — endDrag() flushes it. Rebuilding the
+      // board now would destroy the dragged node and cancel the drop.
+      if (DRAG_ID) { RENDER_PENDING = true; return; }
+      render();
       if (DETAIL_ID && document.getElementById('detail').classList.contains('open')) return openDetail(DETAIL_ID);
     });
   }
