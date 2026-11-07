@@ -391,3 +391,111 @@ def test_resume_is_a_known_section(profile):
     # it is a normal section — not an always-inject guardrail, not guarded against removal
     assert "resume" not in profile.ALWAYS_INJECT_SECTIONS
     assert "resume" not in profile.GUARDED_SECTIONS
+
+
+def test_named_variant_preserves_master_and_renders_separately(tools, profile, iso):
+    _seed_clean(tools)
+    master = profile.load_profile()["sections"]["resume"].encode()
+    tools["careercoach_render_resume"].invoke({})
+    master_file = iso / "ws" / "Resume" / "resume.html"
+    original_html = master_file.read_bytes()
+    body = "Contact: ada@example.com\n\n## Experience\n- Tailored for PostHog"
+    out = tools["careercoach_profile"].invoke(
+        {"action": "update", "field": "resume", "content": body, "variant": "posthog", "mode": "replace"}
+    )
+    assert "Recorded" in out
+    # Subsequent ordinary writes must retain the named bodies.
+    profile.update_field("skills", "Analysis")
+    assert profile.load_profile()["resume_variants"]["posthog"] == body
+    out = tools["careercoach_render_resume"].invoke({"variant": "posthog"})
+    doc = (iso / "ws" / "Resume" / "resume-posthog.html").read_text()
+    assert "Tailored for PostHog" in doc and "University of London" not in doc
+    assert 'browser_pdf("resume-posthog.pdf")' in out
+    assert master_file.read_bytes() == original_html
+    tools["careercoach_render_resume"].invoke({"variant": ""})
+    assert master_file.read_bytes() == original_html
+    assert profile.load_profile()["sections"]["resume"].encode() == master
+
+
+@pytest.mark.parametrize("variant", ["unknown", "../escape", "PostHog", "a/b", " ", "a--b"])
+def test_unknown_or_invalid_variant_writes_nothing(tools, profile, iso, variant):
+    _seed_clean(tools)
+    before = profile._path().read_bytes()
+    out = tools["careercoach_render_resume"].invoke({"variant": variant})
+    assert "Not rendered" in out
+    assert ("Unknown" if variant == "unknown" else "Invalid") in out
+    assert not (iso / "ws" / "Resume").exists()
+    assert profile._path().read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "body,name,expected",
+    [
+        ("## Experience\n- Work", "Ada", "Contact"),
+        ("Contact: ada@example.com\n- TENURE NOTE: unconfirmed", "Ada", "coaching annotations"),
+        (CLEAN_RESUME, "", "a name"),
+        (CLEAN_RESUME, "Ada (unconfirmed)", "coaching annotations"),
+        ("", "Ada", "operator-approved résumé body"),
+    ],
+)
+def test_variant_uses_master_render_gates(tools, profile, iso, body, name, expected):
+    _seed_clean(tools)
+    profile.update_field("name", name)
+    # Same storage semantics as the master: content gates apply when rendering.
+    profile.update_field("resume", CLEAN_RESUME, variant="posthog", mode="replace")
+    tools["careercoach_update_profile"].invoke(
+        {"field": "resume", "content": body, "variant": "posthog", "mode": "replace"}
+    )
+    before = profile._path().read_bytes()
+    out = tools["careercoach_render_resume"].invoke({"variant": "posthog"})
+    assert "Not rendered" in out and expected in out
+    assert not (iso / "ws" / "Resume").exists()
+    assert profile._path().read_bytes() == before
+    assert profile.load_profile()["sections"]["resume"] == CLEAN_RESUME
+
+
+@pytest.mark.parametrize("field,variant", [("resume", "../escape"), ("roles", "posthog")])
+def test_variant_save_rejects_invalid_selector(tools, profile, field, variant):
+    _seed_clean(tools)
+    before = profile._path().read_bytes()
+    out = tools["careercoach_update_profile"].invoke({"field": field, "content": CLEAN_RESUME, "variant": variant})
+    assert "Invalid" in out or "only supported" in out
+    assert profile._path().read_bytes() == before
+
+
+def test_variant_append_and_replace_are_independent(profile):
+    profile.update_field("resume", CLEAN_RESUME, mode="replace")
+    profile.update_field("resume", "Contact: ada@example.com", variant="posthog")
+    profile.update_field("resume", "## Experience\n- First", variant="posthog")
+    assert "First" in profile.load_profile()["resume_variants"]["posthog"]
+    profile.update_field("resume", "Contact: ada@example.com\n- Second", variant="posthog", mode="replace")
+    prof = profile.load_profile()
+    assert "First" not in prof["resume_variants"]["posthog"]
+    assert prof["sections"]["resume"] == CLEAN_RESUME
+    with pytest.raises(ValueError):
+        profile.update_field("resume", "x" * (profile.SECTION_LIMIT + 1), variant="posthog", mode="replace")
+    assert profile.load_profile() == prof
+
+
+def test_unknown_variant_preserves_existing_render(tools, profile, iso):
+    _seed_clean(tools)
+    tools["careercoach_render_resume"].invoke({})
+    path = iso / "ws" / "Resume" / "resume.html"
+    before = path.read_bytes()
+    out = tools["careercoach_render_resume"].invoke({"variant": "missing"})
+    assert "Unknown résumé variant 'missing'" in out
+    assert path.read_bytes() == before
+
+
+def test_unreadable_variant_store_is_not_overwritten(tools, profile):
+    _seed_clean(tools)
+    import json
+
+    path = profile._path()
+    raw = json.loads(path.read_text())
+    raw["resume_variants"] = ["damaged"]
+    path.write_text(json.dumps(raw))
+    before = path.read_bytes()
+    out = tools["careercoach_update_profile"].invoke({"field": "resume", "content": CLEAN_RESUME, "variant": "posthog"})
+    assert "unreadable" in out.lower()
+    assert path.read_bytes() == before

@@ -429,6 +429,7 @@ def empty_profile() -> dict:
     return {
         "identity": {k: "" for k in IDENTITY_FIELDS},
         "sections": {k: "" for k in SECTIONS},
+        "resume_variants": {},
         "updated": "",
     }
 
@@ -450,7 +451,7 @@ def _shape_error(raw: object) -> str:
         return ""
     if not isinstance(raw, dict):
         return "not a JSON object"
-    for key in ("identity", "sections"):
+    for key in ("identity", "sections", "resume_variants"):
         value = raw.get(key)
         if value is not None and not isinstance(value, dict):
             return f"{key!r} is not a JSON object"
@@ -465,6 +466,7 @@ def _normalize(raw: dict) -> dict:
     for k in SECTIONS:
         v = _obj(raw.get("sections")).get(k, "")
         prof["sections"][k] = str(v).strip() if v is not None else ""
+    prof["resume_variants"] = dict(_obj(raw.get("resume_variants")))
     prof["updated"] = str(raw.get("updated", "") or "")
     return prof
 
@@ -499,6 +501,7 @@ def save_profile(profile: dict) -> dict:
         out["identity"][k] = str(_obj(profile.get("identity")).get(k, "") or "").strip()
     for k in SECTIONS:
         out["sections"][k] = str(_obj(profile.get("sections")).get(k, "") or "").strip()
+    out["resume_variants"] = dict(_obj(profile.get("resume_variants")))
     out["updated"] = _now()
     _write_store(_path(), json.dumps(out, indent=2) + "\n")
     return out
@@ -657,7 +660,26 @@ def _load_strict() -> dict:
     return _normalize(raw) if raw else empty_profile()
 
 
-def update_field(field: str, content: str, *, mode: str = "append", confirm_removal: bool = False) -> dict:
+def validate_resume_variant(variant: str) -> None:
+    """Accept an empty master selector or a lowercase, hyphen-separated slug."""
+    if variant and not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant):
+        raise ValueError("Invalid résumé variant: use lowercase letters, digits and single hyphens.")
+
+
+def select_resume(prof: dict, variant: str = "") -> dict:
+    """Return a rendering view without changing the stored master."""
+    validate_resume_variant(variant)
+    if not variant:
+        return prof
+    variants = prof.get("resume_variants") or {}
+    if variant not in variants:
+        raise ValueError(f"Unknown résumé variant {variant!r}. Nothing was written.")
+    return {**prof, "sections": {**prof["sections"], "resume": variants[variant]}}
+
+
+def update_field(
+    field: str, content: str, *, mode: str = "append", confirm_removal: bool = False, variant: str = ""
+) -> dict:
     """Record one identity field or one section, leaving every other field untouched.
 
     Field-at-a-time is the point: a long onboarding interview saves as it goes, so nothing is lost
@@ -667,6 +689,9 @@ def update_field(field: str, content: str, *, mode: str = "append", confirm_remo
     recording roles one at a time keeps every role, and no ordinary write truncates a career
     history. ``mode="replace"`` rewrites a section: it's how a correction is made, by a caller that
     has just read the section in full and passes the whole fixed text.
+
+    For ``resume``, a non-empty ``variant`` stores the body under that slug beside the master.
+    Append/replace and size limits apply independently to each variant.
 
     Refuses rather than guesses:
 
@@ -682,17 +707,29 @@ def update_field(field: str, content: str, *, mode: str = "append", confirm_remo
         raise KeyError(f"unknown profile field {field!r}; known: {known}")
     if mode not in UPDATE_MODES:
         raise ValueError(f"unknown mode {mode!r}; use one of: {', '.join(UPDATE_MODES)}")
+    validate_resume_variant(variant)
+    if variant and field != "resume":
+        raise ValueError("variant is only supported for field='resume'.")
     text = (content or "").strip()
     # Load → plan → save under one lock. Parallel tool calls make this a genuine race, not a
     # theoretical one: without it, concurrent field writes silently drop each other's edits.
     with _locked():
         prof = _load_strict()
-        row = _plan(prof, field, text, mode, confirm_removal)
+        planning = prof
+        if variant:
+            planning = {
+                **prof,
+                "sections": {**prof["sections"], "resume": prof.get("resume_variants", {}).get(variant, "")},
+            }
+        row = _plan(planning, field, text, mode, confirm_removal)
         if row["error"]:
             raise row["error"]
         if row["outcome"] == "unchanged":
             return {**prof, "change": "unchanged"}
-        prof["identity" if field in IDENTITY_FIELDS else "sections"][field] = row["new"]
+        if variant:
+            prof.setdefault("resume_variants", {})[variant] = row["new"]
+        else:
+            prof["identity" if field in IDENTITY_FIELDS else "sections"][field] = row["new"]
         return {**save_profile(prof), "change": row["outcome"]}
 
 

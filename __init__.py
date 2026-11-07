@@ -926,18 +926,21 @@ def _register_packet_tools(registry, cfg, extended: bool):
 
     @tool
     def careercoach_update_profile(
-        field: str, content: str, mode: str = "append", confirm_removal: bool = False
+        field: str, content: str, mode: str = "append", confirm_removal: bool = False, variant: str = ""
     ) -> str:
         """Record one profile field the operator told you or confirmed — never anything else; this profile is the
         anti-fabrication anchor for every CV, letter and answer. `field`: identity (name, location, work_auth,
         contact, headlines — pass the whole value) or section (roles, education, skills, do_not_claim, stories, notes
         — appends). To correct, read it with careercoach_get_profile and write the whole section back with
         mode="replace". Dropping or rewording a do_not_claim line needs confirm_removal=true, only when the operator
-        explicitly asked."""
+        explicitly asked. For field="resume", `variant` is a lowercase hyphen-separated slug for an
+        operator-approved tailored body stored alongside the master; empty variant updates the master."""
         try:
-            saved = profile.update_field(field, content, mode=mode, confirm_removal=confirm_removal)
+            saved = profile.update_field(field, content, mode=mode, confirm_removal=confirm_removal, variant=variant)
         except (KeyError, ValueError, PermissionError, profile.StoreUnreadable) as e:
             return str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
+        if variant:
+            field = f"resume variant {variant!r}"
         cov = profile.completeness(saved)
         coverage = f"Profile now {cov['filled']}/{cov['total']} fields" + (
             f"; still missing: {', '.join(cov['missing'])}" if cov["missing"] else " — complete."
@@ -1163,17 +1166,23 @@ def _register_packet_tools(registry, cfg, extended: bool):
         )
 
     @tool
-    def careercoach_render_resume(company: str = "") -> str:
+    def careercoach_render_resume(company: str = "", variant: str = "") -> str:
         """Render the operator's résumé to Resume/resume.html for an ATS upload. Prints ONLY the operator-approved
         `resume` profile section plus `name` and adds no claims; never reads the coaching record (roles, skills,
         notes, …), whose annotations must not reach an employer. Writes nothing and says why if the body is empty, has
         no `Contact:` line, or carries coach annotations — then draft a clean body, show the operator, and save it
         with careercoach_update_profile(field="resume", mode="replace") only after they approve. Returns the file://
         URL and the steps (browser_open → browser_pdf → browser_upload; the PDF must come from browser_pdf). Pass
-        `company` to name the PDF. Body format: apply-form skill."""
+        `company` to name the PDF. `variant` selects a saved slug (empty = master), writes
+        Resume/resume-<variant>.html and defaults to resume-<variant>.pdf. Body format: apply-form skill."""
         prof, err = profile.load_profile_checked()
         if err:
             return f"Not rendered: {profile.unreadable_block(err)}"
+        try:
+            prof = profile.select_resume(prof, variant)
+        except ValueError as e:
+            return f"Not rendered — {e}"
+        variant_arg = f', variant="{variant}"' if variant else ""
         missing = resume.missing_for_resume(prof)
         if missing:
             needs = []
@@ -1187,7 +1196,7 @@ def _register_packet_tools(registry, cfg, extended: bool):
                 f"Not rendered — a résumé needs {', and '.join(needs)}. Nothing was written. Draft a "
                 "clean, employer-facing résumé body (a `Contact:` header line, optional `Headline:` / "
                 "`Location:` lines, then `## ` sections), SHOW it to the operator, and save it with "
-                'careercoach_update_profile(field="resume", content=…, mode="replace") only AFTER they '
+                f'careercoach_update_profile(field="resume", content=…, mode="replace"{variant_arg}) only AFTER they '
                 "approve it. A résumé is never built from an unapproved body, and never from the "
                 "coaching record — its notes are not for an employer."
             )
@@ -1200,14 +1209,14 @@ def _register_packet_tools(registry, cfg, extended: bool):
                 "these line(s) look like internal coaching notes:\n"
                 f"{quoted}\n"
                 "Rewrite the résumé body with the operator so it contains only what belongs on their "
-                'résumé, then save it with careercoach_update_profile(field="resume", …, mode="replace"). '
+                f'résumé, then save it with careercoach_update_profile(field="resume", …, mode="replace"{variant_arg}). '
                 "It is never silently stripped — a stripped résumé could still misstate facts, so the "
                 "operator-approved body is fixed instead."
             )
         root = packet.resolve_root(_root())
-        path = resume.write_resume_html(root, prof)
+        path = resume.write_resume_html(root, prof, variant=variant)
         url = path.resolve().as_uri()
-        pdf = resume.pdf_name(company)
+        pdf = resume.pdf_name(company or variant)
         return (
             f"Wrote the résumé HTML (built only from the operator-approved résumé body — no coaching "
             f"notes, no added claims) to:\n"
@@ -1234,13 +1243,15 @@ def _register_packet_tools(registry, cfg, extended: bool):
         doc: str = "experience",
         apply: bool = False,
         preview_id: str = "",
+        variant: str = "",
     ) -> str:
         """Read and maintain the operator's verified profile — the anti-fabrication anchor every CV,
         letter and answer traces to. action: "get" (the completeness index, or one `field`: roles,
         education, skills, do_not_claim, stories, notes, name, location, work_auth, contact, headlines);
         "read" (a `doc`: experience, story-bank, reviewer, humanize, improvements); "update" (record one
         `field` the operator confirmed — `content`, mode append/replace, confirm_removal to drop a
-        do_not_claim line); "write" (save the story-bank `doc` with the full merged `content`);
+        do_not_claim line; `variant` selects a named résumé for field="resume", empty = master);
+        "write" (save the story-bank `doc` with the full merged `content`);
         "import_experience" (import the operator's Resume/Experience.md — call without `apply` for a
         preview + preview_id, then apply=true with that id); "export_experience" (a markdown snapshot);
         "init_workspace" (seed the fill-in templates). Read before drafting; never invent. Defaults to
@@ -1252,7 +1263,13 @@ def _register_packet_tools(registry, cfg, extended: bool):
             return careercoach_read_profile.invoke({"doc": doc})
         if act == "update":
             return careercoach_update_profile.invoke(
-                {"field": field, "content": content, "mode": mode, "confirm_removal": confirm_removal}
+                {
+                    "field": field,
+                    "content": content,
+                    "mode": mode,
+                    "confirm_removal": confirm_removal,
+                    "variant": variant,
+                }
             )
         if act == "write":
             return careercoach_write_profile.invoke({"doc": doc, "content": content})
