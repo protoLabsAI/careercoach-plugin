@@ -4,7 +4,7 @@ description: >-
   Find fresh roles, manage a company watchlist, review the daily digest, or follow up on leads. Also handles first run: "set me up", "get started", "onboard me", "here's my resume", an empty profile, and /setup-coach.
 user_facing: true
 slash: setup-coach
-tools: [careercoach_profile, careercoach_answers, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track, memory_recall, knowledge_ingest, list_skills, load_skill]
+tools: [careercoach_profile, careercoach_answers, careercoach_watchlist, careercoach_find_roles, careercoach_digest, careercoach_log_contact, careercoach_track, memory_search, memory_save, knowledge_search, knowledge_ingest, list_skills, load_skill]
 ---
 
 # Job hunt — find fresh roles, go in through people, apply early and few
@@ -142,7 +142,9 @@ Before your first message, gather silently. None of this needs permission:
   rather than asking it all again. If they edit the file later, re-import: only the new lines are
   added. Their file stays theirs, nothing writes over it.
   `careercoach_profile(action="read", doc="story-bank")` may hold their STAR stories too.
-- `memory_recall` for the operator's profile, background, abilities and voice.
+- `memory_search` for the operator's profile, background, abilities and voice, and
+  `knowledge_search` for a résumé or other document they already shared (ingested documents
+  live there, not in memory).
 - Look at what's around: existing CVs or resumes in the workspace, saved artifacts, notes.
 - If they've ever shared a resume link or file, `knowledge_ingest` it — that handles PDFs and
   URLs properly. Don't try to read a PDF with a fetch tool and conclude you can't.
@@ -203,7 +205,7 @@ Check `list_skills` for `my-writing-style` (from cowork's `writing-voice` skill)
 consider theirs and pull out the register: sentence length, formality, what they'd never say,
 whether they open with the point.
 
-Record it under `notes` or leave it to the voice memory domain, but **do this before drafting**,
+Record it under `notes` or save it with `memory_save` under the subject `voice`, but **do this before drafting**,
 not after. Voice rules that arrive after the document is written have already failed.
 
 ### 4. Prove it, then get out of the way

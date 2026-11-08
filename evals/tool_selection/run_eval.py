@@ -128,7 +128,7 @@ def collect_tools(config):
     for name, argument, description in (
         ("web_search", "query", "Search the public web for information."),
         ("fetch_url", "url", "Fetch the text of a web page."),
-        ("memory_recall", "query", "Recall information from previous conversations."),
+        ("memory_search", "query", "Search durable memory for the operator's preferences, facts and decisions."),
         ("browser_open", "url", "Open a URL in the browser."),
     ):
         tools.append(

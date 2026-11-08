@@ -105,7 +105,7 @@ def test_collects_actual_schemas_and_passes_config(monkeypatch, iso):
     assert received == [{"jobs_provider": "himalayas"}]
     functions = {t["function"]["name"]: t["function"] for t in tools}
     assert len(functions) == len(tools)
-    assert {"web_search", "fetch_url", "memory_recall", "browser_open"} <= functions.keys()
+    assert {"web_search", "fetch_url", "memory_search", "browser_open"} <= functions.keys()
     # The lean default surface exposes the merged profile façade, not the legacy get/update tools (S4b).
     assert functions["careercoach_profile"]["parameters"]["properties"]["action"]
     assert functions["careercoach_profile"]["description"]

@@ -11,8 +11,9 @@ description: >-
 # Provenance (ADR 0027) — shown in the install review when added by git URL.
 repository: "https://github.com/protoLabsAI/careercoach-plugin"
 guide_url: "https://github.com/protoLabsAI/careercoach-plugin#quick-start"   # Settings "Setup guide" link (ADR 0059)
-# The DS plugin-kit (/_ds/) + the sandboxed-iframe view convention need a recent host.
-min_protoagent_version: "0.34.0"
+# 0.231.0 renamed the host memory tools (ADR 0125); the skills call memory_search,
+# memory_save and knowledge_search, which older cores don't have.
+min_protoagent_version: "0.231.0"
 # Declarative posture (ADR 0071) — company research still runs through the agent's own
 # web_search/fetch_url tools, but the live job sources (careercoach_search_jobs: JSearch, Himalayas,
 # the Hacker News Algolia API, Remotive on explicit request), the company job-board scan (the public

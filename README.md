@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/protoLabsAI/careercoach-plugin/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/protoLabsAI/careercoach-plugin/ci.yml?branch=main&label=CI"></a>
   <a href="https://github.com/protoLabsAI/careercoach-plugin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/protoLabsAI/careercoach-plugin?label=release"></a>
-  <a href="https://github.com/protoLabsAI/protoAgent"><img alt="protoAgent 0.34+" src="https://img.shields.io/badge/protoAgent-%E2%89%A5%200.34-7c5cff"></a>
+  <a href="https://github.com/protoLabsAI/protoAgent"><img alt="protoAgent 0.231+" src="https://img.shields.io/badge/protoAgent-%E2%89%A5%200.231-7c5cff"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-22c55e"></a>
 </p>

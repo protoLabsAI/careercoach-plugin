@@ -5,10 +5,10 @@ Get the coach running on a protoAgent agent. Every setting is described in
 
 ## Requirements
 
-- **protoAgent 0.34.0 or later.** The manifest declares `min_protoagent_version: 0.34.0`, and the loader
-  refuses the plugin on older cores. Some features need a newer host, noted where they come up: the
-  agent-made résumé PDF needs `browser_pdf` (protoAgent
-  [#3451](https://github.com/protoLabsAI/protoAgent/pull/3451)), and Word export needs 0.108.0.
+- **protoAgent 0.231.0 or later.** The manifest declares `min_protoagent_version: 0.231.0`, and the loader
+  refuses the plugin on older cores. 0.231.0 renamed the memory tools the skills call (`memory_search`,
+  `memory_save`, `knowledge_search`), and every host feature the coach uses, such as `browser_pdf` for the
+  résumé PDF and Word export, is older than that.
 - **A model.** Bring your own: a gateway, a local model or a subscription. The coach adds no hosted service.
 - Optional plugins it works with when they're enabled: **artifact** (the résumé as a versioned document),
   **agent_browser** (PDFs and, in the beta, form filling), **cowork** (Word files and your own writing voice)
