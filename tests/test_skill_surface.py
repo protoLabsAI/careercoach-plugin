@@ -30,12 +30,15 @@ BROWSER_TOOLS = {
     "browser_upload",
     "browser_click",
 }
-# Host-core tools the plugin never registers but the host always provides: memory recall,
-# knowledge ingest, and skill discovery/loading. The folded-in first-run (ex setup-coach)
+# Host-core tools the plugin never registers but the host always provides: memory search and
+# save, knowledge search and ingest, and skill discovery/loading (the names are protoAgent
+# 0.231.0's, ADR 0125; tests/test_host_tool_names.py keeps the removed ones out). The folded-in first-run (ex setup-coach)
 # flow onboards the operator through these, so job-hunt must declare them in its frontmatter
 # or a host that gates tool access on the declaration hides them from the onboarding turn.
 HOST_TOOLS = {
-    "memory_recall",
+    "memory_search",
+    "memory_save",
+    "knowledge_search",
     "knowledge_ingest",
     "list_skills",
     "load_skill",
