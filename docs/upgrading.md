@@ -3,6 +3,13 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.14.0
+
+- **Needs protoAgent 0.231.0 or newer.** 0.231.0 renamed the agent's memory tools (ADR 0125), and the skills
+  now call the new ones: `memory_search`, `memory_save` and `knowledge_search`. On an older core, update
+  protoAgent first; the plugin's `min_protoagent_version` refuses to load otherwise.
+- **Named résumé variants.** A tailored résumé renders as its own variant and never overwrites your master.
+
 ## 0.13.10
 
 - **The code moved into folders.** The logic modules now live in `record/`, `search/` and `applying/`, and the
