@@ -220,6 +220,10 @@ def test_a_submit_on_an_application_page_still_needs_the_grant(gate):
         raise ValueError(url)
 
     assert sg.core_policy_decision(action(), ff.current_verification, boom)["decision"] == "deny"
+    for blank in ("", "   ", None):
+        act = action()
+        act["page_url"] = blank
+        assert sg.core_policy_decision(act, ff.current_verification, from_ats.detect)["decision"] == "deny"
 
 
 def test_an_approved_submit_is_allowed_once_by_core_with_no_second_card(gate):

@@ -282,9 +282,10 @@ def core_policy_decision(action: object, current_verification, is_application_pa
         if vid and current_verification(sid) == vid and consume(sid, vid):
             return {"decision": "allow", "reason": ALLOWED_REASON}
     elif callable(is_application_page):
-        page_url = action.get("page_url") if isinstance(action, dict) else ""
+        page_url = str((action.get("page_url") if isinstance(action, dict) else "") or "").strip()
         try:
-            on_application = bool(is_application_page(str(page_url or "")))
+            # No URL to judge is "can't tell", like a detector error: keep the hard gate.
+            on_application = not page_url or bool(is_application_page(page_url))
         except Exception:  # noqa: BLE001 — can't tell: keep the hard gate
             on_application = True
         if not on_application:
