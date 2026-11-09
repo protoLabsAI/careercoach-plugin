@@ -1231,6 +1231,13 @@ def build_plan(
                 rows.append({**ident, "key": key, "value": "", "action": SKIP})
             continue
 
+        # The operator's extra value exactly as they gave it, captured BEFORE a SELECT maps it onto an
+        # option's own wording. Provenance is judged on THIS — what the operator actually said — never
+        # on the option text: a sensitive answer the operator really gave, matched to a differently
+        # worded option, must stay theirs (and keep verifying), and an option wording that happens to
+        # appear in operator speech must never launder an agent value into "operator".
+        answer_given = value if source == "extra" else None
+
         if _is_group_field(field):
             rows_or = _plan_group_field(field, idx, fields, ident, key, value, source, required, sensitive, forced)
             if rows_or[0] == "row":
@@ -1297,6 +1304,10 @@ def build_plan(
         row = {**ident, "key": key, "value": value, "action": action}
         if source is not None:
             row["source"] = source
+        if answer_given is not None and answer_given != value:
+            # A SELECT mapped the given value onto the option's wording; keep what the operator gave
+            # so provenance is judged on it, not on the option text.
+            row["answer_given"] = answer_given
         # A select/combobox whose options the reader didn't list (a react-select combobox reads back
         # with none) is planned verbatim and flagged ``options_unknown`` — the browser_select
         # read-back then guards that the chosen value actually took.
@@ -1314,8 +1325,10 @@ def build_plan(
             question = " ".join(
                 [str(row.get("label") or "")] + [str(m.get("label") or "") for m in row.get("members") or []]
             )
+            # Judge on the value the operator gave (``answer_given`` when a SELECT remapped it), never
+            # on the option text a select landed on — see ``answer_given`` above.
             row["provenance"] = _extra_provenance(
-                row.get("value"), question, row.get("action"), confirmed, operator_said
+                row.get("answer_given", row.get("value")), question, row.get("action"), confirmed, operator_said
             )
     _order_phone(rows)
     if is_ashby:

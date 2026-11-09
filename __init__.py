@@ -1387,12 +1387,13 @@ def _register_answers_tools(registry, extended: bool):
                 if backup.is_file():
                     out.append(f"The version before the coach's last change is {backup}, if fixing the file is harder.")
                 return "\n".join(out)
-            if not stored:
-                answers.seed_from_profile(profile.load_profile())
-                stored, _ = answers.load_checked()
-            # The name keys are the operator's own name (profile / full_name setting), stored CONFIRMED —
-            # created when missing, promoted from a matching draft a store seeded before that.
-            if answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or "")):
+            # Seed the operator's starter answers (self-ID declines, the unambiguous contact pieces,
+            # the location / work-auth drafts, and the name keys — CONFIRMED only when the profile and
+            # the full_name setting agree) through the one seeding entry point every apply tool shares.
+            # Run unconditionally, not only on an empty store: plan_fill / prepare may have already
+            # seeded the names first, so an "if not stored" guard would skip the non-name drafts for
+            # good. It's idempotent — never overwrites, demotes, or touches a confirmed entry.
+            if _seed_answers(registry):
                 stored, _ = answers.load_checked()
             lines = [
                 "Standard application answers — ONLY confirmed values may fill a form; a draft must "
@@ -1756,15 +1757,22 @@ def _operator_said(state):
         return []
 
 
-def _seed_name_answers(registry) -> None:
-    """Make sure the name answers exist, CONFIRMED when they come from the operator's own Settings
-    (``full_name``) or profile name (``answers.seed_names``). Never raises."""
+def _seed_answers(registry) -> list[str]:
+    """Seed the operator's starter answers from their profile and Settings, returning the keys created
+    or promoted. The ONE seeding entry point every apply tool calls, so the starter drafts exist
+    whatever order the tools run in — a names-only seed no longer leaves the store "not empty" and
+    blocks the rest. Seeds the self-ID declines, the unambiguous contact pieces (email / phone /
+    LinkedIn), the location and recorded work authorization as DRAFTS, and the name keys CONFIRMED when
+    the profile name and the ``full_name`` setting agree (DRAFTS when they name two different people).
+    Idempotent: ``answers.seed_from_profile`` never overwrites, demotes, or touches a confirmed entry.
+    Never raises — an unreadable store is reported by careercoach_answers."""
     from .record import answers, profile
 
     try:
-        answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or ""))
+        return answers.seed_from_profile(profile.load_profile(), str(registry.config.get("full_name", "") or ""))
     except Exception as e:  # noqa: BLE001 — an unreadable store is reported by careercoach_answers
-        log.info("[careercoach] name answers not seeded: %s", e)
+        log.info("[careercoach] answers not seeded: %s", e)
+        return []
 
 
 # Browser tools that only READ the page. Any other browser_* call may change what a form holds, so a
@@ -1933,7 +1941,7 @@ def _register_formfill_tools(registry) -> None:
             ats_norm = (ats or "").strip().lower()
             resume_ready = _resume_renderable() if ats_norm == "ashby" else True
             company_s, role_s = (company or "").strip(), (role or "").strip()
-            _seed_name_answers(registry)
+            _seed_answers(registry)
             plan = formfill.build_plan(
                 fields,
                 answers.confirmed(),
@@ -2117,7 +2125,7 @@ def _register_prepare_tool(registry) -> None:
                 return "\n".join(lines)
 
             company_s, role_s = (company or "").strip(), (role or "").strip()
-            _seed_name_answers(registry)
+            _seed_answers(registry)
             # Fold the posting URL into the session id: prepare lets company/role default to "", so
             # without the URL two different postings with identical questions would share one id and
             # one verification slot — a grant for A could then be spent on B (bd-ywmm.4).

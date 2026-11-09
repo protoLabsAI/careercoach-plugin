@@ -10,8 +10,8 @@
 3  The name answers come from the operator's own profile / Settings, CONFIRMED.
 4  "pronounce" is not "pronouns"; a disability SIGNATURE's Name / Date is an attestation.
 5  "United States +1" is "United States" for a phone country.
-7  A one-option consent group takes yes/no — from the operator only.
-8  A checkbox group whose label another field shares is addressed by a CSS selector.
+6  A one-option consent group takes yes/no — from the operator only.
+7  A checkbox group whose label another field shares is addressed by a CSS selector.
 """
 
 from __future__ import annotations
@@ -359,6 +359,18 @@ def test_profile_and_setting_that_disagree_only_propose(answers):
     assert answers.load()["full_name"]["status"] == answers.DRAFT
 
 
+def test_seed_from_profile_keeps_a_disagreeing_name_a_draft(answers):
+    """QA round 1: seed_from_profile threads the full_name setting into seed_names, so a profile name
+    that disagrees with the setting stays a DRAFT on a fresh store. It used to drop the setting and
+    confirm the profile name unconditionally (``agree`` was always true), and a later seed could not
+    demote it."""
+    answers.seed_from_profile({"identity": {"name": "Testy McTestface"}}, full_name="Other Person")
+    stored = answers.load()
+    for key in answers.NAME_KEYS:
+        assert stored[key]["status"] == answers.DRAFT, key
+    assert "full_name" not in answers.confirmed()
+
+
 def test_plan_fill_fills_names_from_settings_without_asking(plugin, iso, monkeypatch, formfill):
     from _plugin_testkit import FakeRegistry
 
@@ -371,6 +383,94 @@ def test_plan_fill_fills_names_from_settings_without_asking(plugin, iso, monkeyp
                        "state": {"messages": []}})  # fmt: skip
     assert "#first_name -> Testy" in out and "#last_name -> McTestface" in out
     assert "DRAFT" not in out
+
+
+def test_plan_fill_seeds_the_non_name_drafts_before_get_answers(plugin, iso, monkeypatch):
+    """QA round 1: plan_fill / prepare run the FULL profile seeding, so when they run before
+    get_answers — the normal first-run order — the email / phone / location / work-auth / self-ID
+    drafts are seeded too. A names-only seed used to leave the store "not empty", so get_answers'
+    ``if not stored`` guard skipped the non-name drafts for good."""
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    profile = importlib.import_module(plugin.__name__ + ".record.profile")
+    answers = importlib.import_module(plugin.__name__ + ".record.answers")
+    profile.update_field("contact", "ada@example.com · +1 555-234-5678 · https://linkedin.com/in/ada")
+    profile.update_field("location", "London, United Kingdom")
+    profile.update_field("work_auth", "UK citizen")
+    reg = FakeRegistry(config={"browser_fill": "greenhouse"})
+    plugin.register(reg)
+    tools = {t.name: t for t in reg.tools}
+    # plan_fill FIRST, on an empty answers store.
+    tools["careercoach_plan_fill"].invoke(
+        {"form_json": json.dumps([field("First Name", id="first_name", required=True)]),
+         "company": "Acme", "role": "SWE", "ats": "greenhouse", "state": {"messages": []}}
+    )  # fmt: skip
+    seeded = answers.load()
+    for key in ("email", "phone_number", "linkedin_url", "current_location", "authorized_us",
+                "gender", "race_ethnicity", "veteran_status", "disability_status"):  # fmt: skip
+        assert key in seeded and seeded[key]["status"] == answers.DRAFT, key
+    # get_answers, run second, is idempotent — it still lists the same drafts.
+    out = tools["careercoach_answers"].invoke({"action": "get"})
+    assert "ada@example.com" in out and "DRAFT" in out
+
+
+# ── QA round 1: provenance is judged on the value the operator gave, not the option it maps to ──
+# A SELECT folds the operator's own wording onto an option (``_match_option`` ignores the commas and
+# apostrophes an option carries). Provenance must be judged on what the operator SAID, before that
+# mapping — else a sensitive answer the operator really gave, re-worded onto a punctuated option, is
+# re-judged "agent" and review() blocks it from ever verifying; and an option wording that happens to
+# appear in operator speech must never launder an agent value into "operator". Mirrors the disability
+# re-wording episode ("no i dont have a disability" → "No, I don't have a disability").
+WORKAUTH = field(
+    "Are you legally authorized to work in the United States?", "select", id="workauth", required=True,
+    options=["Yes, I am authorized to work in the US", "No, I am not authorized to work in the US"],
+)  # fmt: skip
+
+
+def test_a_sensitive_operator_answer_mapped_to_a_reworded_option_verifies(tools, formfill):
+    state = {"messages": [human("Work authorization, from me: yes i am authorized to work in the us.")]}
+    out = _plan(tools, [WORKAUTH], {"workauth": "yes i am authorized to work in the us"}, state,
+                company="Acme", ats="greenhouse")  # fmt: skip
+    sid = _sid(out)
+    row = next(r for r in formfill.load_session(sid)["rows"] if r.get("id") == "workauth")
+    assert row["provenance"] == "operator"  # judged on what the operator said, not the option wording
+    assert row["value"] == "Yes, I am authorized to work in the US"  # mapped to the option for the fill
+    assert row["answer_given"] == "yes i am authorized to work in the us"  # the operator's own words kept
+    filled = set_values([WORKAUTH], {"workauth": "Yes, I am authorized to work in the US"})
+    verdict = tools["careercoach_verify_fill"].invoke({"session_id": sid, "form_json": json.dumps(filled)})
+    assert verdict.startswith("VERIFIED")  # the option's punctuation is never re-judged against the agent
+
+
+def test_a_sensitive_agent_answer_mapped_to_a_reworded_option_stays_blocked(tools, formfill):
+    # The agent supplies the same value, but the operator never said it: it stays the agent's and is
+    # never planned (no laundering — the option wording appearing nowhere in their words can't help).
+    state = {"messages": [human("Fill it in with my profile; don't submit.")]}
+    out = _plan(tools, [WORKAUTH], {"workauth": "yes i am authorized to work in the us"}, state,
+                company="Acme", ats="greenhouse")  # fmt: skip
+    sid = _sid(out)
+    session = formfill.load_session(sid)
+    assert not any(r.get("id") == "workauth" for r in session["rows"])  # never planned
+    entry = next(u for u in session["unmapped"] if u.get("id") == "workauth")
+    assert entry["agent_answer"] == "yes i am authorized to work in the us"
+    assert "'yes i am authorized to work in the us' is your answer, not theirs" in out
+    # Ticked anyway, it is outside the plan, so it can't verify.
+    filled = set_values([WORKAUTH], {"workauth": "Yes, I am authorized to work in the US"})
+    verdict = tools["careercoach_verify_fill"].invoke({"session_id": sid, "form_json": json.dumps(filled)})
+    assert verdict.startswith("NOT verified")
+
+
+def test_a_reworded_disability_option_keeps_the_operators_provenance(tools, formfill):
+    """The literal episode: the operator's casual 'no i dont have a disability' folds onto the form's
+    punctuated option, and the row stays theirs — not re-labelled the agent's on the option text."""
+    disab = field("Disability status", "select", id="disab",
+                  options=["Yes, I have a disability", "No, I don't have a disability", "I don't wish to answer"])  # fmt: skip
+    state = {"messages": [human("For disability status: no i dont have a disability.")]}
+    out = _plan(tools, [disab], {"disab": "no i dont have a disability"}, state, company="Acme", ats="greenhouse")
+    row = next(r for r in formfill.load_session(_sid(out))["rows"] if r.get("id") == "disab")
+    assert row["value"] == "No, I don't have a disability"  # mapped onto the option for the fill
+    assert row["provenance"] == "operator"  # judged on the operator's words, not the option wording
+    assert row["answer_given"] == "no i dont have a disability"
 
 
 # ── 4: whole-word patterns; signatures are attestations ───────────────────────────────────────

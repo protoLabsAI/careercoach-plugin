@@ -15,11 +15,12 @@ Each key stores ``{value, status: "draft"|"confirmed", confirmed_at}``:
 * ``confirm(keys)`` promotes the named drafts to confirmed — call it only after the operator has
   seen the exact values and said yes.
 * ``confirmed()`` returns only the confirmed values; that's the dict form filling reads.
-* ``seed_from_profile(prof)`` proposes drafts from the verified profile (the unambiguous pieces of
-  the contact line, the location, the recorded work authorization) and defaults the four self-ID
-  keys to "Decline to self-identify". It NEVER overwrites an existing entry. The NAME keys are the
-  exception: ``seed_names`` stores the operator's own name (profile or ``full_name`` setting) as
-  CONFIRMED.
+* ``seed_from_profile(prof, full_name)`` proposes drafts from the verified profile (the unambiguous
+  pieces of the contact line, the location, the recorded work authorization) and defaults the four
+  self-ID keys to "Decline to self-identify". It NEVER overwrites an existing entry. The NAME keys
+  are the exception: ``seed_names`` stores the operator's own name (profile name and/or the
+  ``full_name`` setting) as CONFIRMED when the two agree, and as DRAFTS when they disagree — so the
+  ``full_name`` setting is threaded through here rather than dropped.
 
 **Where it lives.** ``answers.json`` in the plugin's per-instance store, beside ``profile.json`` and
 ``applications.json``, through the same helpers (``profile.py``): the host's instance root (ADR
@@ -304,13 +305,17 @@ def seed_names(prof: dict, fallback_name: str = "") -> list[str]:
     return changed
 
 
-def seed_from_profile(prof: dict) -> list[str]:
-    """Propose starter drafts from the verified profile, returning the keys created.
+def seed_from_profile(prof: dict, full_name: str = "") -> list[str]:
+    """Propose starter drafts from the verified profile, returning the keys created or promoted.
 
     Pulls email / phone / LinkedIn out of the contact line (only where unambiguous), the location,
     and the recorded work authorization, and defaults the four self-ID keys to "Decline to
-    self-identify". NEVER overwrites an existing entry, so it's safe to run whenever the store is
-    empty — a confirmed value, or a draft the operator already touched, is left exactly as it was."""
+    self-identify". The name keys are seeded via ``seed_names`` from the profile name / the
+    ``full_name`` setting — CONFIRMED when the two agree, DRAFTS when they name two different people
+    (the ``full_name`` setting is threaded through so that disagreement isn't silently confirmed).
+    NEVER overwrites, demotes, or touches a confirmed entry, so it's safe to run in any order and
+    on every read — a confirmed value, or a draft the operator already touched, is left exactly as
+    it was."""
     identity = prof.get("identity") if isinstance(prof, dict) else None
     identity = identity if isinstance(identity, dict) else {}
     seeds: dict[str, str] = {}
@@ -323,7 +328,10 @@ def seed_from_profile(prof: dict) -> list[str]:
         seeds["authorized_us"] = work_auth
     for key in SELF_ID_KEYS:
         seeds.setdefault(key, DECLINE)
-    created: list[str] = seed_names(prof)  # the name keys, confirmed (the operator's own name)
+    # The name keys (confirmed only when the profile name and the full_name setting agree — else
+    # drafts, for the operator to settle). The setting must be threaded through: without it
+    # ``seed_names`` has nothing to disagree with and would confirm the profile name unconditionally.
+    created: list[str] = seed_names(prof, full_name)
     drafted: list[str] = []
     with _store._locked("answers"):
         stored = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
