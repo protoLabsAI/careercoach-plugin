@@ -110,6 +110,8 @@ def test_verify_tool_rejects_unchecked_radio(tools, formfill):
             "company": "Acme",
             "role": "Engineer",
             "extra_answers": '{"auth":"Yes"}',
+            # the operator's own words: an authorization answer only plans when they gave it
+            "state": {"messages": [{"type": "human", "content": "Yes, I'm authorized to work there."}]},
         }
     )
 

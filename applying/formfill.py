@@ -42,6 +42,7 @@ from pathlib import PurePath, PurePosixPath, PureWindowsPath
 
 from ..record import answers as _answers
 from ..record import profile as _store
+from . import provenance as _provenance
 
 StoreUnreadable = _store.StoreUnreadable
 log = _store.log
@@ -189,8 +190,11 @@ _KEY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("gender", re.compile(r"\bgender\b")),
     ("race_ethnicity", re.compile(r"\brace\b|ethnic")),
     ("veteran_status", re.compile(r"veteran")),
-    ("disability_status", re.compile(r"disab")),
-    ("pronouns", re.compile(r"pronoun")),
+    # Whole words only (``_` and ``[`` separate, letters don't): "pronounce" is not "pronouns", and a
+    # Lever disability SIGNATURE's Name / Date (``eeo[disabilitySignature]``) is not the disability
+    # question (2026-11-09 eval, Palantir).
+    ("disability_status", re.compile(r"(?<![a-z])disab(?:ility|ilities|led)(?![a-z])")),
+    ("pronouns", re.compile(r"(?<![a-z])pronouns?(?![a-z])")),
 )
 
 # Hints that a field is the dial-code / number half of a phone input. The WORD-like terms are
@@ -338,10 +342,27 @@ SENSITIVE_REASON = (
 )
 
 
+# A SIGNATURE is an attestation: the Name / Date a self-ID or consent section asks you to sign with
+# (Lever's ``eeo[disabilitySignature]`` / ``eeo[disabilitySignatureDate]``, labelled just "Name" and
+# "Date"). Matched on the label AND the name/id, since the label alone reads like the candidate's name.
+_SIGNATURE = re.compile(
+    r"signature|\be[\s-]?sign(?:ed|ing)?\b|\bsign(?:ed)?\s+(?:here|below|by)\b|date\s+(?:of\s+)?sign"
+)
+
+
+def is_signature(field: dict) -> bool:
+    """Whether a field is a signature, or the date of one."""
+    if not isinstance(field, dict):
+        return False
+    texts = [_norm(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
+    return any(t and _SIGNATURE.search(t) for t in texts)
+
+
 def is_sensitive(field: dict) -> bool:
     """Whether a field asks a legal / eligibility / attestation question (``_SENSITIVE``), judged on
-    its visible label — name/id are usually opaque (``QA_12487827``, a UUID) and say nothing."""
-    return isinstance(field, dict) and _SENSITIVE.search(_norm(field.get("label"))) is not None
+    its visible label — name/id are usually opaque (``QA_12487827``, a UUID) and say nothing — or is a
+    signature / date of signature (``is_signature``, which also reads the name/id)."""
+    return isinstance(field, dict) and (_SENSITIVE.search(_norm(field.get("label"))) is not None or is_signature(field))
 
 
 # A work-authorization question about somewhere other than the US is not answered by the confirmed
@@ -520,6 +541,29 @@ def _match_option(value: str, options: list[str]) -> str | None:
         if len(declines) == 1:
             return declines[0]
     return None
+
+
+# A phone-country picker spells each country with its dial code ("United States +1", "+44 United
+# Kingdom", "Canada (+1)"); the confirmed answer is the bare name. Cost an extra verify round on
+# GitLab, Figma and Airbnb (2026-11-09 eval).
+_DIAL_CODE = re.compile(r"\(?\+\s?\d{1,4}(?:[\s-]\d{1,4})?\)?")
+
+
+def strip_dial_code(text: object) -> str:
+    """A phone-country value without its dial code: "United States +1" → "United States"."""
+    return " ".join(_DIAL_CODE.sub(" ", str(text if text is not None else "")).split())
+
+
+def _same_country(a: object, b: object) -> bool:
+    """Whether two phone-country values name the same country, dial codes aside."""
+    x, y = _norm_option(strip_dial_code(a)), _norm_option(strip_dial_code(b))
+    return bool(x) and (x == y or any(x in g and y in g for g in _COUNTRY_ALIASES))
+
+
+def _match_country_option(value: str, options: list[str]) -> str | None:
+    """The ONE option that names ``value``'s country once dial codes are stripped, or ``None``."""
+    hits = [o for o in options if _same_country(value, o)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _action_for(field: dict, options: list[str]) -> str:
@@ -837,6 +881,59 @@ def _snapshot(fields: list[dict]) -> dict[str, str]:
     return out
 
 
+# ── whose answer is an extra answer (provenance.py) ────────────────────────────────────────
+OPERATOR, AGENT, FROM_ANSWERS, FILE = "operator", "agent", "answers", "file"
+AGENT_SENSITIVE_REASON = (
+    "a legal, eligibility or attestation question, and the operator hasn't given that answer in this "
+    "conversation (you supplied it) — ask them, and pass their own words in extra_answers; never answer it "
+    "for them"
+)
+
+
+def _extra_provenance(value, question, action, confirmed, operator_said) -> str:
+    """Who gave an extra answer: ``operator`` / ``agent`` / ``answers`` / ``file`` — or "" when the
+    caller passed no conversation to check against (``operator_said=None``)."""
+    if operator_said is None:
+        return ""
+    if action == UPLOAD:
+        return FILE
+    v = _norm(value)
+    if v and not _provenance.is_short(value) and any(v == _norm(c) for c in (confirmed or {}).values()):
+        return FROM_ANSWERS
+    return OPERATOR if _provenance.said_by_operator(value, question, operator_said) else AGENT
+
+
+def form_keys(fields) -> list[str]:
+    """The identity of every field a form read showed (``_ident_key``), minus file inputs and machine
+    fields: a later read-back that lacks one of them lost a field. File inputs are left out — an
+    upload legitimately replaces Greenhouse's input with a chip and renames Workable's."""
+    out: list[str] = []
+    for f in fields if isinstance(fields, list) else []:
+        if not isinstance(f, dict) or _is_machine_field(f) or _norm(f.get("kind")) in _FILE_KINDS:
+            continue
+        key = _ident_key(f)
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+def lost_fields(plan: dict, form_fields_after) -> list[str]:
+    """The plan-time fields (``form_keys``) a read-back no longer has, as labels — a read-back that
+    dropped fields can't show what they hold. Empty for a plan recorded before ``form_keys`` existed."""
+    keys = plan.get("form_keys") if isinstance(plan, dict) else None
+    if not isinstance(keys, list):
+        return []
+    have = {
+        _ident_key(f) for f in (form_fields_after if isinstance(form_fields_after, list) else []) if isinstance(f, dict)
+    }
+    labels = {}
+    for r in plan.get("rows", []) + plan.get("unmapped", []):
+        if isinstance(r, dict):
+            for k in (_ident_key(r),):
+                labels.setdefault(k, r.get("label", ""))
+    return [labels.get(k) or k.split(":", 1)[-1] for k in keys if k not in have]
+
+
 def build_plan(
     form_fields,
     confirmed,
@@ -847,6 +944,7 @@ def build_plan(
     role="",
     posting="",
     live=True,
+    operator_said=None,
 ) -> dict:
     """Plan how to fill a form read by ``browser_form_read``: ``{session_id, rows, unmapped,
     unconfirmed}`` (plus a ``note`` for Ashby), persisted so ``verify_fill`` can diff against it later.
@@ -916,6 +1014,15 @@ def build_plan(
     no supplied path is handed to ``unmapped`` asking for the résumé PDF — it is NEVER auto-filled
     here (the auto-upload is Ashby-only). The operator renders the PDF and supplies its path keyed by
     the field's id or name.
+
+    **Who gave an extra answer** (``operator_said``, the ``provenance.operator_utterances`` of this
+    conversation): an extra answer is the OPERATOR's only when its value appears in something they
+    said (``provenance.said_by_operator``). Each extra row records ``provenance``: ``operator``,
+    ``agent`` (the approval card marks it "entered by the agent — not confirmed by you"), ``answers``
+    (it equals one of the confirmed standard answers) or ``file`` (an upload path, which no one says
+    in chat). An ``agent`` answer to a LEGAL / eligibility / attestation question never plans: the
+    field goes to ``unmapped`` for the operator, and a value typed there anyway is outside the plan,
+    so it can't verify. ``operator_said=None`` (a caller with no conversation) skips the check.
     """
     confirmed = dict(confirmed or {})
     extra_norm = {_norm(k): str(v if v is not None else "") for k, v in (extra or {}).items()}
@@ -949,7 +1056,7 @@ def build_plan(
             rows.append(forced.pop(idx))
             continue
         if _is_checkbox(field):
-            out = _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts)
+            out = _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts, operator_said)
             if out is None:
                 continue  # a non-first member of a group already planned
             kind_out, item = out
@@ -1012,6 +1119,15 @@ def build_plan(
                 shared_label = True  # ambiguous: the key names a label several fields share
             else:
                 value, source = extra_norm[nlabel].strip(), "extra"
+        agent_answer = None
+        if (
+            source == "extra"
+            and sensitive
+            and _extra_provenance(value, label, action, confirmed, operator_said) == AGENT
+        ):
+            # The agent's own answer to a legal / attestation question: never planned. A confirmed
+            # standard answer on exactly that topic may still fill it (below); otherwise it's asked.
+            agent_answer, value, source = value, None, None
         if value is None and key is not None and key in confirmed:
             value, source = confirmed[key], "standard"
             location_label = _norm(field.get("label")) or _split_ident(fname or fid)
@@ -1042,6 +1158,12 @@ def build_plan(
             value = None
 
         if value is None:
+            if agent_answer is not None:
+                unmapped.append(
+                    {**ident, "key": key, "required": required, "reason": AGENT_SENSITIVE_REASON,
+                     "agent_answer": agent_answer}
+                )  # fmt: skip
+                continue
             # An extra keyed by a shared label can't be routed to one field — ask the operator to
             # re-key it by this field's id or name rather than applying it to all the look-alikes.
             if shared_label:
@@ -1109,6 +1231,13 @@ def build_plan(
                 rows.append({**ident, "key": key, "value": "", "action": SKIP})
             continue
 
+        # The operator's extra value exactly as they gave it, captured BEFORE a SELECT maps it onto an
+        # option's own wording. Provenance is judged on THIS — what the operator actually said — never
+        # on the option text: a sensitive answer the operator really gave, matched to a differently
+        # worded option, must stay theirs (and keep verifying), and an option wording that happens to
+        # appear in operator speech must never launder an agent value into "operator".
+        answer_given = value if source == "extra" else None
+
         if _is_group_field(field):
             rows_or = _plan_group_field(field, idx, fields, ident, key, value, source, required, sensitive, forced)
             if rows_or[0] == "row":
@@ -1156,6 +1285,8 @@ def build_plan(
                 # A select WITH options must resolve to one of them — exact, normalized, or a single
                 # decline-equivalent — whatever the source; otherwise ask the operator, never guess.
                 picked = _match_option(value, options)
+                if picked is None and key == "phone_country":
+                    picked = _match_country_option(value, options)
                 if picked is None:
                     unmapped.append(
                         {
@@ -1173,6 +1304,10 @@ def build_plan(
         row = {**ident, "key": key, "value": value, "action": action}
         if source is not None:
             row["source"] = source
+        if answer_given is not None and answer_given != value:
+            # A SELECT mapped the given value onto the option's wording; keep what the operator gave
+            # so provenance is judged on it, not on the option text.
+            row["answer_given"] = answer_given
         # A select/combobox whose options the reader didn't list (a react-select combobox reads back
         # with none) is planned verbatim and flagged ``options_unknown`` — the browser_select
         # read-back then guards that the chosen value actually took.
@@ -1185,11 +1320,22 @@ def build_plan(
             row["sensitive"] = True
         rows.append(row)
 
+    for row in rows:
+        if row.get("source") == "extra" and "provenance" not in row and operator_said is not None:
+            question = " ".join(
+                [str(row.get("label") or "")] + [str(m.get("label") or "") for m in row.get("members") or []]
+            )
+            # Judge on the value the operator gave (``answer_given`` when a SELECT remapped it), never
+            # on the option text a select landed on — see ``answer_given`` above.
+            row["provenance"] = _extra_provenance(
+                row.get("answer_given", row.get("value")), question, row.get("action"), confirmed, operator_said
+            )
     _order_phone(rows)
     if is_ashby:
         _order_resume_first(rows)
     session_id = _session_id(rows, company, role, posting)
     plan = {"session_id": session_id, "rows": rows, "unmapped": unmapped, "unconfirmed": unconfirmed}
+    plan["form_keys"] = form_keys(fields)
     if is_ashby:
         plan["note"] = ASHBY_PLAN_NOTE
     snapshot = _snapshot(fields)
@@ -1200,6 +1346,31 @@ def build_plan(
         app=(company, role, posting) if live else None,
     )
     return plan
+
+
+def _css_attr(value: str) -> str:
+    """``value`` quoted for a CSS attribute selector."""
+    return '"' + "".join("\\" + ch if ch in ('"', "\\") else ch for ch in value) + '"'
+
+
+def _group_locator(field: dict, fields: list[dict]) -> str:
+    """What ``browser_select(field=…)`` should name to reach a checkbox GROUP: its question label,
+    unless another field answers to the same words — Lever's pronouns group "Pronouns" sits next to
+    a custom text box labelled and named ``pronouns``, so the label matched 11 fields and the pick
+    failed (2026-11-09 eval, Spotify and Zoox). Then the group is addressed by a CSS selector for its
+    member checkboxes (``input[type="checkbox"][name="pronouns"]``), which the core resolves to the
+    whole group. A group with no name keeps its label."""
+    label = str(field.get("label") or "").strip()
+    name = str(field.get("name") or "").strip()
+    nl = _norm(label)
+    clash = any(
+        f is not field and nl and nl in {_norm(f.get("label")), _norm(f.get("name")), _norm(f.get("id"))}
+        for f in fields
+        if isinstance(f, dict)
+    )
+    if (clash or not label) and name:
+        return f'input[type="checkbox"][name={_css_attr(name)}]'
+    return label or str(field.get("id") or name)
 
 
 def _plan_group_field(field, idx, fields, ident, key, value, source, required, sensitive, forced):
@@ -1213,6 +1384,9 @@ def _plan_group_field(field, idx, fields, ident, key, value, source, required, s
     options = _options(field)
     target = ident.get("label") or ident["target"]
     base = {**ident, "kind": "checkbox-group", "target": target, "group_field": True, "key": key}
+    locator = _group_locator(field, fields)
+    if locator != target:
+        base["select_field"] = locator
     if source == "standard" and key in _FREE_TEXT_KEYS:
         if required:
             return "unmapped", {
@@ -1237,6 +1411,14 @@ def _plan_group_field(field, idx, fields, ident, key, value, source, required, s
     if companion is None:
         box = None  # a toggle with no text box after it isn't this question's
     picked = _pick_checkboxes(str(value), options) if options else None
+    if picked is None and len(options) == 1:
+        # A ONE-option group (a required "I agree" consent the reader folded into a group) takes a
+        # yes/no answer the way a lone checkbox does. Whose answer it is was settled before this: a
+        # consent is sensitive, so only the operator's own extra reaches here (QA, PR #121).
+        if _norm(value) in _TRUTHY:
+            picked = [0]
+        elif _norm(value) in _FALSY:
+            picked = []
     if picked is not None:
         for j in (companion, box):
             if j is not None:
@@ -1327,7 +1509,7 @@ def _settle_companions(kind_out, item, fields, comp, forced):
     return kind_out, item
 
 
-def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts):
+def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts, operator_said=None):
     """Plan one checkbox, or one whole checkbox group at its first member: ``("row", row)``,
     ``("unmapped", entry)``, ``("unconfirmed", entry)``, or ``None`` for a later group member.
 
@@ -1336,7 +1518,8 @@ def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirm
     else from a confirmed CHOICE answer the group's name classifies to (``pronouns``). The answer
     names the option(s) to tick. A SINGLE checkbox takes a yes/no answer (or its own label) from an
     extra or a confirmed choice key. Legal / attestation checkboxes ("I consent", "I certify…") are
-    never ticked from anything but an extra the operator gave."""
+    never ticked from anything but an extra the operator gave — in this conversation, when
+    ``operator_said`` is given (``_extra_provenance``)."""
     group = groups.get(idx)
     if group is not None and group[1][0] != idx:
         return None
@@ -1377,6 +1560,12 @@ def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirm
         if ticked:
             picked, source = ticked, "extra"
             value = ", ".join(labels[i] for i in ticked)
+    if source == "extra" and sensitive:
+        question = " ".join(([_split_ident(gkey)] if group else []) + labels)
+        if _extra_provenance(value, question, CHECK, confirmed, operator_said) == AGENT:
+            # A consent / attestation box the agent decided to tick: never planned.
+            return "unmapped", {**ident, "key": key, "required": required, "reason": AGENT_SENSITIVE_REASON,
+                                "agent_answer": value, "options": labels}  # fmt: skip
     if value is None and key is not None and key in confirmed and not sensitive:
         value, source = confirmed[key], "standard"
 
@@ -1445,6 +1634,8 @@ def _values_equal(expected: str, actual: str, row: dict, options: list[str] | No
         return a == b or (len(min(a, b, key=len)) >= 7 and (a.endswith(b) or b.endswith(a)))
     if row.get("action") == UPLOAD:
         return _basename(expected).lower() == _basename(actual).lower()
+    if row.get("key") == "phone_country" and _same_country(expected, actual):
+        return True  # "United States +1" is "United States"
     # A self-ID SELECT the reader gave no options for (``options_unknown`` — a react-select combobox)
     # was planned with the stored decline wording VERBATIM, so the filler picks the form's OWN decline
     # option, whose text differs ("Decline To Self Identify", "I don't wish to answer"). When the plan
@@ -1687,7 +1878,8 @@ def review(plan: dict, form_fields_after) -> tuple[list[dict], list[dict]]:
       inferred passport country — from riding through to VERIFIED.
 
     ``readback`` is what the approval card shows: every visible field that holds a value, with where
-    the value came from (``answer`` / ``extra`` / ``page`` / ``derived`` / ``unplanned``) and whether it
+    the value came from (``answer`` / ``extra`` — the operator's, said in this conversation / ``agent`` —
+    an extra answer the operator never gave / ``file`` / ``page`` / ``derived`` / ``unplanned``) and whether it
     is a legal / eligibility / attestation answer (``sensitive``)."""
     rows = plan.get("rows", []) if isinstance(plan, dict) else []
     baseline = plan.get("baseline") if isinstance(plan, dict) and isinstance(plan.get("baseline"), dict) else {}
@@ -1708,13 +1900,22 @@ def review(plan: dict, form_fields_after) -> tuple[list[dict], list[dict]]:
     }
 
     def src(row: dict) -> str:
-        return "extra" if row.get("source") == "extra" else "answer"
+        if row.get("source") != "extra":
+            return "answer"
+        return {AGENT: "agent", FILE: "file", FROM_ANSWERS: "answer"}.get(row.get("provenance"), "extra")
 
     for row in rows:
         if not isinstance(row, dict) or row.get("action") == SKIP:
             continue
         label = row.get("label", "")
         target = row.get("target") or label
+        if row.get("sensitive") and row.get("source") == "extra" and row.get("provenance") == AGENT:
+            # build_plan never plans one of these; a plan that carries one anyway still can't verify.
+            mismatches.append(
+                {"label": label, "target": target, "expected": "(the operator's own answer)",
+                 "actual": str(row.get("value") or ""), "reason": AGENT_SENSITIVE_REASON[0].upper() + AGENT_SENSITIVE_REASON[1:] + "."}
+            )  # fmt: skip
+            continue
         if row.get("action") == CHECK and row.get("group_field"):
             field = _match_field(row, by_id, by_name, by_label)
             if field is not None:

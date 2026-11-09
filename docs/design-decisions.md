@@ -106,6 +106,28 @@ option the browser committed when your answer is its prefix, except a Yes or No 
 option qualifies ("Yes, but I'll need sponsorship"). A location accepts the widget's spelling of the same
 place, matched part by part, never a bare city or a different state.
 
+## An answer is yours only if you said it
+
+`careercoach_plan_fill`'s extra answers are an argument the model fills in, and the approval card used to
+call every one of them "your answer". The 2026-11-09 eval re-run showed what that allows. The agent found
+a value already typed into an optional X field, said "I assumed you typed it", passed it as an extra
+answer and reached `VERIFIED`, with the card telling the operator they'd given it. An attestation "YES"
+the agent wrote got the same label. So the plan now reads the conversation from the graph state: the
+operator's messages and their replies to `ask_human`, `request_user_input` and `request_decision`.
+A value that appears there is the operator's. A short value like "Yes" also has to come with words that
+name the question. Anything else is marked as the agent's on the card, and on a legal or attestation
+question it can't verify at all. With no conversation to read (an old host, a direct call), every extra
+answer counts as the agent's: the check fails closed.
+
+It's a text heuristic, and it leans toward "the agent's". The cost of a miss that way is one marked line
+on the card. The other way, the agent signs for the operator.
+
+Verify had the same weakness one step later: it diffed a read-back the model passed in, and in the same
+eval a 7.3 KB read came through as 3.8 KB, with values filled in that the page didn't hold. Verify now
+reads the form from the agent's own browser session where the core offers that, or else takes the
+newest `browser_form_read` result straight from the conversation. Only on an older core does it take
+the model's copy, and then only if the copy kept every field the plan saw.
+
 ## Word files are a soft pairing
 
 `render_format: docx` makes real Word files, which is what many ATS forms want. It needs cowork and

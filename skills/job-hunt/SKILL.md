@@ -105,7 +105,9 @@ must not delay scanning. Never invent facts.
    appropriate sections; report write refusals, never silently truncate. Unconfirmed
    proposals stay unsaved; scan only confirmed targets or explicit search terms.
 3. **Seed answers.** Call `careercoach_answers(action="get")`, whose first use invokes
-   `answers.seed_from_profile`. Keep all seeded answers as **drafts**, never confirmed.
+   `answers.seed_from_profile`. Seeded answers stay **drafts**, except your name (first and last
+   included), which comes from your profile or the **Your name** setting and seeds **confirmed**
+   when the two agree — a draft to settle when they disagree.
 4. **Find roles.** Run `careercoach_find_roles(source="market", provider="himalayas")` with the saved targets
    and location. Default `jobs_provider: auto` without a key uses **himalayas**; **hn**
    is also keyless. Use keyless sources only; never ask for an API key.
