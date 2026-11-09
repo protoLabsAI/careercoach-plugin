@@ -1539,10 +1539,13 @@ def _register_delegate_read_tool(registry, get_profile, read_profile, get_answer
 # failure this replaces, so an unmapped field is handed back for the operator, never guessed.
 def _parse_form_json(form_json: str):
     """``(fields, error)``: the browser_form_read array, or a readable error. Accepts the array
-    itself, or an object wrapping it under ``fields`` / ``form``."""
+    itself, or an object wrapping it under ``fields`` / ``form``, with or without the browser's
+    content-boundary markers around it (``formfill.strip_page_boundaries``)."""
     import json as _json
 
-    text = (form_json or "").strip()
+    from .applying import formfill
+
+    text = formfill.strip_page_boundaries(form_json or "").strip()
     if not text:
         return None, "No form JSON given. Pass the exact array that browser_form_read returned."
     try:
@@ -2104,12 +2107,40 @@ def _register_submit_gate(registry, fill_on: bool) -> None:
     _register_submit_middleware(registry)  # enforcement is always on (the submit gate is unchanged)
 
 
+def _core_gate_service():
+    """The core browser gate's ``agent_browser.add_gate_policy`` service, or ``None``.
+
+    Resolved at call time, never at ``register()`` (plugins load in no fixed order, and a reload can swap
+    the provider in or out). ``None`` on a core older than the seam, with agent_browser off, or host-free."""
+    try:
+        from graph import sdk
+    except Exception:  # noqa: BLE001 — host-free / no SDK
+        return None
+    lookup = getattr(sdk, "service", None)
+    if not callable(lookup):
+        return None
+    try:
+        return lookup("agent_browser.add_gate_policy")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _register_submit_middleware(registry) -> None:
-    """The enforcement: an ``AgentMiddleware`` that intercepts every tool call and short-circuits a
-    submit-like one unless a live operator grant exists AND the session it was approved for is still
-    VERIFIED (the grant is then consumed). Guarded like the profile middleware — if
-    ``AgentMiddleware`` isn't importable (older host) the plugin still registers; it just can't block
-    (the browser tools' own confirmations remain the only guard)."""
+    """The enforcement: an ``AgentMiddleware`` that intercepts every tool call.
+
+    On a core whose browser plugin offers the action-gate seam (``agent_browser.add_gate_policy``), the
+    middleware registers careercoach's policy with it and lets browser calls through: the CORE resolves
+    what each click / Enter / eval really hits (a ``@eN`` ref included) and runs the policy, which
+    allows a submit the operator approved on the careercoach card (spending the grant, so there is one
+    card, not two) and denies any other submit (``submitgate.core_policy_decision``). The argument-text
+    check stays as a floor on that path: a call that reads as a submit by its arguments still needs a
+    live grant, so a page the core's probe can't read never lets a worded submit through.
+
+    On an older core, without the seam, it short-circuits a submit-like call (judged by argument text)
+    unless a live operator grant exists AND the session it was approved for is still VERIFIED (the grant
+    is then consumed). Guarded like the profile middleware — if ``AgentMiddleware`` isn't importable
+    (older host) the plugin still registers; it just can't block (the browser tools' own confirmations
+    remain the only guard)."""
     try:
         from langchain.agents.middleware import AgentMiddleware
     except ImportError:  # pragma: no cover — no langchain agents
@@ -2120,13 +2151,13 @@ def _register_submit_middleware(registry) -> None:
 
     from .applying import formfill, submitgate
 
-    BLOCKED = (
-        "Blocked by careercoach submit gate: no operator authorization. Run careercoach_verify_fill "
-        "until VERIFIED, then careercoach_request_submit."
-    )
+    BLOCKED = submitgate.BLOCKED
 
     class _SubmitGateMiddleware(AgentMiddleware):
-        """Block submit-like browser calls unless an operator grant is live AND still tied to the
+        """With the core gate seam: register careercoach's policy and let the core decide (see
+        ``_register_submit_middleware``). Without it, the fallback below:
+
+        Block submit-like browser calls unless an operator grant is live AND still tied to the
         exact verification event it was approved for.
 
         A grant is one-shot and created only by ``careercoach_request_submit`` after the operator
@@ -2163,11 +2194,51 @@ def _register_submit_middleware(registry) -> None:
                     return None  # live grant for the still-current verification; let this call through
             return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name)
 
+        def _core_gate(self) -> bool:
+            """Whether the core gate decides submits on this call (careercoach's policy registered
+            with it). Re-checked per call: the provider can be reloaded, turned off or on."""
+            return submitgate.ensure_core_policy(_core_gate_service(), formfill.current_verification)
+
+        def _floor(self, request):
+            """``(blocked, held)`` for the core-gate path. The core decides on the RESOLVED target, but
+            if its probe can't read the page it sees no submit at all, so the old argument-text check
+            stays as a floor: a call that reads as a submit by its arguments still needs a live grant
+            for the current verification (else it's blocked here, as before). ``held`` is that grant,
+            so the call spends it even when the core's policy never ran."""
+            call = getattr(request, "tool_call", None) or {}
+            name = call.get("name", "")
+            if not submitgate.is_submit_like(name, call.get("args", {})):
+                return None, None
+            held = submitgate.live_grant_for_current_verification(formfill.current_verification)
+            if held is None:
+                return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name), None
+            return None, held
+
         def wrap_tool_call(self, request, handler):
+            if self._core_gate():
+                blocked, held = self._floor(request)
+                if blocked is not None:
+                    return blocked
+                with submitgate.core_gate_call() as live:  # the policy is live for the tool this call runs
+                    try:
+                        return handler(request)
+                    finally:
+                        if held is not None and not live.allowed:
+                            submitgate.consume(*held)  # one grant, one submit-like call, either way
             blocked = self._blocked(request)
             return blocked if blocked is not None else handler(request)
 
         async def awrap_tool_call(self, request, handler):
+            if self._core_gate():
+                blocked, held = self._floor(request)
+                if blocked is not None:
+                    return blocked
+                with submitgate.core_gate_call() as live:
+                    try:
+                        return await handler(request)
+                    finally:
+                        if held is not None and not live.allowed:
+                            submitgate.consume(*held)
             blocked = self._blocked(request)
             if blocked is not None:
                 return blocked

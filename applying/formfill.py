@@ -97,6 +97,37 @@ _COVER_LETTER_FIELD = re.compile(r"cover[\s_-]?letter")
 _PLAIN_CSS_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 
 
+# ── the core browser's untrusted-content boundaries ─────────────────────────────────────────
+# protoAgent's agent_browser wraps page-derived output (browser_form_read included) in nonce markers so
+# the model can tell page data from instructions:
+#
+#     --- AGENT_BROWSER_PAGE_CONTENT nonce=<hex> origin=<page URL> ---
+#     [ {"label": "Email", ...} ]
+#     --- END_AGENT_BROWSER_PAGE_CONTENT nonce=<same hex> ---
+#
+# The model pastes that output into careercoach_plan_fill / verify_fill as-is, so the parser has to
+# take the markers off. Vendored (a few lines) rather than imported from the browser plugin: this
+# plugin imports no other plugin's modules, and it has to parse the same JSON on cores without them.
+_BOUNDARY_OPEN = re.compile(r"^--- AGENT_BROWSER_PAGE_CONTENT nonce=([0-9A-Za-z]+) origin=.* ---$")
+_BOUNDARY_CLOSE = "--- END_AGENT_BROWSER_PAGE_CONTENT nonce={nonce} ---"
+
+
+def strip_page_boundaries(text: object) -> str:
+    """The text inside agent_browser's content-boundary markers, or ``text`` unchanged when it isn't
+    wrapped. The opening marker must be the first non-blank line; its closing line (same nonce) is
+    dropped when it's the last one. A cut-off block (no closing line) loses only the opening line,
+    so a truncated array still fails to parse with a readable error instead of passing silently."""
+    raw = text if isinstance(text, str) else ("" if text is None else str(text))
+    lines = raw.strip().split("\n")
+    m = _BOUNDARY_OPEN.match(lines[0].strip())
+    if not m:
+        return raw
+    body = lines[1:]
+    if body and body[-1].strip() == _BOUNDARY_CLOSE.format(nonce=m.group(1)):
+        body = body[:-1]
+    return "\n".join(body)
+
+
 def id_selector(field_id: str) -> str:
     """A CSS selector that matches the element whose id is exactly ``field_id``.
 

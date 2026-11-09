@@ -59,13 +59,31 @@ the company, the role and the planned field and value table. An explicit approve
 for 120 seconds. A decline, a vague answer, or a turn with no one there to answer all refuse, and an
 unattended turn never prompts at all. Nothing else in the plugin creates a grant.
 
-**Submit clicks are blocked, not trusted.** Middleware inspects every tool call and stops any submit-like
-browser call (a submit or finish click, an Enter press, a `.submit()` or `requestSubmit` script) unless a
-grant exists and the session it was approved for is still `VERIFIED`. It then uses up the grant. A blocked
-call returns a message on the same tool call, and the browser tool never runs. A job board's **Apply**
-button, which only opens the form, and listing controls such as **Apply filters** aren't submit-like, so
-they pass through.
+**Submit clicks are blocked, not trusted.** How depends on the protoAgent version.
+
+- **On a core whose browser plugin has the action gate** (protoAgent releases after 0.234.0), the core works out what
+  each click, Enter press or script will actually hit, a snapshot `@e` ref included, before it runs. The
+  coach registers a rule with that gate (the `agent_browser.add_gate_policy` service). When the core reads
+  an action as a submit, the rule allows it only if you approved this application on the coach's card and
+  the session is still the exact `VERIFIED` read-back you approved, and it uses up the grant. Any other
+  submit is refused. So you see one approval card, the coach's, not a second one from the browser. A job
+  board's **Apply now**, a search or a filter isn't a submit to the core, so it passes. The older check
+  below still runs first as a floor: a call whose arguments read as a submit needs the grant even if the
+  core couldn't read the page.
+- **On an older core**, middleware inspects every tool call and stops any submit-like browser call (a
+  submit or finish click, an Enter press, a `.submit()` or `requestSubmit` script) unless a grant exists
+  and the session it was approved for is still `VERIFIED`. It then uses up the grant. It judges the call
+  by its arguments, so it can't see what a `@e` ref points at. A blocked call returns a message on the
+  same tool call, and the browser tool never runs. A job board's **Apply** button, which only opens the
+  form, and listing controls such as **Apply filters** aren't submit-like, so they pass through.
+
+The coach checks for the gate on every call, so it switches over by itself when the browser plugin
+updates or reloads.
+
+**Page text is marked as page data.** Newer cores wrap what `browser_form_read` returns in
+`AGENT_BROWSER_PAGE_CONTENT` markers, so the model can tell a page's text from instructions.
+`careercoach_plan_fill` and `careercoach_verify_fill` take the output with or without the markers.
 
 **The limits.** This guards the agent's use of the browser tools. It doesn't sandbox the browser, and it
-can't stop a person: you can always submit by hand in the visible browser. On a host without the middleware
-hook, the gate falls back to the browser tools' own confirmations.
+can't stop a person: you can always submit by hand in the visible browser. On a host with neither the
+browser's action gate nor the middleware hook, the gate falls back to the browser tools' own confirmations.
