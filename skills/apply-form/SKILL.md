@@ -109,6 +109,13 @@ your toolset, say so and stop: there is no form to fill without it.
 - **Never solve or bypass a captcha.** A captcha, a login wall, or a legal attestation is a human's
   job. Fill everything else, then `careercoach_handoff` so the operator completes that one step in a
   visible browser. The coach does not read, answer, or click through a bot check.
+- **Never infer a legal, eligibility or attestation answer.** Work authorization (anywhere, not only
+  the US), citizenship, passport or nationality, export control (ITAR/EAR, "U.S. person"), age ("Are
+  you over 18?"), criminal history, non-competes and employment agreements, consents, and "everything
+  above is true and my own" declarations take ONLY a confirmed answer on exactly that question
+  (`authorized_us`, `requires_sponsorship`) or the operator's own words for this application — asked
+  plainly, or through `careercoach_handoff(reason="attestation")`. A profile line ("US citizen"), the
+  résumé, or an operator's "continue" / "go ahead" is not an answer to one of these. Ask again.
 
 ### Support scope
 
@@ -153,7 +160,9 @@ mode="replace")` only after they approve; it is never silently stripped.
 
 #### 3. Prepare, then read the live form
 - For a Greenhouse URL, call `careercoach_prepare_application(url, company, role)` first — it returns
-  a plan from the public schema plus an "Ask the operator about ONLY these" list.
+  a plan from the public schema plus an "Ask the operator about ONLY these" list. A company careers
+  page carrying `?gh_jid=` hosts the form in an iframe the form reader can't see: prepare returns the
+  embeddable form's URL (`job-boards.greenhouse.io/embed/job_app?for=<board>&token=<id>`) — open that.
 - Open the application and `browser_form_read` the live form. Pass that exact output (the
   `AGENT_BROWSER_PAGE_CONTENT` markers around it are fine) to
   `careercoach_plan_fill(form_json, company, role, extra_answers, ats)` — set `ats` to the ATS type
@@ -164,16 +173,27 @@ mode="replace")` only after they approve; it is never silently stripped.
 - The live form is the source of truth. The schema prep is a head start, not a substitute for the
   read-back.
 
-#### 4. Ask the operator about ONLY the unmapped items
+#### 4. Ask the operator about ONLY the unmapped items, then re-plan with their answers
 The plan ends with an explicit list: required fields with no confirmed answer, selects whose answer
-matched no option (with the options), and any answer still only a draft. Ask about THOSE and nothing
-else. Confirm any newly agreed draft with `careercoach_answers(action="confirm")`; pass one-off answers back
-through `careercoach_plan_fill`'s `extra_answers`. Don't re-ask for anything already confirmed.
+matched no option (with the options), legal and attestation questions, and any answer still only a
+draft. Ask about THOSE and nothing else. Confirm any newly agreed draft with
+`careercoach_answers(action="confirm")`. Every one-off answer — a "how did you hear" pick, a GitHub
+URL, an essay the operator approved — goes back through `careercoach_plan_fill`'s `extra_answers`,
+keyed by the field's id or name (a checkbox group by the key the plan names, its value the option(s)
+to tick). Then fill from the NEW plan. Don't re-ask for anything already confirmed.
+
+**Fill only what the plan lists.** `careercoach_verify_fill` blocks on any value the plan didn't put
+there: a field you typed into on your own, a box you ticked, a Yes you clicked, or a `skip` row that
+now holds something. Values the page showed before you started (a pre-selected default) are allowed
+and marked on the approval card. If the snapshot shows a question the form reader missed (an Ashby
+Yes/No group read as an unlabeled checkbox), ask the operator, then re-plan with their answer.
 
 #### 5. On Ashby, upload the résumé first
 Ashby's autofill reads the résumé and can rewrite fields it thinks it recognises. So on an Ashby
 form, `browser_upload` the PDF from step 2 BEFORE filling anything else, then `browser_form_read`
-again so the plan reflects what autofill did.
+again so the plan reflects what autofill did. A value autofill puts in a field the plan doesn't cover
+is not an answer anyone confirmed: verify flags it. Clear it, or show it to the operator and re-plan
+with their answer.
 
 #### 6. Fill in the planned order
 Follow the plan line by line:
@@ -181,6 +201,20 @@ Follow the plan line by line:
   country BEFORE the number, because changing the country rewrites the number field.
 - `browser_fill` for text inputs.
 - `browser_upload` for file fields (the résumé PDF, and anything else the plan marks as an upload).
+- `[check]` rows: tick exactly the options the row names and leave every other one unticked. On a
+  current core the form reader shows the whole question as one `checkbox-group` field: tick each
+  option with `browser_select(field="<question>", option_text="<option>")` (it never unticks;
+  `browser_click` on an option's own label toggles it off). On an older core each box reads on its own:
+  `browser_click` each box the row names. A checkbox is never typed into, and a group's "Custom" text
+  box is filled only when the plan says so (no listed option matched).
+- Where the plan shows `option_text "A|B|C"`, pass it to `browser_select` as is: the form may word the
+  same answer either way (a decline, "United States of America"), and the first match wins.
+- A location autocomplete row: `browser_select(field, option_text)` with the planned place. It types,
+  retries with the city, and clicks the one matching suggestion. On "matches more than one
+  suggestion" pass the fuller place; on "matches no suggestion" / "no suggestions appeared", or on an
+  older core whose `browser_select` can't search, `browser_type` the row's search text (the city) and
+  `browser_click` the suggestion that names the same place. Never press Enter to pick a suggestion.
+- A Greenhouse "Country" picker right before the phone is the phone's country: the plan says so.
 - For a self-ID select whose options the reader couldn't list (Gender, Hispanic/Latino, Veteran
   status often read back with no options), the plan carries your stored "Decline to self-identify"
   verbatim. Pick the form's OWN decline-to-answer option — its exact wording varies ("Decline To
@@ -189,9 +223,14 @@ Follow the plan line by line:
 
 #### 7. Read back and verify until VERIFIED
 `browser_form_read` the filled form and pass it to `careercoach_verify_fill(session_id, form_json)`.
-It reports `VERIFIED` only when every planned field holds its planned value and no required field is
-empty; otherwise it lists the mismatches. Fix them and verify again. Do not move on until it says
-VERIFIED — a react-select that silently reverted is exactly what this catches.
+It reports `VERIFIED` only when every planned field holds its planned value, no required field is
+empty, and nothing outside the plan is filled; otherwise it lists the mismatches. Fix them and verify
+again. Do not move on until it says VERIFIED — a react-select that silently reverted is exactly what
+this catches. It accepts what a widget legitimately commits for a planned answer: the option a
+unique-prefix pick lands on ("they/them" → "they/them/theirs"), a location in the widget's own
+spelling ("Portland, OR, USA"), and a city input the address picker fills from the visible address. A
+line marked "not in the plan" is a value nobody confirmed: clear it, or ask the operator and re-plan
+with their answer.
 
 #### 8. Hand off for a captcha, login, or attestation
 If the page throws a captcha, a login/sign-in wall, or a legal attestation only the operator can
@@ -200,13 +239,17 @@ agree to, call `careercoach_handoff(session_id, reason)` with `reason` one of
 in the visible browser (the Browser panel, or the real window if the browser's `headed` setting is
 on) and the coach touches none of it. A captcha or login can re-render the form and clear filled
 fields, so when the operator reports Done, go back to step 7: `browser_form_read` and
-`careercoach_verify_fill` again before anything else. If the turn is headless, the handoff refuses
+`careercoach_verify_fill` again before anything else. Whatever the operator set during the step (the
+attestation box they ticked, the answer they chose) reads as "not in the plan" there, because no plan
+put it there: ask them to confirm exactly what they set, re-plan with those values in `extra_answers`
+(keyed by each field's id or name), and verify again. Never clear what the operator set. If the turn is headless, the handoff refuses
 without pausing — stop and report that a human has to finish the step interactively.
 
 #### 9. Request submit, then click exactly once
 Only once the form is VERIFIED, call `careercoach_request_submit(session_id)`. It refuses — without
 asking anyone — unless the session is VERIFIED and unchanged since, and it refuses on a headless
-turn. On the operator's explicit approval it unlocks exactly ONE submit click for 120 seconds. Then
+turn. Its card shows everything the form holds, as read back, with values the page put there and
+legal answers marked — so the operator approves the whole form, not only the planned part. On the operator's explicit approval it unlocks exactly ONE submit click for 120 seconds. Then
 `browser_click` the form's real submit button ONCE (by label or by its snapshot `@e` ref — either is
 gated). A job board's "Apply" / "Apply now" button only opens the form and is not the submit — don't
 spend the gate on it. A click that comes back blocked by the careercoach submit gate or the browser
@@ -217,7 +260,7 @@ After the click, `browser_form_read` (or a snapshot) to confirm you're on the co
 still on the form with a validation error. Then record it with `careercoach_track(action="track", company=company, role=role, status="applied", source=<url>)`.
 
 ### Anti-fabrication, restated
-Every value that fills a field comes from a CONFIRMED standard answer, an operator-supplied one-off,
-or the verified profile the résumé is rendered from. Nothing is guessed, no select answer is nudged
+Every value that fills a field comes from a CONFIRMED standard answer, an operator-supplied one-off
+passed through `extra_answers`, or the verified profile the résumé is rendered from. Nothing is guessed, no select answer is nudged
 to a nearest option, and no required field is left to the model's imagination. If you can't fill a
 field truthfully from what the operator has confirmed, ask — don't invent.

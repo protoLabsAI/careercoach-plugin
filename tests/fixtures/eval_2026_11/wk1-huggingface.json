@@ -1,0 +1,158 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://apply.workable.com/huggingface/j/F88446C814/apply/",
+ "fields": [
+  {
+   "label": "First name",
+   "kind": "text",
+   "name": "firstname",
+   "id": "firstname",
+   "required": true,
+   "value": "Testy"
+  },
+  {
+   "label": "Last name",
+   "kind": "text",
+   "name": "lastname",
+   "id": "lastname",
+   "required": true,
+   "value": "McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "email",
+   "name": "email",
+   "id": "email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Summary (Optional)",
+   "kind": "textarea",
+   "name": "summary",
+   "id": "summary",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Replace file",
+   "kind": "file",
+   "name": "",
+   "id": "input_files_input_IImlYjPk953NZQ9a",
+   "required": false,
+   "value": "resume-huggingface.pdf"
+  },
+  {
+   "label": "Github profile",
+   "kind": "textarea",
+   "name": "CA_47143",
+   "id": "CA_47143",
+   "required": true,
+   "value": "https://github.com/testy-mctestface-example"
+  },
+  {
+   "label": "Linkedin",
+   "kind": "textarea",
+   "name": "CA_47383",
+   "id": "CA_47383",
+   "required": true,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "Cover letter (Optional)",
+   "kind": "textarea",
+   "name": "cover_letter",
+   "id": "cover_letter",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Expected salary (Optional)",
+   "kind": "text",
+   "name": "CA_10626",
+   "id": "CA_10626",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "SVGs not supported by this browser.",
+   "kind": "combobox",
+   "name": "",
+   "id": "input_CA_10627_input",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "CA_10628",
+   "kind": "radio-group",
+   "name": "CA_10628",
+   "id": "",
+   "required": false,
+   "value": "",
+   "options": [
+    "YES",
+    "NO"
+   ]
+  },
+  {
+   "label": "How did you hear about us? (Optional)",
+   "kind": "text",
+   "name": "CA_10629",
+   "id": "CA_10629",
+   "required": false,
+   "value": "The company's careers page"
+  },
+  {
+   "label": "QA_12487827",
+   "kind": "radio-group",
+   "name": "QA_12487827",
+   "id": "",
+   "required": false,
+   "value": "YES",
+   "options": [
+    "YES",
+    "NO"
+   ]
+  },
+  {
+   "label": "QA_12487828",
+   "kind": "radio-group",
+   "name": "QA_12487828",
+   "id": "",
+   "required": false,
+   "value": "YES",
+   "options": [
+    "YES",
+    "NO"
+   ]
+  },
+  {
+   "label": "QA_12487829",
+   "kind": "radio-group",
+   "name": "QA_12487829",
+   "id": "",
+   "required": false,
+   "value": "NO",
+   "options": [
+    "YES",
+    "NO"
+   ]
+  },
+  {
+   "label": "Why Hugging Face, and where would you make the biggest difference in this role? Write it yourself, in your own words. We read every answer and we're after the specifics only you could give us, so generic or copy-pasted ones won't get far. 🤗",
+   "kind": "textarea",
+   "name": "QA_12487830",
+   "id": "QA_12487830",
+   "required": true,
+   "value": "GPU-poor and proud 🤗 I'm a full-stack engineer with six years of TypeScript and Python, and I built a React and FastAPI internal tooling platform that 40 teams use. The Applications team builds Python tools with web frontends for ML developers, which is the mix I work in every day. I'd help most on the API and frontend side of those libraries."
+  },
+  {
+   "label": "Share 2–3 of your open-source contributions with links (GitHub PRs, issues, or projects you maintain), and a quick note on your role and what each one involved. This one really matters to us, so please give it a real go. Blank or \"N/A\" answers won't move forward. Don't overthink it though, small or in-progress work is genuinely welcome, we just want to see something real.",
+   "kind": "textarea",
+   "name": "QA_12487831",
+   "id": "QA_12487831",
+   "required": true,
+   "value": "I don't have public open-source contributions to share yet. My work so far is in private codebases at Example Widgets Inc. and Placeholder Labs. At Example Widgets I built a React and FastAPI internal tooling platform used by 40 teams, and at Placeholder Labs I shipped a Postgres-backed scheduling service that handles 2M jobs a day. I'm happy to walk through either one in detail."
+  }
+ ]
+}

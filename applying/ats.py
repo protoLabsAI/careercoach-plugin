@@ -96,8 +96,11 @@ def detect(url: str) -> dict | None:
       ``{"ats": "ashby", "board": <org>, "job_id": <uuid>}``.
     * ``job-boards.greenhouse.io/<board>/jobs/<id>`` and the older ``boards.greenhouse.io/<board>/
       jobs/<id>`` → ``{"ats": "greenhouse", "board", "job_id"}`` from the path.
+    * the embeddable form ``job-boards.greenhouse.io/embed/job_app?for=<board>&token=<id>`` → the
+      board and job id, plus ``apply_url`` (that same URL).
     * any URL carrying a ``gh_jid=<id>`` query param (a company careers page embedding a Greenhouse
-      job) → the job id, with ``board`` = ``None`` because the board token isn't in the URL.
+      job) → the job id, with ``board`` = ``None`` because the board token isn't in the URL
+      (``resolve_board`` finds it).
     * anything else → ``None``.
 
     Hosts are distinct, so a Greenhouse URL never reads as Ashby (or the reverse).
@@ -146,6 +149,11 @@ def detect(url: str) -> dict | None:
         if m:
             return {"ats": "ashby", "board": m.group(1), "job_id": m.group(2)}
 
+    if host in _BOARD_HOSTS and path.rstrip("/").endswith("/embed/job_app"):
+        board = (query.get("for") or [""])[0].strip()
+        token = (query.get("token") or [""])[0].strip()
+        if board and token.isdigit():
+            return {"ats": "greenhouse", "board": board, "job_id": token, "apply_url": embed_url(board, token)}
     if host in _BOARD_HOSTS:
         m = re.search(r"/([^/]+)/jobs/(\d+)", path)
         if m:
@@ -160,6 +168,43 @@ def detect(url: str) -> dict | None:
         return {"ats": "greenhouse", "board": None, "job_id": str(jid[0]).strip()}
 
     return None
+
+
+def embed_url(board: str, job_id: str) -> str:
+    """Greenhouse's embeddable application form for one job — the page a company careers site loads in
+    an iframe. Opened directly it is a plain page the form reader can see (an iframe's fields it can't)."""
+    return f"https://job-boards.greenhouse.io/embed/job_app?for={board}&token={job_id}"
+
+
+def board_candidates(url: str, company: str = "") -> list[str]:
+    """Likely Greenhouse board tokens for a careers page that embeds a ``gh_jid`` job, in probe order:
+    first the site's own name from its host (``careers.airbnb.com`` → ``airbnb``), then slugs of the
+    company name (``search.boards.slug_candidates``). Deduplicated, at most six — each one is a probe."""
+    from ..search.boards import slug_candidates
+
+    out: list[str] = []
+    host = (urlparse(url if "//" in url else "https://" + url).hostname or "").lower()
+    labels = [x for x in host.split(".") if x and x not in {"www", "careers", "jobs", "job", "apply", "boards"}]
+    if len(labels) >= 2:
+        out.append(labels[-2])
+    if company:
+        out += slug_candidates(company)
+    seen: list[str] = []
+    for c in out:
+        c = c.strip()
+        if c and c.lower() not in {x.lower() for x in seen}:
+            seen.append(c)
+    return seen[:6]
+
+
+async def resolve_board(url: str, job_id: str, company: str = "") -> tuple[str, dict | None]:
+    """``(board, api_json)`` for a ``gh_jid`` careers page: the first candidate board whose public
+    API knows this job id, or ``("", None)``. Uses only ``fetch_schema``'s host."""
+    for board in board_candidates(url, company):
+        api_json, err = await fetch_schema(board, job_id)
+        if not err and isinstance(api_json, dict):
+            return board, api_json
+    return "", None
 
 
 # ── greenhouse_fields: the API's questions → browser_form_read field dicts ──────────────────

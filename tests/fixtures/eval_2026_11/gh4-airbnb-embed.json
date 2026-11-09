@@ -1,0 +1,174 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://job-boards.greenhouse.io/embed/job_app?for=airbnb&token=7826337",
+ "fields": [
+  {
+   "label": "First Name",
+   "kind": "text",
+   "name": "",
+   "id": "first_name",
+   "required": true,
+   "value": "Testy"
+  },
+  {
+   "label": "Last Name",
+   "kind": "text",
+   "name": "",
+   "id": "last_name",
+   "required": true,
+   "value": "McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "text",
+   "name": "",
+   "id": "email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Country",
+   "kind": "combobox",
+   "name": "",
+   "id": "country",
+   "required": true,
+   "value": "United States"
+  },
+  {
+   "label": "Search",
+   "kind": "combobox",
+   "name": "",
+   "id": "iti-0__search-input",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Phone",
+   "kind": "tel",
+   "name": "",
+   "id": "phone",
+   "required": true,
+   "value": "(555) 010-0199"
+  },
+  {
+   "label": "Location (City)",
+   "kind": "combobox",
+   "name": "",
+   "id": "candidate-location",
+   "required": true,
+   "value": "Portland, Oregon, United States"
+  },
+  {
+   "label": "Attach",
+   "kind": "file",
+   "name": "",
+   "id": "cover_letter",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "LinkedIn Profile",
+   "kind": "text",
+   "name": "",
+   "id": "question_65727420",
+   "required": false,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "How did you hear about this job?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727421",
+   "required": true,
+   "value": "Company Website (Airbnb Careers)"
+  },
+  {
+   "label": "I decline to answer the following questions.",
+   "kind": "checkbox",
+   "name": "question_65727422[]",
+   "id": "question_65727422[]_689159940",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Gender:",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727423",
+   "required": false,
+   "value": "Decline To Self Identify"
+  },
+  {
+   "label": "Race:",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727424",
+   "required": false,
+   "value": "Decline to Self Identify"
+  },
+  {
+   "label": "Veteran Status:",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727425",
+   "required": false,
+   "value": "Decline to Self Identify"
+  },
+  {
+   "label": "Are you legally authorized to work in the country where the job is located?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727426",
+   "required": true,
+   "value": "Yes, I am currently legally authorized to work in the country where the job is located."
+  },
+  {
+   "label": "Will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727427",
+   "required": true,
+   "value": "No, I do not and will not require immigration sponsorship to legally work in the country where the job is located."
+  },
+  {
+   "label": "Airbnb Candidate Privacy Policy",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727428",
+   "required": true,
+   "value": "I acknowledge that I have read and understood the Airbnb Candidate Privacy Policy."
+  },
+  {
+   "label": "Are you currently subject to any non-compete or non-solicitation agreement that would impact your ability to work at Airbnb or prevent you from accepting a job offer from Airbnb?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727429",
+   "required": true,
+   "value": "No"
+  },
+  {
+   "label": "Are you currently or have you ever worked for Airbnb in any capacity? This could include, but is not limited to, a full-time employee, intern, apprentice, or contingent worker.",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_65727430",
+   "required": true,
+   "value": "No"
+  },
+  {
+   "label": "g-recaptcha-response",
+   "kind": "textarea",
+   "name": "g-recaptcha-response",
+   "id": "g-recaptcha-response-100000",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Resume/CV",
+   "kind": "file",
+   "name": "resume",
+   "id": "resume",
+   "required": true,
+   "value": "resume-airbnb.pdf"
+  }
+ ]
+}

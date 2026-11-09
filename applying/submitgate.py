@@ -51,6 +51,8 @@ __all__ = [
     "active_grant",
     "clear",
     "is_submit_like",
+    "is_floor_submit",
+    "is_bare_enter",
     "core_policy_decision",
     "ensure_core_policy",
     "core_policy_installed",
@@ -235,6 +237,38 @@ def is_submit_like(tool_name: object, args: object) -> bool:
     return False
 
 
+def is_floor_submit(tool_name: object, args: object) -> bool:
+    """The argument-text floor used ALONGSIDE the core gate, judged before the call runs:
+    ``is_submit_like``, except a BARE Enter press (no target in its arguments). A bare Enter names
+    nothing the arguments can judge, so it is not blocked up front; instead the floor moves into the
+    policy (``core_policy_decision(..., enter_floor=True)``), which runs inside the browser tool once the
+    core has resolved the focused element and BEFORE the key is pressed. There the Enter goes through
+    on the core's word only when the core positively resolved a non-submit target (a dropdown, a
+    textarea); when the target is unknown — the probe couldn't read the page, a frame, nothing focused —
+    it still needs the grant, exactly as the old floor required (QA, PR #121)."""
+    name = _text(tool_name).strip().lower()
+    if name == "browser_press":
+        return _is_enter_press(args) and _is_submit_click(args)
+    return is_submit_like(name, args)
+
+
+def is_bare_enter(tool_name: object, args: object) -> bool:
+    """A ``browser_press`` of Enter whose arguments name no submit control — the call whose floor
+    the policy applies (see ``is_floor_submit``)."""
+    return _text(tool_name).strip().lower() == "browser_press" and _is_enter_press(args) and not _is_submit_click(args)
+
+
+def _target_resolved(action: dict) -> bool:
+    """Whether the core POSITIVELY resolved the element an action hits: a target that was found and
+    read back (it has a tag) and isn't an unreadable frame. Anything else is "unknown"."""
+    target = action.get("target") if isinstance(action, dict) else None
+    if not isinstance(target, dict) or target.get("found") is not True:
+        return False
+    if not str(target.get("tag") or "").strip():
+        return False
+    return str(target.get("note") or "") != "frame"
+
+
 # ── the core browser gate seam (protoAgent agent_browser, ``agent_browser.add_gate_policy``) ─────
 # Newer cores resolve what a click / Enter / eval will REALLY hit (a ``@eN`` ref included) and ask the
 # operator on their own approval card for a submit. Matching words in a tool's argument text can't do
@@ -259,7 +293,9 @@ SUBMIT_CATEGORY = "submit"
 ALLOWED_REASON = "the operator approved this submit on the careercoach approval card"
 
 
-def core_policy_decision(action: object, current_verification, is_application_page=None) -> dict | None:
+def core_policy_decision(
+    action: object, current_verification, is_application_page=None, enter_floor: bool = False
+) -> dict | None:
     """The careercoach rule over one core-resolved browser action. Pure apart from the grant table.
 
     ``action`` is the plain dict the core gate passes a policy; only ``action["verdict"]["categories"]``
@@ -274,8 +310,17 @@ def core_policy_decision(action: object, current_verification, is_application_pa
     card decides it — rather than careercoach's job-application BLOCKED message (QA, PR #120)."""
     verdict = action.get("verdict") if isinstance(action, dict) else None
     categories = verdict.get("categories") if isinstance(verdict, dict) else None
-    if not isinstance(categories, (list, tuple, set, frozenset)) or SUBMIT_CATEGORY not in categories:
-        return None
+    is_submit = isinstance(categories, (list, tuple, set, frozenset)) and SUBMIT_CATEGORY in categories
+    if not is_submit:
+        if not enter_floor or _target_resolved(action):
+            return None  # the core read the target and it isn't a submit
+        # A bare Enter on a target the core couldn't resolve: the floor holds — the grant, or BLOCKED.
+        live = active_grant()
+        if live is not None:
+            sid, vid = live
+            if vid and current_verification(sid) == vid and consume(sid, vid):
+                return {"decision": "allow", "reason": ALLOWED_REASON}
+        return {"decision": "deny", "reason": BLOCKED}
     live = active_grant()
     if live is not None:
         sid, vid = live
@@ -318,7 +363,10 @@ def ensure_core_policy(service, current_verification, is_application_page=None) 
             call = _CORE_CALL.get()
             if call is None:
                 return None  # not a careercoach-wrapped call (or a stale generation): no opinion
-            decision = core_policy_decision(action, current_verification, is_application_page)
+            call["seen"] = True
+            decision = core_policy_decision(
+                action, current_verification, is_application_page, enter_floor=bool(call.get("enter_floor"))
+            )
             if decision is not None and decision.get("decision") == "allow":
                 call["allowed"] = True  # this call spent the grant (see core_gate_call)
             return decision
@@ -343,14 +391,22 @@ class core_gate_call:
 
     ``allowed`` turns ``True`` when the policy allowed (and so spent the grant) during the call."""
 
+    def __init__(self, enter_floor: bool = False):
+        self._enter_floor = bool(enter_floor)
+
     def __enter__(self):
-        self._record = {"allowed": False}
+        self._record = {"allowed": False, "enter_floor": self._enter_floor, "seen": False}
         self._token = _CORE_CALL.set(self._record)
         return self
 
     @property
     def allowed(self) -> bool:
         return bool(self._record.get("allowed"))
+
+    @property
+    def seen(self) -> bool:
+        """Whether the careercoach policy ran during the call (the core resolved the action)."""
+        return bool(self._record.get("seen"))
 
     def __exit__(self, *exc):
         _CORE_CALL.reset(self._token)

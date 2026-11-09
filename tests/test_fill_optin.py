@@ -165,7 +165,9 @@ def test_embedded_greenhouse_and_unknown_stay_off(setup):
     _, tools = register("ashby,lever,workable,unknown")
     for url in ("https://example.com/?gh_jid=123", URLS[""]):
         assert_kit(asyncio.run(tools["careercoach_prepare_application"].ainvoke({"url": url})))
-    assert calls == []
+    # the gh_jid page's board is looked up on the public schema API (for the kit's questions), and
+    # nothing else is fetched; no fill session is started either way
+    assert calls == [("example", "123")]
     assert not formfill._path().exists()
 
 

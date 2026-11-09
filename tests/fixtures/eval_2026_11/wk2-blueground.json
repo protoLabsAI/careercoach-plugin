@@ -1,0 +1,146 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://apply.workable.com/blueground/j/B02DA69C8F/apply/",
+ "fields": [
+  {
+   "label": "First name",
+   "kind": "text",
+   "name": "firstname",
+   "id": "firstname",
+   "required": true,
+   "value": "Testy"
+  },
+  {
+   "label": "Last name",
+   "kind": "text",
+   "name": "lastname",
+   "id": "lastname",
+   "required": true,
+   "value": "McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "email",
+   "name": "email",
+   "id": "email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Headline (Optional)",
+   "kind": "text",
+   "name": "headline",
+   "id": "headline",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Phone",
+   "kind": "tel",
+   "name": "phone",
+   "id": "input_phone",
+   "required": false,
+   "value": "555-010-0199"
+  },
+  {
+   "label": "Address (Optional)SVGs not supported by this browser.",
+   "kind": "text",
+   "name": "address",
+   "id": "address",
+   "required": false,
+   "value": "Portland, Oregon, United States"
+  },
+  {
+   "label": "city",
+   "kind": "text",
+   "name": "city",
+   "id": "city",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "postcode",
+   "kind": "text",
+   "name": "postcode",
+   "id": "postcode",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "country",
+   "kind": "text",
+   "name": "country",
+   "id": "country",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "SVGs not supported by this browser.",
+   "kind": "file",
+   "name": "",
+   "id": "input_files_input_W81bE805Xt4wqP5E",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Summary (Optional)",
+   "kind": "textarea",
+   "name": "summary",
+   "id": "summary",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Replace file",
+   "kind": "file",
+   "name": "",
+   "id": "input_files_input_US22UUhAA1coj5aU",
+   "required": false,
+   "value": "resume-blueground.pdf"
+  },
+  {
+   "label": "Cover letter (Optional)",
+   "kind": "textarea",
+   "name": "cover_letter",
+   "id": "cover_letter",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "QA_12102921",
+   "kind": "radio-group",
+   "name": "QA_12102921",
+   "id": "",
+   "required": false,
+   "value": "NO",
+   "options": [
+    "YES",
+    "NO"
+   ]
+  },
+  {
+   "label": "LinkedIn Profile",
+   "kind": "textarea",
+   "name": "QA_12102922",
+   "id": "QA_12102922",
+   "required": true,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "Annual Gross Salary Expectations",
+   "kind": "textarea",
+   "name": "QA_12102923",
+   "id": "QA_12102923",
+   "required": true,
+   "value": "150000 USD"
+  },
+  {
+   "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.I have read, understand and accept the content of the Privacy Notice and consent to the processing of my data as part of this application.",
+   "kind": "checkbox",
+   "name": "gdpr",
+   "id": "",
+   "required": false,
+   "value": true
+  }
+ ]
+}

@@ -1,0 +1,314 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://jobs.lever.co/zoox/46c23963-2be1-4037-8f1a-ce87bdccde6d/apply",
+ "fields": [
+  {
+   "label": "Resume/CV ✱resume-zoox.pdfATTACH RESUME/CVCouldn't auto-read resume.Analyzing resume...Success!",
+   "kind": "file",
+   "name": "resume",
+   "id": "resume-upload-input",
+   "required": false,
+   "value": "resume-zoox.pdf"
+  },
+  {
+   "label": "Full name✱",
+   "kind": "text",
+   "name": "name",
+   "id": "",
+   "required": true,
+   "value": "Testy McTestface"
+  },
+  {
+   "label": "He/him",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "She/her",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "They/them",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": true
+  },
+  {
+   "label": "Xe/xem",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Ze/hir",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Ey/em",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Hir/hir",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Fae/faer",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Hu/hu",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Use name only",
+   "kind": "checkbox",
+   "name": "pronouns",
+   "id": "useNameOnlyPronounsOption",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Custom",
+   "kind": "checkbox",
+   "name": "",
+   "id": "customPronounsOption",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Write here...",
+   "kind": "text",
+   "name": "pronouns",
+   "id": "customPronounsTextField",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Email✱",
+   "kind": "email",
+   "name": "email",
+   "id": "",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Phone ✱",
+   "kind": "text",
+   "name": "phone",
+   "id": "",
+   "required": true,
+   "value": "(555) 010-0199"
+  },
+  {
+   "label": "Current location No location found. Try entering a different locationLoading",
+   "kind": "text",
+   "name": "location",
+   "id": "location-input",
+   "required": false,
+   "value": "Portland, OR, USA"
+  },
+  {
+   "label": "Current company",
+   "kind": "text",
+   "name": "org",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "LinkedIn URL",
+   "kind": "text",
+   "name": "urls[LinkedIn]",
+   "id": "",
+   "required": false,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "Other website",
+   "kind": "text",
+   "name": "urls[Other]",
+   "id": "",
+   "required": false,
+   "value": "https://testy.example.com"
+  },
+  {
+   "label": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field0]",
+   "kind": "textarea",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field0]",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field1]",
+   "kind": "textarea",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field1]",
+   "id": "",
+   "required": true,
+   "value": "United States (citizen)"
+  },
+  {
+   "label": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field2]",
+   "kind": "native-select",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field2]",
+   "id": "",
+   "required": true,
+   "value": "No",
+   "options": [
+    "Select...",
+    "Yes",
+    "No"
+   ]
+  },
+  {
+   "label": "Zoox Ads / Social Media",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "LinkedIn",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Event, Media Interview, or other PR",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Recruiter Outreach",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Employee Referral",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "CVPR Conference",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "SHPE Conference",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Other",
+   "kind": "checkbox",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field3]",
+   "id": "",
+   "required": false,
+   "value": true
+  },
+  {
+   "label": "Type your response",
+   "kind": "text",
+   "name": "cards[c62ec44a-0482-4f8f-9630-94a6aac1e3c3][field4]",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Gender",
+   "kind": "native-select",
+   "name": "eeo[gender]",
+   "id": "",
+   "required": false,
+   "value": "Decline to self-identify",
+   "options": [
+    "Select ...",
+    "Male",
+    "Female",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "label": "RaceHispanic or LatinoA person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin regardless of race.White (Not Hispanic or Latino)A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.Black or African American (Not Hispanic or Latino)A person having origins in any of the black racial groups of Africa.Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)A person having origins in any of the peoples of Hawaii, Guam, Samoa, or other Pacific Islands.Asian (Not Hispanic or Latino)A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian Subcontinent, including, for example, Cambodia, China, India, Japan, Korea, Malaysia, Pakistan, the Philippine Islands, Thailand, and Vietnam.American Indian or Alaska Native (Not Hispanic or Latino)A person having origins in any of the original peoples of North and South America (including Central America), and who maintain tribal affiliation or community attachment.Two or More Races (Not Hispanic or Latino)All persons who identify with more than one of the above five races.",
+   "kind": "native-select",
+   "name": "eeo[race]",
+   "id": "",
+   "required": false,
+   "value": "Decline to self-identify",
+   "options": [
+    "Select ...",
+    "Hispanic or Latino",
+    "White (Not Hispanic or Latino)",
+    "Black or African American (Not Hispanic or Latino)",
+    "Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)",
+    "Asian (Not Hispanic or Latino)",
+    "American Indian or Alaska Native (Not Hispanic or Latino)",
+    "Two or More Races (Not Hispanic or Latino)",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "label": "Veteran status",
+   "kind": "native-select",
+   "name": "eeo[veteran]",
+   "id": "",
+   "required": false,
+   "value": "Decline to self-identify",
+   "options": [
+    "Select ...",
+    "I am a veteran",
+    "I am not a veteran",
+    "Decline to self-identify"
+   ]
+  }
+ ]
+}

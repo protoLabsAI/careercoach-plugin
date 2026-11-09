@@ -79,6 +79,33 @@ first, as a floor: if the browser's probe can't read a page it sees no submit at
 "Submit application" shouldn't get through just because of that. On older cores the argument-text
 middleware stays exactly as it was.
 
+The floor doesn't apply to a bare Enter press on the core-gate path. `browser_press("Enter")` names no
+target, so the floor read every Enter as a submit and blocked picking a suggestion from a location
+dropdown, while the core, which can see what has focus, would have let it through. An Enter whose own
+arguments point at a submit control still meets the floor, and on older cores every Enter still does.
+
+## The plan is the whole form
+
+The read-back used to check only what the plan put on the form, plus empty required fields. A live run
+on 13 real postings showed why that isn't enough: the agent clicked "over 18: Yes" without asking, typed a
+passport country from a profile line, answered an "everything is true" declaration itself, and still got
+`VERIFIED`, and the approval card showed only the planned rows, so none of it reached the operator. Now
+any value outside the plan blocks verification, the approval card shows the full read-back, and a legal or
+attestation question takes only the operator's own answer.
+
+The hard part is a value the page puts there itself, such as a pre-selected country. The plan records the
+form as it was when the application was first planned, and a value that still matches it is the page's.
+That record is kept across re-plans of the same application, matched on company and role or, failing
+that, on most of the form's fields. Taking each re-plan's read instead would turn whatever the agent had
+already typed into "the page's" value. A field first seen on a re-plan counts as blank. The cost is a
+little friction: an answer the operator gives mid-fill has to go back through a fresh plan before it
+verifies.
+
+Verify also stopped rejecting correct values. A dropdown whose options the plan can't see accepts the
+option the browser committed when your answer is its prefix, except a Yes or No that the rest of the
+option qualifies ("Yes, but I'll need sponsorship"). A location accepts the widget's spelling of the same
+place, matched part by part, never a bare city or a different state.
+
 ## Word files are a soft pairing
 
 `render_format: docx` makes real Word files, which is what many ATS forms want. It needs cowork and

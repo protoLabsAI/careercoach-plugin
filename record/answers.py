@@ -15,8 +15,8 @@ Each key stores ``{value, status: "draft"|"confirmed", confirmed_at}``:
 * ``confirm(keys)`` promotes the named drafts to confirmed — call it only after the operator has
   seen the exact values and said yes.
 * ``confirmed()`` returns only the confirmed values; that's the dict form filling reads.
-* ``seed_from_profile(prof)`` proposes drafts from the verified profile (the unambiguous pieces of
-  the contact line, the location, the recorded work authorization) and defaults the four self-ID
+* ``seed_from_profile(prof)`` proposes drafts from the verified profile (the name, the unambiguous
+  pieces of the contact line, the location, the recorded work authorization) and defaults the four self-ID
   keys to "Decline to self-identify". It NEVER overwrites an existing entry.
 
 **Where it lives.** ``answers.json`` in the plugin's per-instance store, beside ``profile.json`` and
@@ -43,6 +43,9 @@ CONFIRMED = "confirmed"
 
 # The questions every ATS form asks — key → a one-line description shown to the agent/operator.
 STANDARD_KEYS: dict[str, str] = {
+    "full_name": "Full name as you write it on an application",
+    "first_name": "First (given) name",
+    "last_name": "Last (family) name",
     "email": "Email address",
     "phone_country": "Phone country — the country NAME as shown in form pickers (e.g. 'United States')",
     "phone_number": "Phone number in national format, no country code",
@@ -247,6 +250,46 @@ def _from_contact(contact: str) -> dict[str, str]:
     return out
 
 
+# The name keys, seeded from the profile's ``name`` (or the ``full_name`` setting) as drafts.
+NAME_KEYS: tuple[str, ...] = ("full_name", "first_name", "last_name")
+
+
+def _name_seeds(name: str) -> dict[str, str]:
+    """Drafts for the name keys from one full name. First and last are split only when the name is
+    exactly two words: "Mary Ann Smith" or "Juan de la Cruz" can't be split safely, so only
+    ``full_name`` is seeded and the operator gives the parts."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        return {}
+    out = {"full_name": name}
+    parts = name.split(" ")
+    if len(parts) == 2:
+        out["first_name"], out["last_name"] = parts
+    return out
+
+
+def seed_names(prof: dict, fallback_name: str = "") -> list[str]:
+    """Propose drafts for any MISSING name key, from the profile's ``name`` or else
+    ``fallback_name`` (the ``full_name`` setting). Never overwrites an entry; returns the keys
+    created. Safe on every read: a store saved before the name keys existed gets them as drafts."""
+    identity = prof.get("identity") if isinstance(prof, dict) else None
+    identity = identity if isinstance(identity, dict) else {}
+    seeds = _name_seeds(str(identity.get("name", "") or "") or fallback_name)
+    if not seeds:
+        return []
+    created: list[str] = []
+    with _store._locked("answers"):
+        stored = _load_strict()
+        for key, value in seeds.items():
+            if key in stored:
+                continue
+            stored[key] = _entry(value, DRAFT)
+            created.append(key)
+        if created:
+            _save(stored)
+    return created
+
+
 def seed_from_profile(prof: dict) -> list[str]:
     """Propose starter drafts from the verified profile, returning the keys created.
 
@@ -257,6 +300,7 @@ def seed_from_profile(prof: dict) -> list[str]:
     identity = prof.get("identity") if isinstance(prof, dict) else None
     identity = identity if isinstance(identity, dict) else {}
     seeds: dict[str, str] = {}
+    seeds.update(_name_seeds(str(identity.get("name", "") or "")))
     seeds.update(_from_contact(str(identity.get("contact", "") or "")))
     location = str(identity.get("location", "") or "").strip()
     if location:

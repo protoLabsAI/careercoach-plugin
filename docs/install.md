@@ -16,7 +16,7 @@ Get the coach running on a protoAgent agent. Every setting is described in
 
 ## The fast way
 
-In the protoAgent desktop app (v0.221.0 or later), create a new agent and pick **Career Coach**. It installs
+In the protoAgent desktop app (v0.231.0 or later), create a new agent and pick **Career Coach**. It installs
 the plugin and the coach persona together. Paste your résumé or a LinkedIn PDF and it builds your profile,
 then runs a first scan from keyless job sources.
 
