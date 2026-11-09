@@ -214,6 +214,7 @@ def test_a_submit_on_an_application_page_still_needs_the_grant(gate):
     from_ats = importlib.import_module(gate.plugin.__name__ + ".applying.ats")
     assert from_ats.detect("https://boards.greenhouse.io/acme/jobs/1")
     assert sg.core_policy_decision(action(), ff.current_verification, from_ats.detect)["decision"] == "deny"
+
     # can't tell what page it is → keep the hard gate
     def boom(url):
         raise ValueError(url)
