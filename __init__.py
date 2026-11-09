@@ -1633,6 +1633,19 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 continue
             value = r.get("value", "")
             mark = "  [legal/eligibility: the operator's own answer]" if r.get("sensitive") else ""
+            if action == formfill.CHECK and r.get("group_field"):
+                # protoAgent #4951+: the question is ONE field; browser_select ticks an option (never unticks).
+                ticks = r.get("ticks") or []
+                todo = (
+                    "; ".join(f'browser_select(field="{target}", option_text="{t}")' for t in ticks)
+                    if ticks
+                    else "tick none"
+                )
+                out.append(
+                    f"  {i}. [check]  {target} -> {', '.join(ticks) or '(none)'}  ({todo}; leave every other option "
+                    f"unticked — browser_click an option's label unticks it){mark}"
+                )
+                continue
             if action == formfill.CHECK:
                 ticks = [c.get("target") or c.get("label", "") for c in r.get("checks") or []]
                 todo = ("browser_click to tick: " + ", ".join(ticks)) if ticks else "tick none"
@@ -1659,8 +1672,13 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 out.append(
                     f"  {i}. [{action}] {target} -> {shown}  "
                     "(options weren't readable; pick the form's OWN decline-to-answer option — "
-                    'e.g. "Decline To Self Identify" or "I don\'t wish to answer" — '
+                    f'browser_select option_text "{r.get("option_text") or value}" tries each wording in turn — '
                     "careercoach_verify_fill accepts any decline wording for this field)"
+                )
+            elif action == formfill.SELECT and r.get("option_text"):
+                out.append(
+                    f'  {i}. [{action}] {target} -> {shown}  (browser_select option_text "{r["option_text"]}": '
+                    f"the form may word it either way){mark}"
                 )
             else:
                 out.append(f"  {i}. [{action}] {target} -> {shown}{mark}")

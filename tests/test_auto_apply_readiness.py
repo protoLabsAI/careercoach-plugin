@@ -677,3 +677,87 @@ def test_qa_rr1_an_unlisted_answer_ticks_the_groups_own_other_member(formfill):
     group = next(r for r in plan["rows"] if r.get("group") == "q[f3]")
     assert [c["label"] for c in group["checks"]] == ["Other"]
     assert next(r for r in plan["rows"] if r.get("name") == "q[f4]")["value"] == "A podcast"
+
+
+# ── protoAgent #4951: the checkbox question read as ONE field ────────────────────────────────────
+PRONOUN_OPTIONS = ["He/him", "She/her", "They/them", "Xe/xem", "Use name only", "Custom"]
+
+
+def group_q(label, options, value=None, *, name="", required=False):
+    return {"label": label, "kind": "checkbox-group", "name": name, "id": "", "required": required,
+            "value": list(value or []), "options": list(options)}  # fmt: skip
+
+
+def test_core_checkbox_group_plans_one_check_row_by_question(formfill):
+    form = [group_q("Pronouns", PRONOUN_OPTIONS, name="pronouns")]
+    plan = formfill.build_plan(form, {"pronouns": "they/them"}, company="A", role="B")
+    (row,) = plan["rows"]
+    assert (row["action"], row["target"], row["ticks"]) == ("check", "Pronouns", ["They/them"])
+    filled = [group_q("Pronouns", PRONOUN_OPTIONS, ["They/them"], name="pronouns")]
+    mismatches, readback = formfill.review(plan, filled)
+    assert mismatches == [] and readback[0]["value"] == "They/them" and readback[0]["from"] == "answer"
+
+
+def test_core_checkbox_group_extra_ticks_and_an_extra_tick_is_caught(formfill):
+    q = "How did you hear about us?"
+    opts = ["LinkedIn", "Glassdoor", "Notion Website", "Conference or Meetup"]
+    plan = formfill.build_plan([group_q(q, opts)], {"linkedin_url": "https://x"}, {q: "LinkedIn; Conference or Meetup"})
+    assert plan["rows"][0]["ticks"] == ["LinkedIn", "Conference or Meetup"]
+    assert formfill.diff(plan, [group_q(q, opts, ["Conference or Meetup", "LinkedIn"])]) == []
+    (m,) = formfill.diff(plan, [group_q(q, opts, ["LinkedIn", "Notion Website"])])
+    assert m["actual"] == "LinkedIn, Notion Website" and "browser_click" in m["reason"]
+
+
+def test_core_checkbox_group_never_takes_a_free_text_answer(formfill):
+    form = [group_q("Which location are you in?", ["Remote", "London"], required=True)]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"})
+    assert plan["rows"] == [] and "free text" in plan["unmapped"][0]["reason"]
+
+
+def test_core_checkbox_group_unmatched_answer_goes_in_the_custom_box(formfill):
+    form = [group_q("Pronouns", PRONOUN_OPTIONS, name="pronouns"),
+            field("Write here...", "text", name="pronouns", id="customPronounsTextField")]  # fmt: skip
+    plan = formfill.build_plan(form, {"pronouns": "ze/zir"}, company="A", role="B")
+    rows = {r["target"]: r for r in plan["rows"]}
+    assert rows["Pronouns"]["ticks"] == ["Custom"]
+    assert (rows["#customPronounsTextField"]["action"], rows["#customPronounsTextField"]["value"]) == ("fill", "ze/zir")
+    matched = formfill.build_plan(form, {"pronouns": "they/them"}, company="A", role="C")
+    assert {r["target"]: r["action"] for r in matched["rows"]}["#customPronounsTextField"] == "skip"
+
+
+def test_core_checkbox_group_unticked_required_is_blank_and_unplanned_ticks_are_caught(formfill):
+    form = [group_q("I agree to the terms", ["I agree"], required=True)]
+    plan = formfill.build_plan(form, {}, company="A", role="B")
+    assert "legal" in plan["unmapped"][0]["reason"]
+    assert formfill.diff(plan, form)[0]["expected"] == "(required — not yet filled)"
+    (m,) = formfill.diff(plan, [group_q("I agree to the terms", ["I agree"], ["I agree"], required=True)])
+    assert m["unplanned"] and m["actual"] == "I agree"
+
+
+def test_the_plan_renders_browser_select_per_option_for_a_core_group(tools):
+    form = [group_q("Pronouns", PRONOUN_OPTIONS, name="pronouns")]
+    out = tools["careercoach_plan_fill"].invoke(
+        {"form_json": json.dumps(form), "company": "A", "role": "B", "ats": "lever",
+         "extra_answers": json.dumps({"Pronouns": "They/them"})}
+    )  # fmt: skip
+    assert 'browser_select(field="Pronouns", option_text="They/them")' in out
+    assert "browser_click an option's label unticks it" in out
+
+
+def test_options_unknown_rows_offer_option_text_alternatives(formfill):
+    form = [field("Gender", "combobox", id="gender"), field("Country of residence", "combobox", id="cor")]
+    plan = formfill.build_plan(form, {"gender": "Decline to self-identify"}, {"cor": "United States"})
+    rows = {r["id"]: r for r in plan["rows"]}
+    assert rows["gender"]["option_text"].split("|")[:3] == [
+        "Decline to self-identify", "I don't wish to answer", "Prefer not to say"]  # fmt: skip
+    assert rows["cor"]["option_text"] == "United States|United States of America"
+    assert formfill.option_alternatives("Software engineer") == "Software engineer"
+
+
+def test_an_autocomplete_row_names_the_core_messages(tools):
+    form = [field("Location (City)", "combobox", id="candidate-location", required=True)]
+    out = tools["careercoach_plan_fill"].invoke(
+        {"form_json": json.dumps(form), "company": "A", "role": "B", "ats": "greenhouse",
+         "extra_answers": json.dumps({"candidate-location": "Portland, Oregon, United States"})}
+    )  # fmt: skip
+    assert "matches more than one suggestion" in out and "no suggestions appeared" in out

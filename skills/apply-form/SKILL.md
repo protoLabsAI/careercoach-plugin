@@ -201,12 +201,19 @@ Follow the plan line by line:
   country BEFORE the number, because changing the country rewrites the number field.
 - `browser_fill` for text inputs.
 - `browser_upload` for file fields (the résumé PDF, and anything else the plan marks as an upload).
-- `[check]` rows: `browser_click` each checkbox the row names so it is ticked, and leave every other
-  box in that group unticked. A checkbox is never typed into.
-- A location autocomplete row: `browser_select(field, option_text)` with the planned place. If this
-  core's `browser_select` can't search a list that loads as you type, `browser_type` the row's search
-  text (the city) and `browser_click` the suggestion that names the same place. Never press Enter to
-  pick a suggestion.
+- `[check]` rows: tick exactly the options the row names and leave every other one unticked. On a
+  current core the form reader shows the whole question as one `checkbox-group` field: tick each
+  option with `browser_select(field="<question>", option_text="<option>")` (it never unticks;
+  `browser_click` on an option's own label toggles it off). On an older core each box reads on its own:
+  `browser_click` each box the row names. A checkbox is never typed into, and a group's "Custom" text
+  box is filled only when the plan says so (no listed option matched).
+- Where the plan shows `option_text "A|B|C"`, pass it to `browser_select` as is: the form may word the
+  same answer either way (a decline, "United States of America"), and the first match wins.
+- A location autocomplete row: `browser_select(field, option_text)` with the planned place. It types,
+  retries with the city, and clicks the one matching suggestion. On "matches more than one
+  suggestion" pass the fuller place; on "matches no suggestion" / "no suggestions appeared", or on an
+  older core whose `browser_select` can't search, `browser_type` the row's search text (the city) and
+  `browser_click` the suggestion that names the same place. Never press Enter to pick a suggestion.
 - A Greenhouse "Country" picker right before the phone is the phone's country: the plan says so.
 - For a self-ID select whose options the reader couldn't list (Gender, Hispanic/Latino, Veteran
   status often read back with no options), the plan carries your stored "Decline to self-identify"

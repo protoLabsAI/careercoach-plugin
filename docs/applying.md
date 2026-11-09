@@ -36,9 +36,12 @@ the live form itself. It runs one fixed loop, using tools this plugin tests with
    a dropdown. Your answers go back into a fresh plan, so the plan always holds every value that will be
    on the form.
 5. **Fill** with `browser_select` (country before number on phone fields; on Greenhouse the "Country"
-   picker just before the phone is the phone's country), `browser_fill`, `browser_upload`, and a click
-   for each checkbox the plan says to tick. A location field that suggests places as you type is picked
-   with `browser_select`. On Ashby the résumé goes first, because its autofill can overwrite typed values.
+   picker just before the phone is the phone's country), `browser_fill`, `browser_upload`, and, for a checkbox question, ticking
+   exactly the options the plan names: with `browser_select` per option on protoAgent cores that read
+   the question as one field, or a click on each box on older ones. A location field that suggests
+   places as you type is picked with `browser_select`, never with Enter. Where the form may word an
+   answer differently (a decline, "United States of America"), the plan passes the wordings as
+   `A|B|C` alternatives. On Ashby the résumé goes first, because its autofill can overwrite typed values.
 6. **Check the read-back.** It reads the form again and runs `careercoach_verify_fill` until it reports
    `VERIFIED`. A dropdown that silently reverted is exactly what this catches. So is a value nobody planned:
    a field the agent filled on its own, a box it ticked, a skipped field that now holds something. Values

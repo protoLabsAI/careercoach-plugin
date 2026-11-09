@@ -557,7 +557,25 @@ def _readback_value(field: dict, kind: str = "") -> str:
             checked = field.get("checked", field.get("aria-checked"))
             if checked is not True and checked != "true":
                 return ""
-    return str(field.get("value") or "")
+    value = field.get("value")
+    if isinstance(value, (list, tuple)):  # a core checkbox-group: the ticked option labels
+        return ", ".join(str(v) for v in value if str(v or "").strip())
+    return str(value or "")
+
+
+def _ticked_options(field: dict | None) -> list[str]:
+    """The ticked option labels of a core ``checkbox-group`` read-back (``value`` is a list)."""
+    value = (field or {}).get("value")
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if str(v or "").strip()]
+    return [p.strip() for p in str(value or "").split(",") if p.strip()]
+
+
+def _is_group_field(field: dict) -> bool:
+    """A whole checkbox question read as ONE field (protoAgent #4951 and later): ``{"kind":
+    "checkbox-group", "label": <question>, "options": [...], "value": [<ticked>, ...]}``. Older cores
+    read each box on its own (``kind: "checkbox"``), handled by ``_checkbox_groups``."""
+    return _norm(field.get("kind")) == "checkbox-group"
 
 
 def _is_required(field: dict) -> bool:
@@ -744,10 +762,47 @@ def _pick_checkboxes(value: str, labels: list[str]) -> list[int] | None:
 
 # ── location autocomplete (G) ─────────────────────────────────────────────────────────────
 AUTOCOMPLETE_NOTE = (
-    "location autocomplete: browser_select(field, option_text) types it and picks the suggestion as the "
-    "options load. If this core's browser_select can't search, browser_type the city alone into the "
-    "field, then browser_click the suggestion that names this place. Never press Enter to pick one."
+    "location autocomplete: browser_select(field, option_text) types it, retries with the city, and clicks "
+    'the one matching suggestion — success reads "(autocomplete; the field reads …)". On "matches more than '
+    'one suggestion" pass the fuller place; on "matches no suggestion" / "no suggestions appeared", or on an '
+    "older core whose browser_select can't search, browser_type the city alone into the field, then "
+    "browser_click the suggestion that names this place. Never press Enter to pick one."
 )
+
+# ``option_text`` alternatives for browser_select (``A|B|C``, first match wins — protoAgent #4951):
+# the other wordings forms use for the same answer, offered where the plan couldn't see the options.
+_DECLINE_WORDINGS = (
+    "Decline to self-identify",
+    "Decline To Self Identify",
+    "I don't wish to answer",
+    "Prefer not to say",
+    "Prefer not to disclose",
+    "Decline to answer",
+)
+_CHOICE_WORDINGS = (
+    ("United States", "United States of America"),
+    ("United Kingdom", "United Kingdom of Great Britain and Northern Ireland"),
+    ("they/them", "they/them/theirs"),
+    ("he/him", "he/him/his"),
+    ("she/her", "she/her/hers"),
+)
+
+
+def option_alternatives(value: str) -> str:
+    """``value`` plus the other wordings of the same answer, as browser_select ``A|B|C`` option text
+    (the stored wording first). Just ``value`` when it has none."""
+    nv = _norm_option(value)
+    alts: list[str] = [value]
+    if nv in _DECLINE_FORMS:
+        alts += list(_DECLINE_WORDINGS)
+    for group in _CHOICE_WORDINGS:
+        if nv in {_norm_option(g) for g in group}:
+            alts += list(group)
+    out: list[str] = []
+    for a in alts:
+        if "|" not in a and _norm_option(a) not in {_norm_option(o) for o in out}:
+            out.append(a)
+    return "|".join(out)
 
 
 # ── the page's own values, before anything was typed ──────────────────────────────────────
@@ -1054,13 +1109,21 @@ def build_plan(
                 rows.append({**ident, "key": key, "value": "", "action": SKIP})
             continue
 
+        if _is_group_field(field):
+            rows_or = _plan_group_field(field, idx, fields, ident, key, value, source, required, sensitive, forced)
+            if rows_or[0] == "row":
+                rows.append(rows_or[1])
+            else:
+                unmapped.append(rows_or[1])
+            continue
+
         if action == SELECT:
             # A FREE-TEXT standard answer (an email, a URL, a city, a phone number) is not a choice —
             # it must never be planned onto a select/combobox (the confirmed location landing on a
             # Yes/No "do you live here?" question). Only an operator's EXPLICIT extra, or a
             # CHOICE-typed standard answer, belongs on a choice field; a free-text standard answer is
             # asked about (required) or left blank (optional), never typed.
-            if source == "standard" and key == "current_location" and not options and _norm(kind) == "combobox":
+            if key == "current_location" and not options and _norm(kind) == "combobox":
                 # A location AUTOCOMPLETE (a combobox whose options load as you type): pick the
                 # suggestion with browser_select; the read-back accepts the place however the widget
                 # spells it ("Portland, OR, USA").
@@ -1115,6 +1178,9 @@ def build_plan(
         # read-back then guards that the chosen value actually took.
         if action == SELECT and not options:
             row["options_unknown"] = True
+            alternatives = option_alternatives(str(value))
+            if alternatives != value:
+                row["option_text"] = alternatives
         if sensitive:
             row["sensitive"] = True
         rows.append(row)
@@ -1134,6 +1200,64 @@ def build_plan(
         app=(company, role, posting) if live else None,
     )
     return plan
+
+
+def _plan_group_field(field, idx, fields, ident, key, value, source, required, sensitive, forced):
+    """Plan a core ``checkbox-group`` field: ``("row", row)`` or ``("unmapped", entry)``.
+
+    The answer names the option(s) to tick (``_pick_checkboxes``); a free-text standard answer never
+    lands on one. The row's ``ticks`` are the option labels; each is ticked with
+    ``browser_select(field=<question>, option_text=<option>)``. A free-text companion right after the
+    question ("Write here…", sharing its name or reading as a custom box) is skipped when an option
+    matched, and takes the answer when none did — ticking the group's Custom/Other option if it has one."""
+    options = _options(field)
+    target = ident.get("label") or ident["target"]
+    base = {**ident, "kind": "checkbox-group", "target": target, "group_field": True, "key": key}
+    if source == "standard" and key in _FREE_TEXT_KEYS:
+        if required:
+            return "unmapped", {
+                **base,
+                "required": True,
+                "reason": "standard answer is free text; this is a choice question",
+            }
+        return "row", {**base, "value": "", "action": SKIP}
+    companion = box = None
+    for j in range(idx + 1, min(len(fields), idx + 3)):
+        f = fields[j]
+        hay = " ".join(_norm(f.get(k)) for k in ("label", "id", "name"))
+        if _is_checkbox(f) and box is None and _CUSTOM_HINT.search(hay):
+            box = j  # a separate Custom/Other toggle between the question and its text box
+            continue
+        if _is_checkbox(f) or _is_group_field(f) or _norm(f.get("kind")) in _SELECT_KINDS:
+            break
+        name = str(f.get("name") or "").strip()
+        if (name and name == str(field.get("name") or "").strip()) or _CUSTOM_HINT.search(hay):
+            companion = j
+        break
+    if companion is None:
+        box = None  # a toggle with no text box after it isn't this question's
+    picked = _pick_checkboxes(str(value), options) if options else None
+    if picked is not None:
+        for j in (companion, box):
+            if j is not None:
+                forced[j] = {**_member_ident(fields[j]), "kind": str(fields[j].get("kind") or ""), "key": None,
+                             "value": "", "action": SKIP}  # fmt: skip
+        row = {**base, "value": value, "action": CHECK, "source": source, "ticks": [options[i] for i in picked]}
+    elif companion is not None:
+        custom = next((o for o in options if _CUSTOM_LABEL.match(_clean_label(o))), None)
+        forced[companion] = {**_member_ident(fields[companion]), "kind": str(fields[companion].get("kind") or ""),
+                             "key": key, "value": value, "action": FILL, "source": source}  # fmt: skip
+        if box is not None:
+            member = _member_ident(fields[box])
+            forced[box] = {**member, "kind": "checkbox", "key": None, "value": "yes", "action": CHECK,
+                           "source": source, "members": [member], "checks": [member]}  # fmt: skip
+        row = {**base, "value": custom or "", "action": CHECK, "source": source, "ticks": [custom] if custom else []}
+    else:
+        return "unmapped", {**base, "required": required, "reason": "answer matches no option", "answer": value,
+                            "options": options}  # fmt: skip
+    if sensitive:
+        row["sensitive"] = True
+    return "row", row
 
 
 # A checkbox group's free-text companion: the "Custom" / "Other" box and its "Write here…" input that
@@ -1591,6 +1715,27 @@ def review(plan: dict, form_fields_after) -> tuple[list[dict], list[dict]]:
             continue
         label = row.get("label", "")
         target = row.get("target") or label
+        if row.get("action") == CHECK and row.get("group_field"):
+            field = _match_field(row, by_id, by_name, by_label)
+            if field is not None:
+                covered.add(id(field))
+            want = sorted(_norm_option(t) for t in row.get("ticks") or [])
+            have_labels = _ticked_options(field)
+            if field is not None and want == sorted(_norm_option(t) for t in have_labels):
+                if have_labels:
+                    origin[id(field)] = {"from": src(row), "sensitive": bool(row.get("sensitive")), "label": label}
+                continue
+            mismatches.append(
+                {
+                    "label": label,
+                    "target": target,
+                    "expected": ", ".join(row.get("ticks") or []) or "(nothing ticked)",
+                    "actual": ", ".join(have_labels) if field is not None else "(not found)",
+                    "reason": "tick each listed option with browser_select(field, option_text); browser_click an "
+                    "option's label to untick one that shouldn't be",
+                }
+            )
+            continue
         if row.get("action") == CHECK:
             wanted = {json.dumps(m, sort_keys=True) for m in row.get("checks") or []}
             for member in row.get("members") or row.get("checks") or []:
