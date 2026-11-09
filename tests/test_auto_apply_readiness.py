@@ -462,7 +462,8 @@ def test_name_keys_seed_from_the_profile_or_the_setting(answers):
         "last_name",
     }
     stored = answers.load()
-    assert stored["first_name"]["value"] == "Testy" and stored["first_name"]["status"] == answers.DRAFT
+    # the operator's own name (profile / Settings) is stored CONFIRMED — draft names stalled forms
+    assert stored["first_name"]["value"] == "Testy" and stored["first_name"]["status"] == answers.CONFIRMED
     assert answers.seed_names({"identity": {"name": "Someone Else"}}) == []  # never overwrites
 
 

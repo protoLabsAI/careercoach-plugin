@@ -30,11 +30,14 @@ the live form itself. It runs one fixed loop, using tools this plugin tests with
    an iframe the form reader can't see, so prepare finds the job's board and hands back Greenhouse's
    embeddable form (`job-boards.greenhouse.io/embed/job_app?for=<board>&token=<id>`) to open directly.
    Either way, the form is read with `browser_form_read` and turned into a plan by `careercoach_plan_fill`,
-   drawing values only from confirmed answers (your name, first and last name included).
-4. **Ask only about what's unmapped:** required fields with no confirmed answer, dropdowns where no option
+   drawing values only from confirmed answers. Your name, first and last name included, comes from your own
+   profile or the **Your name** setting and counts as confirmed; if the two disagree, it's a draft to settle.
+4. **Fill what's confirmed, then ask only about what's unmapped:** required fields with no confirmed answer, dropdowns where no option
    matched, and every legal, eligibility or attestation question (below). It never guesses or fuzzy-matches
-   a dropdown. Your answers go back into a fresh plan, so the plan always holds every value that will be
-   on the form.
+   a dropdown. The confirmed fields are filled first, so one open question doesn't hold up the whole form.
+   Your answers go back into a fresh plan, so the plan always holds every value that will be on the form.
+   An answer in that plan counts as yours only if you actually said it in the conversation (see **Whose
+   answer is it** below).
 5. **Fill** with `browser_select` (country before number on phone fields; on Greenhouse the "Country"
    picker just before the phone is the phone's country), `browser_fill`, `browser_upload`, and, for a checkbox question, ticking
    exactly the options the plan names: with `browser_select` per option on protoAgent cores that read
@@ -43,7 +46,12 @@ the live form itself. It runs one fixed loop, using tools this plugin tests with
    answer differently (a decline, "United States of America"), the plan passes the wordings as
    `A|B|C` alternatives. On Ashby the résumé goes first, because its autofill can overwrite typed values.
 6. **Check the read-back.** It reads the form again and runs `careercoach_verify_fill` until it reports
-   `VERIFIED`. A dropdown that silently reverted is exactly what this catches. So is a value nobody planned:
+   `VERIFIED`. Verify checks the page's own read, not a copy the model typed out: on protoAgent cores with
+   the browser client's `form_read` (protoAgent #4957) it reads the form from the browser session the agent
+   is filling; otherwise it uses the newest `browser_form_read` result in the conversation, and refuses one
+   older than the last browser action. Only with neither does it take the model's copy, and then it refuses
+   a copy that lost any field the form had when it was planned. A phone country spelled with its dial code
+   ("United States +1") counts as the bare country. A dropdown that silently reverted is exactly what this catches. So is a value nobody planned:
    a field the agent filled on its own, a box it ticked, a skipped field that now holds something. Values
    the page showed before anything was typed are allowed, and marked. The check accepts what a widget
    legitimately commits for your answer: "they/them/theirs" for "they/them", "United States of America"
@@ -63,6 +71,16 @@ authorization, sponsorship) or from your own answer for this application. The co
 from your profile, and an "authorized to work in the US" answer never fills an EU or UK question. These
 answers are marked on the plan and on the approval card.
 
+**Whose answer is it.** The model passes one-off answers to the plan itself, so the plan checks them
+against the conversation. An answer is yours only when its value appears in something you said: a
+message, or your reply to one of the agent's questions. A short answer such as "Yes" or "No" also needs
+your words to name the question ("'everything is true and my own': YES"), since "yes" turns up
+everywhere. Anything else, such as an essay the agent drafted or a value it found on the page, is marked
+on the approval card as **entered by the agent — not confirmed by you**. On a legal, eligibility or
+attestation question an agent-entered answer isn't planned at all, and a value typed there anyway blocks
+`VERIFIED`. A signature, or the date next to it, counts as an attestation. The check errs toward "the
+agent's": an answer you gave in words it can't match shows up marked, and you can still approve it.
+
 **What's supported.** Greenhouse gets public schema prep plus the live form. Ashby uses the live form only,
 so the résumé uploads first and every field is re-read after autofill. Lever and Workable are recognized
 from their URLs and filled through the live form, with no schema prep, so the coach says so and leans on the
@@ -78,8 +96,8 @@ can't enforce that, and neither can a tool the agent decides to call, so the gat
 asking anyone, unless the fill session is `VERIFIED` and hasn't been re-planned or changed since. Any new or
 rebuilt plan starts unverified. Only a verified session pauses the turn and shows you an approval card with
 the company, the role and everything the form holds as it was read back, not only the planned fields.
-Values that aren't from your answers (already on the page, or filled by the page from your address) and
-legal or eligibility answers are marked. An explicit approve grants one submit, valid
+Values that aren't from your answers (already on the page, filled by the page from your address, or
+entered by the agent without you saying them) and legal or eligibility answers are marked. An explicit approve grants one submit, valid
 for 120 seconds. A decline, a vague answer, or a turn with no one there to answer all refuse, and an
 unattended turn never prompts at all. Nothing else in the plugin creates a grant.
 

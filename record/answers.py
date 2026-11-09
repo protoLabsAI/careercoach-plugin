@@ -15,9 +15,11 @@ Each key stores ``{value, status: "draft"|"confirmed", confirmed_at}``:
 * ``confirm(keys)`` promotes the named drafts to confirmed — call it only after the operator has
   seen the exact values and said yes.
 * ``confirmed()`` returns only the confirmed values; that's the dict form filling reads.
-* ``seed_from_profile(prof)`` proposes drafts from the verified profile (the name, the unambiguous
-  pieces of the contact line, the location, the recorded work authorization) and defaults the four self-ID
-  keys to "Decline to self-identify". It NEVER overwrites an existing entry.
+* ``seed_from_profile(prof)`` proposes drafts from the verified profile (the unambiguous pieces of
+  the contact line, the location, the recorded work authorization) and defaults the four self-ID
+  keys to "Decline to self-identify". It NEVER overwrites an existing entry. The NAME keys are the
+  exception: ``seed_names`` stores the operator's own name (profile or ``full_name`` setting) as
+  CONFIRMED.
 
 **Where it lives.** ``answers.json`` in the plugin's per-instance store, beside ``profile.json`` and
 ``applications.json``, through the same helpers (``profile.py``): the host's instance root (ADR
@@ -250,7 +252,9 @@ def _from_contact(contact: str) -> dict[str, str]:
     return out
 
 
-# The name keys, seeded from the profile's ``name`` (or the ``full_name`` setting) as drafts.
+# The name keys, seeded from the profile's ``name`` (or the ``full_name`` setting) as CONFIRMED: the
+# operator typed that name themselves, so asking them to confirm it again only stalls a form (the
+# 2026-11-09 eval stalled Airbnb and Linear on draft names).
 NAME_KEYS: tuple[str, ...] = ("full_name", "first_name", "last_name")
 
 
@@ -269,25 +273,35 @@ def _name_seeds(name: str) -> dict[str, str]:
 
 
 def seed_names(prof: dict, fallback_name: str = "") -> list[str]:
-    """Propose drafts for any MISSING name key, from the profile's ``name`` or else
-    ``fallback_name`` (the ``full_name`` setting). Never overwrites an entry; returns the keys
-    created. Safe on every read: a store saved before the name keys existed gets them as drafts."""
+    """Seed the name keys from the operator's own name — the profile's ``name``, else
+    ``fallback_name`` (the ``full_name`` setting) — as CONFIRMED answers, and return the keys created
+    or promoted. A missing key is created; a DRAFT holding exactly that name is promoted (a store
+    seeded before names were confirmed). Any other entry is left alone: a confirmed value, or a draft
+    with a different name. When the profile and the setting name two DIFFERENT people, the names are
+    only proposed as drafts, for the operator to settle. Safe to run on every read."""
     identity = prof.get("identity") if isinstance(prof, dict) else None
     identity = identity if isinstance(identity, dict) else {}
-    seeds = _name_seeds(str(identity.get("name", "") or "") or fallback_name)
+    from_profile = " ".join(str(identity.get("name", "") or "").split())
+    from_setting = " ".join(str(fallback_name or "").split())
+    seeds = _name_seeds(from_profile or from_setting)
     if not seeds:
         return []
-    created: list[str] = []
+    agree = not (from_profile and from_setting) or from_profile.casefold() == from_setting.casefold()
+    status = CONFIRMED if agree else DRAFT
+    changed: list[str] = []
     with _store._locked("answers"):
         stored = _load_strict()
         for key, value in seeds.items():
-            if key in stored:
-                continue
-            stored[key] = _entry(value, DRAFT)
-            created.append(key)
-        if created:
+            entry = stored.get(key)
+            if entry is None:
+                stored[key] = _entry(value, status, _now_ts() if status == CONFIRMED else "")
+                changed.append(key)
+            elif status == CONFIRMED and entry.get("status") == DRAFT and entry.get("value") == value:
+                stored[key] = _entry(value, CONFIRMED, _now_ts())
+                changed.append(key)
+        if changed:
             _save(stored)
-    return created
+    return changed
 
 
 def seed_from_profile(prof: dict) -> list[str]:
@@ -300,7 +314,6 @@ def seed_from_profile(prof: dict) -> list[str]:
     identity = prof.get("identity") if isinstance(prof, dict) else None
     identity = identity if isinstance(identity, dict) else {}
     seeds: dict[str, str] = {}
-    seeds.update(_name_seeds(str(identity.get("name", "") or "")))
     seeds.update(_from_contact(str(identity.get("contact", "") or "")))
     location = str(identity.get("location", "") or "").strip()
     if location:
@@ -310,8 +323,8 @@ def seed_from_profile(prof: dict) -> list[str]:
         seeds["authorized_us"] = work_auth
     for key in SELF_ID_KEYS:
         seeds.setdefault(key, DECLINE)
-
-    created: list[str] = []
+    created: list[str] = seed_names(prof)  # the name keys, confirmed (the operator's own name)
+    drafted: list[str] = []
     with _store._locked("answers"):
         stored = _load_strict()  # refuse to write over an unreadable file (don't erase the rest)
         for key, value in seeds.items():
@@ -319,7 +332,8 @@ def seed_from_profile(prof: dict) -> list[str]:
             if key in stored or not value:
                 continue  # never overwrite an existing entry; never seed a blank
             stored[key] = _entry(value, DRAFT)
-            created.append(key)
-        if created:
+            drafted.append(key)
+        if drafted:
             _save(stored)
+    created += drafted
     return created

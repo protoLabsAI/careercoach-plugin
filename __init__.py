@@ -33,8 +33,14 @@ import hashlib
 import json as _json
 import logging
 from pathlib import Path
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
+
+try:  # the graph state a tool reads the conversation from (answer provenance, verify's own read)
+    from langgraph.prebuilt import InjectedState
+except Exception:  # noqa: BLE001 — host-free without langgraph: the tools still load
+    InjectedState = None  # type: ignore[assignment]
 
 # NOTE: relative imports (`from . import state`) are kept LAZY, inside the functions that
 # use them — a standalone plugin's root __init__.py is imported *bare* by pytest during
@@ -1365,8 +1371,8 @@ def _register_answers_tools(registry, extended: bool):
     def careercoach_get_answers() -> str:
         """List the operator's standard application answers (email, phone, work authorization, sponsorship, LinkedIn,
         self-ID, pronouns): value, CONFIRMED or DRAFT, and missing keys. Only confirmed answers may fill a form. First
-        use seeds drafts from the profile (self-ID: "Decline to self-identify"); it never confirms anything on the
-        operator's behalf."""
+        use seeds drafts from the profile (self-ID: "Decline to self-identify"); the only answers it stores as confirmed
+        are the name keys, from the operator's own profile name / Settings full_name."""
         try:
             stored, err = answers.load_checked()
             if err:
@@ -1384,10 +1390,10 @@ def _register_answers_tools(registry, extended: bool):
             if not stored:
                 answers.seed_from_profile(profile.load_profile())
                 stored, _ = answers.load_checked()
-            if any(k not in stored for k in answers.NAME_KEYS):
-                # A store saved before the name keys existed: seed just those, as drafts.
-                if answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or "")):
-                    stored, _ = answers.load_checked()
+            # The name keys are the operator's own name (profile / full_name setting), stored CONFIRMED —
+            # created when missing, promoted from a matching draft a store seeded before that.
+            if answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or "")):
+                stored, _ = answers.load_checked()
             lines = [
                 "Standard application answers — ONLY confirmed values may fill a form; a draft must "
                 "be shown to the operator and confirmed first.",
@@ -1633,11 +1639,15 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 continue
             value = r.get("value", "")
             mark = "  [legal/eligibility: the operator's own answer]" if r.get("sensitive") else ""
+            if r.get("provenance") == formfill.AGENT:
+                mark += "  [YOUR answer, not the operator's — the approval card marks it as not confirmed by them]"
             if action == formfill.CHECK and r.get("group_field"):
                 # protoAgent #4951+: the question is ONE field; browser_select ticks an option (never unticks).
                 ticks = r.get("ticks") or []
+                loc = r.get("select_field") or target
+                q = "'" if '"' in loc else '"'
                 todo = (
-                    "; ".join(f'browser_select(field="{target}", option_text="{t}")' for t in ticks)
+                    "; ".join(f'browser_select(field={q}{loc}{q}, option_text="{t}")' for t in ticks)
                     if ticks
                     else "tick none"
                 )
@@ -1700,6 +1710,8 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
         loc = u.get("target")
         head = label if (not loc or loc == label) else f"{label} [{loc}]"  # name the field when its label is shared
         line = f"  - {head} ({req}): {u.get('reason', 'no confirmed answer')}."
+        if u.get("agent_answer"):
+            line += f" Not filled: {u['agent_answer']!r} is your answer, not theirs."
         if u.get("answer"):
             line += f" Your answer {u['answer']!r} matched no option."
         if u.get("options"):
@@ -1732,14 +1744,176 @@ def _kit_handoff(ats: str) -> str:
     )
 
 
+def _operator_said(state):
+    """What the operator said in this conversation (``provenance.operator_utterances``), read from the
+    injected graph state. No state — a direct call, an old host — reads as "nothing": every extra
+    answer is then the agent's, which fails CLOSED (a legal answer can't verify)."""
+    from .applying import provenance
+
+    try:
+        return provenance.operator_utterances(state)
+    except Exception:  # noqa: BLE001 — a malformed state is "the operator said nothing"
+        return []
+
+
+def _seed_name_answers(registry) -> None:
+    """Make sure the name answers exist, CONFIRMED when they come from the operator's own Settings
+    (``full_name``) or profile name (``answers.seed_names``). Never raises."""
+    from .record import answers, profile
+
+    try:
+        answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or ""))
+    except Exception as e:  # noqa: BLE001 — an unreadable store is reported by careercoach_answers
+        log.info("[careercoach] name answers not seeded: %s", e)
+
+
+# Browser tools that only READ the page. Any other browser_* call may change what a form holds, so a
+# form read taken before it no longer describes the page.
+_READ_ONLY_BROWSER = frozenset(
+    {"browser_form_read", "browser_snapshot", "browser_get_text", "browser_get_value", "browser_get_url",
+     "browser_get_title", "browser_screenshot", "browser_wait", "browser_scroll", "browser_tabs", "browser_find"}
+)  # fmt: skip
+
+
+def _latest_form_read(state) -> tuple[list | None, str]:
+    """``(fields, error)`` from the newest ``browser_form_read`` result in the conversation — the
+    browser's own output, which the model can't edit. ``(None, "")`` when there is none (or it won't
+    parse); ``(None, error)`` when a browser action ran after it, so it no longer shows the page."""
+    from .applying import provenance
+
+    msgs = provenance._messages(state)
+    names: dict[str, str] = {}
+    for m in msgs:
+        if provenance._kind(m) == "ai":
+            for tc in provenance._get(m, "tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    names[str(tc["id"])] = str(tc.get("name") or "")
+    stale = False
+    for m in reversed(msgs):
+        if provenance._kind(m) != "tool":
+            continue
+        name = names.get(str(provenance._get(m, "tool_call_id") or "")) or str(provenance._get(m, "name") or "")
+        if name == "browser_form_read":
+            text = provenance._text_of(provenance._get(m, "content"))
+            fields, err = _parse_form_json(text)
+            if err and "[" in text and "]" in text:
+                fields, err = _parse_form_json(text[text.index("[") : text.rindex("]") + 1])
+            if err:
+                return None, ""
+            if stale:
+                return None, (
+                    "NOT verified — a browser action ran after your last browser_form_read, so that read no longer "
+                    "shows the page. Re-read the form with browser_form_read now, then verify again."
+                )
+            return fields, ""
+        if name.startswith("browser_") and name not in _READ_ONLY_BROWSER:
+            stale = True
+    return None, ""
+
+
+def _core_form_read(state):
+    """The form as the browser reads it right now, from the session this agent is filling — or
+    ``None`` when the host doesn't offer that (a core before protoAgent #4957, agent_browser off,
+    host-free) or the read failed. Uses the ``agent_browser.client`` service:
+    ``make.for_agent_session(state).form_read()`` (the same session and per-session guard as the
+    ``browser_*`` tools; ``Result.value`` is the field list, no content markers). Called from the
+    SYNC verify tool — never on the event loop, where it could wait behind an in-flight browser tool."""
+    try:
+        from graph import sdk
+    except Exception:  # noqa: BLE001 — host-free / no SDK
+        return None
+    lookup = getattr(sdk, "service", None)
+    if not callable(lookup):
+        return None
+    try:
+        make = lookup("agent_browser.client")
+    except Exception:  # noqa: BLE001
+        return None
+    for_agent = getattr(make, "for_agent_session", None)
+    if not callable(for_agent):
+        return None  # a core with the client but not the agent-session read
+    try:
+        result = for_agent(state).form_read()
+    except Exception as e:  # noqa: BLE001 — e.g. ValueError: per_session with no session id
+        log.info("[careercoach] core form_read unavailable, using the conversation's read: %s", e)
+        return None
+    if getattr(result, "ok", False) is not True:
+        log.info(
+            "[careercoach] core form_read failed (%s): %s", getattr(result, "kind", ""), getattr(result, "error", "")
+        )
+        return None
+    value = getattr(result, "value", None)
+    return value if isinstance(value, list) else None
+
+
+def _differs(a: list, b: list) -> int:
+    """How many fields hold a different value in two reads of one form (by field identity)."""
+    from .applying import formfill
+
+    def values(fields):
+        return {formfill._ident_key(f): formfill._present_value(f) for f in fields if isinstance(f, dict)}
+
+    va, vb = values(a), values(b)
+    return sum(1 for k in set(va) | set(vb) if formfill._norm(va.get(k, "")) != formfill._norm(vb.get(k, "")))
+
+
+def _verify_read(session: dict, form_json: str, state) -> tuple[list | None, str, str]:
+    """``(fields, note, error)``: the read-back verify diffs, by trust. First the browser itself
+    (``_core_form_read``), then the newest ``browser_form_read`` result in the conversation — either
+    way the model's ``form_json`` copy is ignored, and the note says so when the copy differed. Only
+    with neither does the copy count, and then it must still hold every field the form had at plan
+    time (``formfill.lost_fields``): in the 2026-11-09 eval a 7.3 KB read became 3.8 KB in the call."""
+    from .applying import formfill
+
+    copy, copy_err = _parse_form_json(form_json) if (form_json or "").strip() else (None, "")
+    fields, where = _core_form_read(state), "the browser's own read of the form"
+    if fields is None:
+        fields, err = _latest_form_read(state)
+        if err:
+            return None, "", err
+        where = "your latest browser_form_read result"
+    if fields is not None:
+        note = f"(Checked against {where}.)"
+        if copy is not None and _differs(copy, fields):
+            note = (
+                f"(Checked against {where}, not the form_json you passed: your copy differed in "
+                f"{_differs(copy, fields)} field(s). Pass the read verbatim, or leave form_json empty.)"
+            )
+        return fields, note, ""
+    if copy_err or copy is None:
+        return None, "", copy_err or "No form JSON given. Re-read the form with browser_form_read and pass that array."
+    lost = formfill.lost_fields(session, copy)
+    if lost:
+        shown = ", ".join(repr(x) for x in lost[:8]) + (f", … (+{len(lost) - 8} more)" if len(lost) > 8 else "")
+        return (
+            None,
+            "",
+            (
+                f"NOT verified — the form JSON you passed is missing {len(lost)} field(s) the form had when it was "
+                f"planned: {shown}. Pass the COMPLETE array browser_form_read returned, verbatim (or re-plan if the "
+                "form itself changed)."
+            ),
+        )
+    return copy, "", ""
+
+
 def _register_formfill_tools(registry) -> None:
     from .record import answers
     from .applying import formfill
 
     @tool
-    def careercoach_plan_fill(form_json: str, company: str, role: str, extra_answers: str = "", ats: str = "") -> str:
+    def careercoach_plan_fill(
+        form_json: str,
+        company: str,
+        role: str,
+        extra_answers: str = "",
+        ats: str = "",
+        state: Annotated[Any, InjectedState] = None,
+    ) -> str:
         """Plan a job-form fill from ONLY the operator's confirmed standard answers plus `extra_answers` (JSON object:
-        field label → operator-supplied value). `form_json`: the exact array browser_form_read returned. `ats` is the
+        field id/name/label → the value THE OPERATOR GAVE in this chat; a value they didn't say is marked as yours on
+        the approval card, and never answers a legal/attestation question). `form_json`: the exact array
+        browser_form_read returned. `ats` is the
         ATS type you're applying through (greenhouse/lever/ashby/workable — the one careercoach_prepare_application or
         ats.detect reported); `ats="ashby"` also adds a required résumé upload first. Returns a session_id, ordered
         fill rows, and an "Ask the operator about ONLY these" list. A draft never fills; a select answer is never
@@ -1759,6 +1933,7 @@ def _register_formfill_tools(registry) -> None:
             ats_norm = (ats or "").strip().lower()
             resume_ready = _resume_renderable() if ats_norm == "ashby" else True
             company_s, role_s = (company or "").strip(), (role or "").strip()
+            _seed_name_answers(registry)
             plan = formfill.build_plan(
                 fields,
                 answers.confirmed(),
@@ -1767,6 +1942,7 @@ def _register_formfill_tools(registry) -> None:
                 resume_ready=resume_ready,
                 company=company_s,
                 role=role_s,
+                operator_said=_operator_said(state),
             )
             formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             return _render_plan(plan, company or "", role or "")
@@ -1774,11 +1950,15 @@ def _register_formfill_tools(registry) -> None:
             return f"Could not build a fill plan: {e}"
 
     @tool
-    def careercoach_verify_fill(session_id: str, form_json: str) -> str:
-        """Diff a filled form, re-read with browser_form_read (include radio checked/aria-checked — unchecked is
-        unfilled), against the careercoach_plan_fill `session_id`. Returns VERIFIED or the mismatches and blank
-        required fields; whitespace, case, phone formatting and upload paths are ignored. Only the latest check counts
-        — fix and re-run until VERIFIED."""
+    def careercoach_verify_fill(
+        session_id: str, form_json: str = "", state: Annotated[Any, InjectedState] = None
+    ) -> str:
+        """Diff a filled form against the careercoach_plan_fill `session_id`: re-read it with browser_form_read AFTER
+        your last browser change, then call this. It checks the page's own read-back (your latest browser_form_read
+        result, or the browser itself where the host allows), not a copy; `form_json` is only used when neither is
+        available and must then be that read verbatim. Returns VERIFIED or the mismatches and blank required fields;
+        whitespace, case, phone formatting and upload paths are ignored. Only the latest check counts — fix and
+        re-run until VERIFIED."""
         try:
             sid = (session_id or "").strip()
             session = formfill.load_session(sid)
@@ -1787,7 +1967,7 @@ def _register_formfill_tools(registry) -> None:
                     f"No fill plan found for session {sid!r}. Run careercoach_plan_fill first and use the "
                     "session_id it returns."
                 )
-            fields, err = _parse_form_json(form_json)
+            fields, source, err = _verify_read(session, form_json, state)
             if err:
                 return err
             mismatches, readback = formfill.review(session, fields)
@@ -1801,6 +1981,15 @@ def _register_formfill_tools(registry) -> None:
                         + "; ".join(f"{r['label']} = {r['value']!r}" for r in page[:8])
                         + ". The approval card marks them."
                     )
+                mine = [r for r in readback if r.get("from") == "agent"]
+                if mine:
+                    out += (
+                        f" {len(mine)} value(s) are your answers, not ones the operator gave in this conversation: "
+                        + "; ".join(f"{r['label']} = {r['value']!r}" for r in mine[:8])
+                        + ". The approval card marks them as not confirmed by the operator."
+                    )
+                if source:
+                    out += f" {source}"
                 return out
             lines = [f"NOT verified — {len(mismatches)} field(s) need fixing:"]
             for i, m in enumerate(mismatches, 1):
@@ -1814,6 +2003,8 @@ def _register_formfill_tools(registry) -> None:
             lines.append(
                 "Fix these (browser_select / browser_fill / browser_upload), then re-read the form and verify again."
             )
+            if source:
+                lines.append(source)
             return "\n".join(lines)
         except Exception as e:  # noqa: BLE001 — a tool never raises
             return f"Could not verify the fill: {e}"
@@ -1926,6 +2117,7 @@ def _register_prepare_tool(registry) -> None:
                 return "\n".join(lines)
 
             company_s, role_s = (company or "").strip(), (role or "").strip()
+            _seed_name_answers(registry)
             # Fold the posting URL into the session id: prepare lets company/role default to "", so
             # without the URL two different postings with identical questions would share one id and
             # one verification slot — a grant for A could then be spent on B (bd-ywmm.4).
@@ -2043,8 +2235,10 @@ def _submit_ready(session, session_id: str) -> tuple[bool, str]:
 def _submit_approval_card(session, session_id: str) -> dict:
     """The approval card an operator sees in the interrupt: company, role, and the FULL read-back —
     every field the form holds as it was verified, not only the planned ones — with the values that
-    are not from the operator's answers (pre-filled or derived by the page) and the legal /
-    eligibility / attestation answers marked, plus the explicit choices. A session verified before
+    are not from the operator's answers (pre-filled or derived by the page, or ENTERED BY THE AGENT:
+    an extra answer the operator never gave in this conversation) and the legal / eligibility /
+    attestation answers marked, plus the explicit choices. Only an extra answer whose value the
+    operator said reads "your answer for this application". A session verified before
     the read-back was recorded falls back to the planned rows."""
     from .applying import formfill
 
@@ -2056,6 +2250,9 @@ def _submit_approval_card(session, session_id: str) -> dict:
         "page": "NOT from your answers: already on the page",
         "derived": "NOT from your answers: filled by the page from your location",
         "extra": "your answer for this application",
+        # An extra answer whose value the operator never gave in this conversation (provenance.py).
+        "agent": "entered by the agent — not confirmed by you",
+        "file": "file the coach attached",
     }
     if isinstance(readback, list):
         for r in readback:
@@ -2080,7 +2277,7 @@ def _submit_approval_card(session, session_id: str) -> dict:
             shown = f"{value}  (upload)" if action == formfill.UPLOAD else value
             table_lines.append(f"  {label} -> {shown}")
             table_rows.append([label, shown])
-    flagged = sum(1 for f in fields if f.get("from") in {"page", "derived"} or f.get("sensitive"))
+    flagged = sum(1 for f in fields if f.get("from") in {"page", "derived", "agent"} or f.get("sensitive"))
 
     company = str((session or {}).get("company") or "").strip()
     role = str((session or {}).get("role") or "").strip()

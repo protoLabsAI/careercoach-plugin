@@ -116,6 +116,11 @@ your toolset, say so and stop: there is no form to fill without it.
   (`authorized_us`, `requires_sponsorship`) or the operator's own words for this application — asked
   plainly, or through `careercoach_handoff(reason="attestation")`. A profile line ("US citizen"), the
   résumé, or an operator's "continue" / "go ahead" is not an answer to one of these. Ask again.
+- **Never put your own answer in the operator's name.** `extra_answers` is for what the operator
+  SAID in this conversation. A value you drafted, found on the page or assumed ("I assumed you
+  typed it") is yours: the approval card marks it "entered by the agent — not confirmed by you",
+  and on a legal / attestation question it never verifies. If a value appeared that you didn't
+  plan, ask the operator what it is; don't adopt it.
 
 ### Support scope
 
@@ -173,10 +178,12 @@ mode="replace")` only after they approve; it is never silently stripped.
 - The live form is the source of truth. The schema prep is a head start, not a substitute for the
   read-back.
 
-#### 4. Ask the operator about ONLY the unmapped items, then re-plan with their answers
-The plan ends with an explicit list: required fields with no confirmed answer, selects whose answer
-matched no option (with the options), legal and attestation questions, and any answer still only a
-draft. Ask about THOSE and nothing else. Confirm any newly agreed draft with
+#### 4. Fill what's confirmed first, then ask about ONLY the unmapped items and re-plan
+Don't hold the whole form back on the open questions. Fill every row the plan already lists (step 6
+— on Ashby after the résumé upload, step 5), THEN ask. The plan ends with an explicit list: required
+fields with no confirmed answer, selects whose answer matched no option (with the options), legal
+and attestation questions, and any answer still only a draft. Ask about THOSE and nothing else, in
+one message. Confirm any newly agreed draft with
 `careercoach_answers(action="confirm")`. Every one-off answer — a "how did you hear" pick, a GitHub
 URL, an essay the operator approved — goes back through `careercoach_plan_fill`'s `extra_answers`,
 keyed by the field's id or name (a checkbox group by the key the plan names, its value the option(s)
@@ -222,8 +229,10 @@ Follow the plan line by line:
   wording for that field, so you don't need its exact text.
 
 #### 7. Read back and verify until VERIFIED
-`browser_form_read` the filled form and pass it to `careercoach_verify_fill(session_id, form_json)`.
-It reports `VERIFIED` only when every planned field holds its planned value, no required field is
+`browser_form_read` the filled form AFTER your last browser change, then call
+`careercoach_verify_fill(session_id, form_json)`. It checks the page's own read — the browser itself
+on a current core, else your latest `browser_form_read` result — not your copy; on an older core it
+uses `form_json`, which must be that read verbatim (one that lost fields is refused). It reports `VERIFIED` only when every planned field holds its planned value, no required field is
 empty, and nothing outside the plan is filled; otherwise it lists the mismatches. Fix them and verify
 again. Do not move on until it says VERIFIED — a react-select that silently reverted is exactly what
 this catches. It accepts what a widget legitimately commits for a planned answer: the option a
@@ -260,7 +269,8 @@ After the click, `browser_form_read` (or a snapshot) to confirm you're on the co
 still on the form with a validation error. Then record it with `careercoach_track(action="track", company=company, role=role, status="applied", source=<url>)`.
 
 ### Anti-fabrication, restated
-Every value that fills a field comes from a CONFIRMED standard answer, an operator-supplied one-off
-passed through `extra_answers`, or the verified profile the résumé is rendered from. Nothing is guessed, no select answer is nudged
+Every value that fills a field comes from a CONFIRMED standard answer, a one-off the operator gave
+in this conversation passed through `extra_answers` (a draft you wrote for them is marked as yours),
+or the verified profile the résumé is rendered from. Nothing is guessed, no select answer is nudged
 to a nearest option, and no required field is left to the model's imagination. If you can't fill a
 field truthfully from what the operator has confirmed, ask — don't invent.
