@@ -154,7 +154,8 @@ mode="replace")` only after they approve; it is never silently stripped.
 #### 3. Prepare, then read the live form
 - For a Greenhouse URL, call `careercoach_prepare_application(url, company, role)` first — it returns
   a plan from the public schema plus an "Ask the operator about ONLY these" list.
-- Open the application and `browser_form_read` the live form. Pass that exact JSON array to
+- Open the application and `browser_form_read` the live form. Pass that exact output (the
+  `AGENT_BROWSER_PAGE_CONTENT` markers around it are fine) to
   `careercoach_plan_fill(form_json, company, role, extra_answers, ats)` — set `ats` to the ATS type
   you're applying through (`greenhouse`/`lever`/`ashby`/`workable`), which also tells the fill opt-in
   whether this ATS is enabled; `ats="ashby"` additionally adds the résumé upload. The plan draws values
@@ -206,8 +207,10 @@ without pausing — stop and report that a human has to finish the step interact
 Only once the form is VERIFIED, call `careercoach_request_submit(session_id)`. It refuses — without
 asking anyone — unless the session is VERIFIED and unchanged since, and it refuses on a headless
 turn. On the operator's explicit approval it unlocks exactly ONE submit click for 120 seconds. Then
-`browser_click` the form's real submit button ONCE. A job board's "Apply" / "Apply now" button only
-opens the form and is not the submit — don't spend the gate on it.
+`browser_click` the form's real submit button ONCE (by label or by its snapshot `@e` ref — either is
+gated). A job board's "Apply" / "Apply now" button only opens the form and is not the submit — don't
+spend the gate on it. A click that comes back blocked by the careercoach submit gate or the browser
+action gate is a stop: never work around it with a script, an Enter key or another button.
 
 #### 10. Confirm and track
 After the click, `browser_form_read` (or a snapshot) to confirm you're on the confirmation page, not

@@ -62,6 +62,23 @@ The upstream project's biggest cost is fighting LaTeX page breaks. The CV here i
 and `break-inside: avoid` on every entry, so it prints the way it was laid out. LaTeX stays available as an
 option.
 
+## Submit-ness comes from the browser, not from the arguments
+
+The coach's own submit check reads a click's arguments for words like "submit". A snapshot ref
+(`browser_click("@e42")`) carries no words, so a click on the real Submit button by ref went straight
+through. Only the browser plugin can resolve a ref to the element it hits, so on cores whose browser has
+the action gate, the coach hands the decision to it: it registers a rule with the gate instead of guessing.
+The rule allows a submit only with the one-shot grant from the coach's approval card, still bound to the
+exact read-back you approved, so you get one card, not two. The grant is still minted in one place,
+after your approval of the interrupt, so nothing the model writes can create it.
+
+The rule only takes effect inside a tool call the coach's own middleware wrapped. The browser keeps its
+list of rules when the coach reloads, and an old copy of the rule would see an empty grant table and
+refuse every approved submit, so an old copy has to stay silent. The argument-text check still runs
+first, as a floor: if the browser's probe can't read a page it sees no submit at all, and a click on
+"Submit application" shouldn't get through just because of that. On older cores the argument-text
+middleware stays exactly as it was.
+
 ## Word files are a soft pairing
 
 `render_format: docx` makes real Word files, which is what many ATS forms want. It needs cowork and
