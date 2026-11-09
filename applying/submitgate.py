@@ -259,7 +259,7 @@ SUBMIT_CATEGORY = "submit"
 ALLOWED_REASON = "the operator approved this submit on the careercoach approval card"
 
 
-def core_policy_decision(action: object, current_verification) -> dict | None:
+def core_policy_decision(action: object, current_verification, is_application_page=None) -> dict | None:
     """The careercoach rule over one core-resolved browser action. Pure apart from the grant table.
 
     ``action`` is the plain dict the core gate passes a policy; only ``action["verdict"]["categories"]``
@@ -267,7 +267,11 @@ def core_policy_decision(action: object, current_verification) -> dict | None:
     ``current_verification(session_id)`` is ``formfill.current_verification``. Returns ``None`` (no
     opinion) unless the core reads the action as a submit; then ``{"decision": "allow"}`` when the live
     grant still matches its session's CURRENT verification and was spent, else ``{"decision": "deny"}``
-    with :data:`BLOCKED`. A stale or mismatched grant is never spent."""
+    with :data:`BLOCKED`. A stale or mismatched grant is never spent.
+
+    ``is_application_page(page_url)`` (``ats.detect``) scopes the hard deny to job applications: a
+    submit on some other page, with no grant live, gets ``None`` — the core's own operator approval
+    card decides it — rather than careercoach's job-application BLOCKED message (QA, PR #120)."""
     verdict = action.get("verdict") if isinstance(action, dict) else None
     categories = verdict.get("categories") if isinstance(verdict, dict) else None
     if not isinstance(categories, (list, tuple, set, frozenset)) or SUBMIT_CATEGORY not in categories:
@@ -277,10 +281,18 @@ def core_policy_decision(action: object, current_verification) -> dict | None:
         sid, vid = live
         if vid and current_verification(sid) == vid and consume(sid, vid):
             return {"decision": "allow", "reason": ALLOWED_REASON}
+    elif callable(is_application_page):
+        page_url = action.get("page_url") if isinstance(action, dict) else ""
+        try:
+            on_application = bool(is_application_page(str(page_url or "")))
+        except Exception:  # noqa: BLE001 — can't tell: keep the hard gate
+            on_application = True
+        if not on_application:
+            return None  # not a job application: the core's operator card decides
     return {"decision": "deny", "reason": BLOCKED}
 
 
-def ensure_core_policy(service, current_verification) -> bool:
+def ensure_core_policy(service, current_verification, is_application_page=None) -> bool:
     """Make sure exactly one careercoach policy is registered with ``service`` (the core's
     ``agent_browser.add_gate_policy``), and report whether one is.
 
@@ -305,7 +317,7 @@ def ensure_core_policy(service, current_verification) -> bool:
             call = _CORE_CALL.get()
             if call is None:
                 return None  # not a careercoach-wrapped call (or a stale generation): no opinion
-            decision = core_policy_decision(action, current_verification)
+            decision = core_policy_decision(action, current_verification, is_application_page)
             if decision is not None and decision.get("decision") == "allow":
                 call["allowed"] = True  # this call spent the grant (see core_gate_call)
             return decision

@@ -2149,7 +2149,7 @@ def _register_submit_middleware(registry) -> None:
 
     from langchain_core.messages import ToolMessage
 
-    from .applying import formfill, submitgate
+    from .applying import ats, formfill, submitgate
 
     BLOCKED = submitgate.BLOCKED
 
@@ -2197,7 +2197,7 @@ def _register_submit_middleware(registry) -> None:
         def _core_gate(self) -> bool:
             """Whether the core gate decides submits on this call (careercoach's policy registered
             with it). Re-checked per call: the provider can be reloaded, turned off or on."""
-            return submitgate.ensure_core_policy(_core_gate_service(), formfill.current_verification)
+            return submitgate.ensure_core_policy(_core_gate_service(), formfill.current_verification, ats.detect)
 
         def _floor(self, request):
             """``(blocked, held)`` for the core-gate path. The core decides on the RESOLVED target, but

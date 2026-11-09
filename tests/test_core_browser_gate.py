@@ -200,6 +200,27 @@ def test_a_ref_submit_without_a_grant_is_denied(gate):
     assert votes[0]["decision"] == "deny"
 
 
+def test_a_submit_off_any_job_application_is_left_to_the_core_card(gate):
+    # QA (#120): a submit on an unrelated page (a newsletter, a settings form) with no grant live
+    # must not get careercoach's job-application BLOCKED — the core's own approval card decides it.
+    act = action(selector="@e7")
+    act["page_url"] = "https://example.com/newsletter"
+    _out, votes = _through_core(gate, act)
+    assert votes == [None]
+
+
+def test_a_submit_on_an_application_page_still_needs_the_grant(gate):
+    sg, ff = gate.submitgate, gate.formfill
+    from_ats = importlib.import_module(gate.plugin.__name__ + ".applying.ats")
+    assert from_ats.detect("https://boards.greenhouse.io/acme/jobs/1")
+    assert sg.core_policy_decision(action(), ff.current_verification, from_ats.detect)["decision"] == "deny"
+    # can't tell what page it is → keep the hard gate
+    def boom(url):
+        raise ValueError(url)
+
+    assert sg.core_policy_decision(action(), ff.current_verification, boom)["decision"] == "deny"
+
+
 def test_an_approved_submit_is_allowed_once_by_core_with_no_second_card(gate):
     sid = _verified(gate.formfill)
     _grant(gate, sid)
