@@ -288,6 +288,35 @@ def test_the_argument_text_floor_still_blocks_a_worded_submit_without_a_grant(ga
     assert len(gate.service.policies) == 1  # the core path was taken; the floor answered first
 
 
+def _enter_through_core(gate, categories):
+    """A bare browser_press("Enter") the middleware wraps; core resolves the focused element."""
+    seen = {}
+    act = action(selector="", categories=categories, verb="press")
+
+    def handler(req):
+        seen["votes"] = gate.service.run(act)
+        return "RAN"
+
+    out = gate.middleware.wrap_tool_call(FakeReq("browser_press", {"key": "Enter"}), handler)
+    return out, seen.get("votes")
+
+
+def test_a_bare_enter_in_a_dropdown_defers_to_the_core_verdict(gate):
+    # 2026-11 eval (Airbnb): Enter to pick a location suggestion was blocked by the text floor, though
+    # the core could see it targeted a dropdown, not a submit. With the core gate on, it now runs.
+    out, votes = _enter_through_core(gate, ())
+    assert out == "RAN" and votes == [None]
+
+
+def test_a_bare_enter_the_core_reads_as_a_submit_still_needs_the_grant(gate):
+    _out, votes = _enter_through_core(gate, ("submit",))
+    assert votes[0]["decision"] == "deny"
+    sid = _verified(gate.formfill)
+    _grant(gate, sid)
+    _out, votes = _enter_through_core(gate, ("submit",))
+    assert votes[0]["decision"] == "allow" and gate.submitgate.active_grant() is None
+
+
 def test_a_worded_submit_the_core_missed_still_spends_the_grant(gate):
     sid = _verified(gate.formfill)
     _grant(gate, sid)

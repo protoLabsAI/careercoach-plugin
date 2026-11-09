@@ -51,6 +51,7 @@ __all__ = [
     "active_grant",
     "clear",
     "is_submit_like",
+    "is_floor_submit",
     "core_policy_decision",
     "ensure_core_policy",
     "core_policy_installed",
@@ -233,6 +234,22 @@ def is_submit_like(tool_name: object, args: object) -> bool:
     if name == "browser_eval":
         return _is_submit_eval(args)
     return False
+
+
+def is_floor_submit(tool_name: object, args: object) -> bool:
+    """The argument-text floor used ALONGSIDE the core gate: ``is_submit_like``, except that an Enter
+    press counts only when its own arguments point at a submit control (a ``selector`` / ``target``
+    reading as submit, or ``type=submit``).
+
+    With the core gate present the core resolves what an Enter really hits and its verdict decides.
+    A bare ``browser_press("Enter")`` names no target at all, so the old floor read EVERY Enter as a
+    submit and blocked picking a suggestion in a location dropdown (Airbnb, 2026-11 eval) — while the
+    core, which can see the focused element, would have let it through. Clicks and evals keep the full
+    floor: their arguments do name a target."""
+    name = _text(tool_name).strip().lower()
+    if name == "browser_press":
+        return _is_enter_press(args) and _is_submit_click(args)
+    return is_submit_like(name, args)
 
 
 # ── the core browser gate seam (protoAgent agent_browser, ``agent_browser.add_gate_policy``) ─────

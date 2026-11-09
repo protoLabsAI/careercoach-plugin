@@ -46,7 +46,9 @@ line in an interview without backtracking? If you ask it to stretch the truth, i
 strongest honest version instead.
 
 By default it hands you an apply kit and you file the application. An opt-in beta can fill a live form,
-but even then it can't click submit until you approve that one application. On current protoAgent the
+but even then it can't click submit until you approve that one application, on a card that shows
+everything the form holds. It fills only answers you've confirmed or given, and leaves legal and
+eligibility questions to you. On current protoAgent the
 browser itself checks what a click will hit, so a submit can't slip past by its snapshot ref. See
 [Applying through ATS forms](docs/applying.md).
 

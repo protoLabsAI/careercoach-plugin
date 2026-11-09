@@ -7,7 +7,7 @@ Every setting lives under **Settings → Career Coach**, and in YAML under `care
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|
-| Your name | `full_name` | blank | Used on generated CVs and cover letters, and to greet you in the view |
+| Your name | `full_name` | blank | Used on generated CVs and cover letters, to greet you in the view, and as the starting draft for your name answers when the profile has no name |
 | Location | `location` | blank | City or country and any commute limits. Feeds the location check in job evaluation |
 | Target roles | `target_roles` | blank | The role types you're aiming for, comma-separated. Seeds strategy and search |
 

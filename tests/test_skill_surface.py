@@ -119,10 +119,12 @@ def test_apply_preserves_kit_default_and_verbatim_browser_beta():
     assert "careercoach_save_apply_kit" in default
     assert "Never submit without the approval card" in beta
     assert "Never solve or bypass a captcha" in beta
+    assert "Never infer a legal, eligibility or attestation answer" in beta
+    assert "Fill only what the plan lists" in beta
     # Snapshot of the complete S3b beta, including verification, handoff and grant
     # lifetime. A wording change must be reviewed as a deliberate contract change.
     assert (
-        hashlib.sha256(beta.encode()).hexdigest() == "b90abf48c0fe1904cd2df9377df78b06a4645a179414a387b5274218b4baaf02"
+        hashlib.sha256(beta.encode()).hexdigest() == "d61ffb6abd1110da03e8a9e8d04498db59ebb5807589beeafdabc2e9f0712466"
     )
 
 

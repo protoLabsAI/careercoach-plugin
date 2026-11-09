@@ -1,0 +1,201 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://jobs.ashbyhq.com/notion/1fc309c8-da20-4ff2-84c7-8b863ece2b0a/application",
+ "fields": [
+  {
+   "label": "",
+   "kind": "file",
+   "name": "",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Full Name",
+   "kind": "text",
+   "name": "_systemfield_name",
+   "id": "_systemfield_name",
+   "required": true,
+   "value": "Testy McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "email",
+   "name": "_systemfield_email",
+   "id": "_systemfield_email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Phone",
+   "kind": "tel",
+   "name": "8039f8aa-c269-467e-bdea-dec068474224",
+   "id": "8039f8aa-c269-467e-bdea-dec068474224",
+   "required": true,
+   "value": "(555) 010-0199"
+  },
+  {
+   "label": "Start typing...",
+   "kind": "combobox",
+   "name": "",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Resume",
+   "kind": "file",
+   "name": "",
+   "id": "_systemfield_resume",
+   "required": true,
+   "value": "resume-notion.pdf"
+  },
+  {
+   "label": "LinkedIn Profile",
+   "kind": "text",
+   "name": "dbb7e595-3d7b-4a1f-b0b6-76497b74b4cb",
+   "id": "dbb7e595-3d7b-4a1f-b0b6-76497b74b4cb",
+   "required": true,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "eec5f04b-2a21-4232-b705-e1a4da94a750_b0a5aba8-dbb7-41a9-b548-f72cc3e48956",
+   "kind": "radio-group",
+   "name": "eec5f04b-2a21-4232-b705-e1a4da94a750_b0a5aba8-dbb7-41a9-b548-f72cc3e48956",
+   "id": "",
+   "required": false,
+   "value": "They/Them",
+   "options": [
+    "He/Him",
+    "She/Her",
+    "They/Them",
+    "Prefer not to say",
+    "Not represented here"
+   ]
+  },
+  {
+   "label": "e01a85db-feaa-42b3-a9ad-69b1dcbbab3f",
+   "kind": "checkbox",
+   "name": "e01a85db-feaa-42b3-a9ad-69b1dcbbab3f",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "790b5934-74f5-46f5-897a-675b7f37f2f3",
+   "kind": "checkbox",
+   "name": "790b5934-74f5-46f5-897a-675b7f37f2f3",
+   "id": "",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "LinkedIn",
+   "kind": "checkbox",
+   "name": "LinkedIn",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-0",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Glassdoor",
+   "kind": "checkbox",
+   "name": "Glassdoor",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-1",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Notion Blog",
+   "kind": "checkbox",
+   "name": "Notion Blog",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-2",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Notion Employee",
+   "kind": "checkbox",
+   "name": "Notion Employee",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-3",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Notion Website",
+   "kind": "checkbox",
+   "name": "Notion Website",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-4",
+   "required": false,
+   "value": true
+  },
+  {
+   "label": "Billboard/Outdoor Ads",
+   "kind": "checkbox",
+   "name": "Billboard/Outdoor Ads",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-5",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "Conference or Meetup",
+   "kind": "checkbox",
+   "name": "Conference or Meetup",
+   "id": "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox-6",
+   "required": false,
+   "value": false
+  },
+  {
+   "label": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_gender",
+   "kind": "radio-group",
+   "name": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_gender",
+   "id": "",
+   "required": false,
+   "value": "Decline to self-identify",
+   "options": [
+    "Male",
+    "Female",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "label": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_race",
+   "kind": "radio-group",
+   "name": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_race",
+   "id": "",
+   "required": false,
+   "value": "Decline to self-identify",
+   "options": [
+    "Hispanic or Latino",
+    "White (Not Hispanic or Latino)",
+    "Black or African American (Not Hispanic or Latino)",
+    "Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)",
+    "Asian (Not Hispanic or Latino)",
+    "American Indian or Alaska Native (Not Hispanic or Latino)",
+    "Two or More Races (Not Hispanic or Latino)",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "label": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_veteran_status",
+   "kind": "radio-group",
+   "name": "99d0a8ef-caf9-44c0-8dc0-864f1c1148b6__systemfield_eeoc_veteran_status",
+   "id": "",
+   "required": false,
+   "value": "I decline to self-identify for protected veteran status",
+   "options": [
+    "I identify as one or more of the classifications of protected veteran listed above",
+    "I am not a protected veteran",
+    "I decline to self-identify for protected veteran status"
+   ]
+  },
+  {
+   "label": "g-recaptcha-response",
+   "kind": "textarea",
+   "name": "g-recaptcha-response",
+   "id": "g-recaptcha-response-100000",
+   "required": false,
+   "value": ""
+  }
+ ]
+}

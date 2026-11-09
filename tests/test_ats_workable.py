@@ -180,7 +180,12 @@ def test_required_native_radio_group_accepts_checked_option(formfill, planned, c
     plan = {"rows": [{**fields[1], "action": "fill"}]} if planned else {"rows": []}
     for field in fields:
         field[checked_attr] = "true" if field.pop("checked") else "false"
-    assert formfill.diff(plan, fields) == []
+    mismatches = formfill.diff(plan, fields)
+    if planned:
+        assert mismatches == []
+    else:
+        # the group isn't reported BLANK, but a checked option nobody planned is unplanned
+        assert [(m["label"], m.get("unplanned")) for m in mismatches] == [("Yes", True)]
 
 
 def test_required_native_radio_group_rejects_no_selection(formfill):

@@ -1384,6 +1384,10 @@ def _register_answers_tools(registry, extended: bool):
             if not stored:
                 answers.seed_from_profile(profile.load_profile())
                 stored, _ = answers.load_checked()
+            if any(k not in stored for k in answers.NAME_KEYS):
+                # A store saved before the name keys existed: seed just those, as drafts.
+                if answers.seed_names(profile.load_profile(), str(registry.config.get("full_name", "") or "")):
+                    stored, _ = answers.load_checked()
             lines = [
                 "Standard application answers — ONLY confirmed values may fill a form; a draft must "
                 "be shown to the operator and confirmed first.",
@@ -1616,7 +1620,9 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
         out += ["", f"⚠ {note}"]
     out += [
         "",
-        "Fill IN THIS ORDER (values are from confirmed answers or the extra answers you supplied):",
+        "Fill IN THIS ORDER (values are from confirmed answers or the extra answers you supplied).",
+        "Type, pick or tick NOTHING that isn't listed: verify blocks on any value outside this plan. When the",
+        "operator answers a question, re-plan with their answer in extra_answers (keyed by the field's id or name).",
     ]
     if rows:
         for i, r in enumerate(rows, 1):
@@ -1626,6 +1632,18 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                 out.append(f"  {i}. [skip]   {target} — optional, no saved answer; leave blank")
                 continue
             value = r.get("value", "")
+            mark = "  [legal/eligibility: the operator's own answer]" if r.get("sensitive") else ""
+            if action == formfill.CHECK:
+                ticks = [c.get("target") or c.get("label", "") for c in r.get("checks") or []]
+                todo = ("browser_click to tick: " + ", ".join(ticks)) if ticks else "tick none"
+                out.append(f"  {i}. [check]  {target} -> {value}  ({todo}; leave every other box unticked){mark}")
+                continue
+            if r.get("autocomplete"):
+                out.append(
+                    f"  {i}. [select] {target} -> {value}  ({formfill.AUTOCOMPLETE_NOTE} "
+                    f"Search text: {r.get('search') or value!r}.)"
+                )
+                continue
             if r.get("kind", "").lower() in {"radio", "radio-group"}:
                 out.append("     Read back checked=true (or aria-checked=true) and the selected value after filling.")
             shown = value if action != formfill.UPLOAD else f"{value}  (browser_upload this file)"
@@ -1645,7 +1663,7 @@ def _render_plan(plan: dict, company: str, role: str) -> str:
                     "careercoach_verify_fill accepts any decline wording for this field)"
                 )
             else:
-                out.append(f"  {i}. [{action}] {target} -> {shown}")
+                out.append(f"  {i}. [{action}] {target} -> {shown}{mark}")
     else:
         out.append("  (nothing to fill from saved answers)")
 
@@ -1754,10 +1772,18 @@ def _register_formfill_tools(registry) -> None:
             fields, err = _parse_form_json(form_json)
             if err:
                 return err
-            mismatches = formfill.diff(session, fields)
-            formfill.record_verification(sid, mismatches)
+            mismatches, readback = formfill.review(session, fields)
+            formfill.record_verification(sid, mismatches, readback)
             if not mismatches:
-                return "VERIFIED — every field matches the plan and no required field is empty."
+                out = "VERIFIED — every field matches the plan, no required field is empty, and nothing outside the plan is filled."
+                page = [r for r in readback if r.get("from") in {"page", "derived"}]
+                if page:
+                    out += (
+                        f" {len(page)} value(s) were already on the page or filled by it, not from your answers: "
+                        + "; ".join(f"{r['label']} = {r['value']!r}" for r in page[:8])
+                        + ". The approval card marks them."
+                    )
+                return out
             lines = [f"NOT verified — {len(mismatches)} field(s) need fixing:"]
             for i, m in enumerate(mismatches, 1):
                 label = m.get("label", "")
@@ -1839,17 +1865,34 @@ def _register_prepare_tool(registry) -> None:
                     "can overwrite fields, so every field must be re-read AFTER the upload."
                 )
             board, job_id = detected.get("board"), detected.get("job_id")
+            api_json = None
+            open_line = ""
             if not board:
-                return (
-                    f"Found a Greenhouse job id ({job_id}) but not the board token — this looks like a "
-                    f"company careers page using gh_jid, so the public schema can't be fetched. {live_path}"
+                # A company careers page embedding the job (?gh_jid=). Its form lives in a Greenhouse
+                # iframe the form reader can't see, so find the board and open the embed form directly.
+                board, api_json = await ats.resolve_board(url, job_id, company or "")
+                if not board:
+                    return (
+                        f"Found a Greenhouse job id ({job_id}) on a company careers page, but not its board "
+                        "token, so the public schema can't be fetched and the form sits in an iframe the "
+                        "form reader can't see. Open the page, read the iframe's address with browser_eval "
+                        "(document.querySelector('iframe[src*=\"greenhouse\"]').src) and take its for=<board> "
+                        f"value, then browser_open https://job-boards.greenhouse.io/embed/job_app?for=<board>&token={job_id} "
+                        f"and call careercoach_prepare_application again with that URL. {live_path}"
+                    )
+                open_line = (
+                    f"This careers page embeds the form in an iframe the form reader can't see. Open "
+                    f"apply_url directly instead: {ats.embed_url(board, job_id)}\n"
                 )
-            api_json, err = await ats.fetch_schema(board, job_id)
-            if err:
-                return f"Couldn't prepare from the Greenhouse schema: {err} {live_path}"
+            elif detected.get("apply_url"):
+                open_line = f"Open apply_url directly: {detected['apply_url']}\n"
+            if api_json is None:
+                api_json, err = await ats.fetch_schema(board, job_id)
+                if err:
+                    return f"{open_line}Couldn't prepare from the Greenhouse schema: {err} {live_path}"
             fields = ats.greenhouse_fields(api_json)
             if not fields:
-                return f"The Greenhouse schema had no fillable questions to prepare from. {live_path}"
+                return f"{open_line}The Greenhouse schema had no fillable questions to prepare from. {live_path}"
 
             if not enabled:
                 confirmed = answers.confirmed()
@@ -1869,7 +1912,7 @@ def _register_prepare_tool(registry) -> None:
             # without the URL two different postings with identical questions would share one id and
             # one verification slot — a grant for A could then be spent on B (bd-ywmm.4).
             plan = formfill.build_plan(
-                fields, answers.confirmed(), company=company_s, role=role_s, posting=(url or "").strip()
+                fields, answers.confirmed(), company=company_s, role=role_s, posting=(url or "").strip(), live=False
             )
             formfill.update_session(plan["session_id"], company=company_s, role=role_s)
             title = (api_json.get("title") if isinstance(api_json, dict) else "") or ""
@@ -1879,7 +1922,7 @@ def _register_prepare_tool(registry) -> None:
                 "the operator now, but the live read-back is still required before any submit: browser_form_read → "
                 'careercoach_plan_fill(form_json, company, role, ats="greenhouse") → fill → careercoach_verify_fill.\n'
             )
-            return preamble + "\n" + _render_plan(plan, company or "", role or title)
+            return open_line + preamble + "\n" + _render_plan(plan, company or "", role or title)
         except Exception as e:  # noqa: BLE001 — a tool never raises
             return f"Could not prepare the application: {e}"
 
@@ -1980,31 +2023,56 @@ def _submit_ready(session, session_id: str) -> tuple[bool, str]:
 
 
 def _submit_approval_card(session, session_id: str) -> dict:
-    """The approval card an operator sees in the interrupt: company, role, and the planned
-    field→value table (skip rows excluded, upload rows flagged), plus the explicit choices."""
+    """The approval card an operator sees in the interrupt: company, role, and the FULL read-back —
+    every field the form holds as it was verified, not only the planned ones — with the values that
+    are not from the operator's answers (pre-filled or derived by the page) and the legal /
+    eligibility / attestation answers marked, plus the explicit choices. A session verified before
+    the read-back was recorded falls back to the planned rows."""
     from .applying import formfill
 
-    rows = session.get("rows", []) if isinstance(session, dict) else []
+    readback = session.get("last_readback") if isinstance(session, dict) else None
     fields: list[dict] = []
     table_lines: list[str] = []
     table_rows: list[list[str]] = []
-    for r in rows:
-        if not isinstance(r, dict) or r.get("action") == formfill.SKIP:
-            continue
-        label = str(r.get("label", ""))
-        value = str(r.get("value", ""))
-        action = str(r.get("action", ""))
-        fields.append({"label": label, "value": value, "action": action})
-        shown = f"{value}  (upload)" if action == formfill.UPLOAD else value
-        table_lines.append(f"  {label} -> {shown}")
-        table_rows.append([label, shown])
+    notes = {
+        "page": "NOT from your answers: already on the page",
+        "derived": "NOT from your answers: filled by the page from your location",
+        "extra": "your answer for this application",
+    }
+    if isinstance(readback, list):
+        for r in readback:
+            if not isinstance(r, dict):
+                continue
+            label, value, origin = str(r.get("label", "")), str(r.get("value", "")), str(r.get("from", ""))
+            marks = [notes[origin]] if origin in notes else []
+            if r.get("sensitive"):
+                marks.append("LEGAL / ELIGIBILITY: you are attesting to this")
+            fields.append({"label": label, "value": value, "from": origin, "sensitive": bool(r.get("sensitive"))})
+            shown = value + (f"  [{'; '.join(marks)}]" if marks else "")
+            table_lines.append(f"  {label} -> {shown}")
+            table_rows.append([label, shown])
+    else:
+        for r in session.get("rows", []) if isinstance(session, dict) else []:
+            if not isinstance(r, dict) or r.get("action") == formfill.SKIP:
+                continue
+            label = str(r.get("label", ""))
+            value = str(r.get("value", ""))
+            action = str(r.get("action", ""))
+            fields.append({"label": label, "value": value, "action": action})
+            shown = f"{value}  (upload)" if action == formfill.UPLOAD else value
+            table_lines.append(f"  {label} -> {shown}")
+            table_rows.append([label, shown])
+    flagged = sum(1 for f in fields if f.get("from") in {"page", "derived"} or f.get("sensitive"))
 
     company = str((session or {}).get("company") or "").strip()
     role = str((session or {}).get("role") or "").strip()
     who = " — ".join(x for x in (role, company) if x) or "this application"
+    heading = "Everything the form holds:" if isinstance(readback, list) else "Planned answers:"
+    check = f"\n\nCheck the {flagged} marked value(s) before you approve." if flagged else ""
     prompt = (
         f"Submit this job application? ({who})\n\n"
-        + ("Planned answers:\n" + "\n".join(table_lines) if table_lines else "(no planned fields)")
+        + (heading + "\n" + "\n".join(table_lines) if table_lines else "(no planned fields)")
+        + check
         + "\n\nApprove to authorize ONE submit click (valid 120s); decline to stop."
     )
     return {
@@ -2014,8 +2082,9 @@ def _submit_approval_card(session, session_id: str) -> dict:
         "type": "careercoach_submit_approval",
         "title": "Approve submitting this job application?",
         "description": (
-            f"Submit this job application? ({who})\n\n"
-            "Approve to authorize ONE submit click (valid 120s); decline to stop."
+            f"Submit this job application? ({who})"
+            + check
+            + "\n\nApprove to authorize ONE submit click (valid 120s); decline to stop."
         ),
         "detail": "\n".join(table_lines) if table_lines else "(no planned fields)",
         "options": [
@@ -2207,7 +2276,9 @@ def _register_submit_middleware(registry) -> None:
             so the call spends it even when the core's policy never ran."""
             call = getattr(request, "tool_call", None) or {}
             name = call.get("name", "")
-            if not submitgate.is_submit_like(name, call.get("args", {})):
+            # A bare Enter names no target, so on this path the core's resolved verdict decides it;
+            # the floor applies to an Enter only when its own arguments point at a submit control.
+            if not submitgate.is_floor_submit(name, call.get("args", {})):
                 return None, None
             held = submitgate.live_grant_for_current_verification(formfill.current_verification)
             if held is None:

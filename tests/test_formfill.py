@@ -253,15 +253,25 @@ def test_an_optional_free_text_on_a_choice_field_is_skipped_not_asked(formfill):
     assert row["action"] == "skip" and row["value"] == ""
 
 
-def test_a_no_option_combobox_with_only_a_free_text_standard_answer_is_unmapped(formfill):
-    # r2: a react-select combobox reads back with NO options; its only candidate is the free-text
-    # current_location. It must be asked about, not planned verbatim.
+def test_a_no_option_location_combobox_plans_an_autocomplete_select(formfill):
+    # A location combobox with NO options is an autocomplete (options load as you type), so the
+    # confirmed location is planned as a browser_select pick (G, 2026-11 eval) — and the read-back
+    # accepts the widget's spelling of the same place.
     form = [field("Current location", "combobox", name="location", id="location", required=True)]
     plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, USA"})
+    assert [(r["action"], r["value"], r["autocomplete"]) for r in plan["rows"]] == [
+        ("select", "Portland, Oregon, USA", True)
+    ]
+    assert plan["unmapped"] == []
+
+
+def test_a_no_option_non_location_combobox_with_a_free_text_answer_is_unmapped(formfill):
+    # Any OTHER free-text answer on a combobox is still asked about, never typed.
+    form = [field("Email preference", "combobox", name="email", id="email", required=True)]
+    plan = formfill.build_plan(form, {"email": "ada@example.com"})
     assert plan["rows"] == []
-    um = next(u for u in plan["unmapped"] if u["target"] == "#location")
+    um = next(u for u in plan["unmapped"] if u["target"] == "#email")
     assert um["required"] is True and "free text" in um["reason"]
-    assert "Portland, Oregon, USA" not in [r.get("value") for r in plan["rows"]]
 
 
 def test_a_no_option_select_plans_an_extra_answer_verbatim_and_flags_it(formfill):
@@ -596,9 +606,9 @@ def test_diff_flags_the_resume_landing_on_the_cover_letter_field(formfill):
         field("Attach", "file", name="cover_letter", id="cover_letter", required=False, value="resume-gitlab.pdf"),
     ]
     mism = formfill.diff(plan, after)
-    assert len(mism) == 1
-    assert mism[0]["target"] == "#resume"
+    assert [m["target"] for m in mism] == ["#resume", "#cover_letter"]
     assert mism[0]["expected"] == "resume-gitlab.pdf" and mism[0]["actual"] == ""
+    assert mism[1]["unplanned"] is True and mism[1]["actual"] == "resume-gitlab.pdf"  # nothing planned it there
 
 
 def test_diff_catches_a_react_select_reverting_to_afghanistan(formfill):
@@ -865,6 +875,16 @@ def test_plan_and_verify_tools_round_trip(tools, answers):
     assert "Ask the operator about ONLY these:" in out
     assert "Why do you want to work here?" in out  # required, no confirmed answer → asked about
 
+    # the operator answers it; the agent re-plans with that answer, then fills
+    out = tools["careercoach_plan_fill"].invoke(
+        {
+            "ats": "greenhouse",
+            "form_json": json.dumps(form),
+            "company": "Acme",
+            "role": "SWE",
+            "extra_answers": json.dumps({"q1": "Because compilers."}),
+        }
+    )
     sid = re.search(r"session_id:\s*(\S+)", out).group(1)
 
     filled = [
@@ -997,12 +1017,15 @@ def test_the_launchdarkly_referrer_field_is_never_planned_or_demanded(formfill):
     assert ref["action"] == formfill.SKIP and ref["value"] == "" and ref["key"] is None
     assert "ada@example.com" not in [r["value"] for r in plan["rows"] if r.get("id") != "email"]
 
-    # read back with the referrer field blank (or holding the real referrer) — VERIFIED either way
+    # read back with the referrer field blank — VERIFIED
     after = [dict(f) for f in form]
     after[0]["value"] = "ada@example.com"
     assert formfill.diff(plan, after) == []
+    # holding a referrer nobody planned blocks; the operator's referrer goes in as an extra answer
     after[1]["value"] = "Grace Hopper, grace@launchdarkly.com"
-    assert formfill.diff(plan, after) == []
+    assert [m.get("unplanned") for m in formfill.diff(plan, after)] == [True]
+    replan = formfill.build_plan(form, confirmed, {"question_32969259003": "Grace Hopper, grace@launchdarkly.com"})
+    assert formfill.diff(replan, after) == []
 
 
 def test_verify_never_demands_a_value_for_an_unassigned_row(formfill):
@@ -1019,8 +1042,9 @@ def test_verify_never_demands_a_value_for_an_unassigned_row(formfill):
         field("Must", id="must", required=True, value=""),
     ]
     mism = formfill.diff(plan, after)
-    assert [m["target"] for m in mism] == ["#must"]
+    assert [m["target"] for m in mism] == ["#must", "#ref"]
     assert mism[0]["expected"] == "(required — not yet filled)"
+    assert mism[1]["unplanned"] is True  # a value the plan didn't assign is not demanded, but not allowed either
 
 
 # ── targets are VALID CSS for any id: `#a.b` would mean id `a` + class `b` (Recruitee, live 10-17) ──
@@ -1068,7 +1092,7 @@ def test_diff_matches_dotted_ids_and_reports_them_as_valid_selectors(formfill):
         field("Email", "email", name="candidate.email", id="input-candidate.email-4", required=True),
         field("Cover note", "textarea", id="input-candidate.cover-9", required=True),
     ]
-    plan = formfill.build_plan(form, {"email": "ada@example.com"})
+    plan = formfill.build_plan(form, {"email": "ada@example.com"}, {"input-candidate.cover-9": "Hi."})
     filled = [dict(form[0], value="ada@example.com"), dict(form[1], value="Hi.")]
     assert formfill.diff(plan, filled) == []
     wrong = [dict(form[0], value="nope@example.com"), dict(form[1], value="")]
@@ -1129,7 +1153,9 @@ def test_an_unselected_host_radio_group_is_still_flagged(formfill):
 
 
 def test_a_required_host_radio_group_with_a_value_is_not_reported_blank(formfill):
-    assert formfill.diff({"rows": []}, [_host_radio_group("No")]) == []
+    # filled, it isn't reported BLANK — but with no plan behind it, it is a value nobody planned
+    mism = formfill.diff({"rows": []}, [_host_radio_group("No")])
+    assert [m["expected"] for m in mism] == [formfill.UNPLANNED_EXPECTED]
     assert formfill.diff({"rows": []}, [_host_radio_group("")])[0]["expected"].startswith("(required")
 
 

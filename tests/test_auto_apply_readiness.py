@@ -1,0 +1,482 @@
+"""Auto-apply readiness — the findings of the 2026-11-08 live eval on 13 real postings.
+
+Fixtures under ``fixtures/eval_2026_11/`` are the ``browser_form_read`` arrays read back from those
+forms AFTER the agent filled them (nothing was submitted; the persona is a test one). A "before"
+read is the same array with the values blanked, which is what the live forms showed when opened.
+
+A  values outside the plan block VERIFIED, the approval card shows the full read-back, and legal /
+   eligibility / attestation questions are never answered from anything but the operator.
+B  verify accepts what a widget legitimately commits: a unique-prefix option, a checkbox, a location
+   in the widget's spelling, a city derived from the visible address.
+C  a bare Enter on the core-gate path defers to the core's resolved verdict.
+D  a Greenhouse "Country" picker right before the phone is the phone country.
+E  a gh_jid careers page resolves to Greenhouse's embeddable form.
+F  name answer keys.
+G  a location combobox plans as an autocomplete select.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import importlib
+import json
+from pathlib import Path
+
+import pytest
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "eval_2026_11"
+
+
+@pytest.fixture
+def formfill(plugin, iso, monkeypatch):
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    return importlib.import_module(plugin.__name__ + ".applying.formfill")
+
+
+@pytest.fixture
+def answers(plugin, iso, monkeypatch):
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    return importlib.import_module(plugin.__name__ + ".record.answers")
+
+
+@pytest.fixture
+def ats(plugin):
+    return importlib.import_module(plugin.__name__ + ".applying.ats")
+
+
+@pytest.fixture
+def submitgate(plugin):
+    return importlib.import_module(plugin.__name__ + ".applying.submitgate")
+
+
+def after(name: str) -> list[dict]:
+    return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))["fields"]
+
+
+def blank(fields: list[dict], keep: tuple[str, ...] = ()) -> list[dict]:
+    """The form as opened: every value cleared (checkboxes unticked), except fields whose label is in
+    ``keep`` (a value the page itself pre-filled)."""
+    out = copy.deepcopy(fields)
+    for f in out:
+        if f.get("label") in keep:
+            continue
+        f["value"] = False if f.get("kind") == "checkbox" else ""
+    return out
+
+
+def field(label, kind="text", *, name="", id="", required=False, value="", options=None):
+    return {"label": label, "kind": kind, "name": name, "id": id, "required": required, "value": value,
+            "options": options or []}  # fmt: skip
+
+
+def set_value(fields, label, value):
+    for f in fields:
+        if f.get("label") == label:
+            f["value"] = value
+            return fields
+    raise AssertionError(label)
+
+
+SUPABASE_CONFIRMED = {
+    "full_name": "Testy McTestface",
+    "email": "testy.mctestface@example.com",
+    "linkedin_url": "https://www.linkedin.com/in/testy-mctestface-example",
+}
+
+
+# ── A: nothing outside the plan reaches VERIFIED ─────────────────────────────────────────────
+def test_supabase_unconfirmed_values_block_verified(formfill):
+    """The eval run came back VERIFIED with an "over 18" Yes clicked unasked (the UUID checkbox) and a
+    passport country nobody confirmed. Both are now mismatches."""
+    filled = after("as3-supabase")
+    plan = formfill.build_plan(blank(filled), SUPABASE_CONFIRMED, ats="ashby", company="Supabase", role="AI")
+    mismatches = formfill.diff(plan, filled)
+    unplanned = {m["label"]: m for m in mismatches if m.get("unplanned")}
+    assert "Passport Country" in unplanned
+    assert "27cb2e41-18c5-45f9-a60e-bfe732273692" in unplanned  # the over-18 Yes, read as a checkbox
+    assert unplanned["27cb2e41-18c5-45f9-a60e-bfe732273692"]["actual"] == "true"
+    assert "Where did you hear about this vacancy?" in unplanned  # a skip row that now holds a value
+    assert "legal" in unplanned["Passport Country"]["reason"]  # the sensitive explanation rides along
+    assert "g-recaptcha-response" not in {m["label"] for m in mismatches}  # the page's own token field
+
+
+def test_supabase_verifies_once_every_value_is_the_operators(formfill):
+    filled = after("as3-supabase")
+    extra = {
+        f["id"] or f["label"]: ("true" if f["kind"] == "checkbox" else f["value"])
+        for f in filled
+        if f["kind"] != "file" and f["value"] and f["label"] not in {"Name", "Email", "Linkedin"}
+    }
+    extra["27cb2e41-18c5-45f9-a60e-bfe732273692"] = "yes"  # the operator said they're over 18
+    plan = formfill.build_plan(
+        blank(filled), SUPABASE_CONFIRMED, extra=extra, ats="ashby", company="Supabase", role="AI"
+    )
+    mismatches, readback = formfill.review(plan, filled)
+    assert mismatches == []
+    passport = next(r for r in readback if r["label"] == "Passport Country")
+    assert passport["from"] == "extra" and passport["sensitive"] is True
+
+
+def test_a_replan_after_filling_does_not_launder_an_improvised_value(formfill):
+    """A re-plan reads a form the agent may already have filled. The baseline stays the FIRST plan's,
+    so a passport country typed between the two plans is still not 'the page's'."""
+    filled = after("as3-supabase")
+    formfill.build_plan(blank(filled), SUPABASE_CONFIRMED, ats="ashby", company="Supabase", role="AI")
+    plan2 = formfill.build_plan(filled, SUPABASE_CONFIRMED, ats="ashby", company="Supabase", role="AI")
+    unplanned = {m["label"] for m in formfill.diff(plan2, filled) if m.get("unplanned")}
+    assert "Passport Country" in unplanned
+
+
+def test_a_replan_under_a_respelled_role_still_finds_the_first_baseline(formfill):
+    filled = after("as3-supabase")
+    formfill.build_plan(blank(filled), SUPABASE_CONFIRMED, ats="ashby", company="Supabase", role="AI")
+    plan2 = formfill.build_plan(filled, SUPABASE_CONFIRMED, ats="ashby", company="Supabase Inc", role="AI eng")
+    assert "Passport Country" in {m["label"] for m in formfill.diff(plan2, filled) if m.get("unplanned")}
+
+
+def test_a_value_the_page_prefilled_is_allowed_and_marked(formfill):
+    form = [field("Email", "email", id="email", required=True), field("Country", "select", id="ctry",
+            value="United States", options=["Canada", "United States"])]  # fmt: skip
+    plan = formfill.build_plan(form, {"email": "a@b.co"}, company="Acme", role="Eng")
+    filled = set_value(copy.deepcopy(form), "Email", "a@b.co")
+    mismatches, readback = formfill.review(plan, filled)
+    assert mismatches == []
+    assert {r["label"]: r["from"] for r in readback} == {"Email": "answer", "Country": "page"}
+    # …but changing it from what the page showed is the agent's doing, and blocks
+    set_value(filled, "Country", "Canada")
+    assert [m["label"] for m in formfill.diff(plan, filled)] == ["Country"]
+
+
+def test_placeholders_and_unticked_boxes_are_empty(formfill):
+    form = [field("Office", "native-select", name="loc", value="Select...", options=["Select...", "London"]),
+            field("Consent to marketing", "checkbox", name="mk", value=False)]  # fmt: skip
+    plan = formfill.build_plan(form, {}, company="Acme", role="Eng")
+    assert formfill.diff(plan, form) == []
+    ticked = copy.deepcopy(form)
+    ticked[1]["value"] = True
+    assert [m["label"] for m in formfill.diff(plan, ticked)] == ["Consent to marketing"]
+
+
+def test_a_required_unticked_consent_box_is_not_filled(formfill):
+    form = [field("I consent to the processing of my data", "checkbox", id="gdpr", required=True, value=False)]
+    plan = formfill.build_plan(form, {})
+    assert plan["unmapped"][0]["reason"].startswith("a legal")
+    assert [m["expected"] for m in formfill.diff(plan, form)] == ["(required — not yet filled)"]
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Are you over the age of 18?",
+        "I confirm that everything in this application is true and my own",
+        "Are you a U.S. person under export control regulations (ITAR/EAR)?",
+        "Passport Country",
+        "Are you authorized to work in the EU?",
+        "Have you ever been convicted of a felony?",
+    ],
+)
+def test_legal_questions_are_never_answered_from_other_answers(formfill, label):
+    confirmed = {"authorized_us": "Yes", "current_location": "Portland, Oregon, United States", "pronouns": "x"}
+    form = [field(label, "select", id="q", required=True, options=["Yes", "No"])]
+    plan = formfill.build_plan(form, confirmed)
+    assert plan["rows"] == []
+    assert "legal" in plan["unmapped"][0]["reason"]
+
+
+def test_a_confirmed_us_authorization_still_fills_its_own_question_and_is_marked(formfill):
+    form = [field("Are you legally authorized to work in the United States?", "select", id="q",
+                  required=True, options=["Yes", "No"])]  # fmt: skip
+    plan = formfill.build_plan(form, {"authorized_us": "Yes"})
+    assert plan["rows"][0]["value"] == "Yes" and plan["rows"][0]["sensitive"] is True
+
+
+def test_eu_authorization_never_classifies_as_the_us_answer(formfill):
+    assert formfill.classify(field("Are you authorized to work in the EU?")) is None
+    assert formfill.classify(field("Are you legally authorized to work in the US?")) == "authorized_us"
+
+
+def test_the_approval_card_shows_the_full_readback_with_marks(plugin):
+    session = {
+        "company": "Supabase",
+        "role": "AI",
+        "rows": [{"label": "Email", "value": "a@b.co", "action": "fill"}],
+        "last_readback": [
+            {"label": "Email", "value": "a@b.co", "from": "answer", "sensitive": False},
+            {"label": "Country", "value": "United States", "from": "page", "sensitive": False},
+            {"label": "Passport Country", "value": "United States", "from": "extra", "sensitive": True},
+        ],
+    }
+    card = plugin._submit_approval_card(session, "sid")
+    assert [r[0] for r in card["display"]["props"]["rows"]] == ["Email", "Country", "Passport Country"]
+    assert "NOT from your answers" in card["detail"] and "LEGAL / ELIGIBILITY" in card["detail"]
+    assert "Check the 2 marked value(s)" in card["prompt"]
+
+
+def test_verify_records_the_readback_for_the_card(formfill):
+    form = [field("Email", "email", id="email", required=True)]
+    plan = formfill.build_plan(form, {"email": "a@b.co"}, company="Acme", role="Eng")
+    filled = set_value(copy.deepcopy(form), "Email", "a@b.co")
+    mismatches, readback = formfill.review(plan, filled)
+    rec = formfill.record_verification(plan["session_id"], mismatches, readback)
+    assert rec["verified"] and rec["last_readback"][0]["value"] == "a@b.co"
+    formfill.invalidate_verification(plan["session_id"])
+    assert formfill.load_session(plan["session_id"])["last_readback"] is None
+
+
+# ── B1: the option browser_select committed ─────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "expected,actual,ok",
+    [
+        ("they/them", "they/them/theirs", True),
+        ("United States", "United States of America", True),
+        ("Yes", "Yes, I am currently legally authorized to work in the country where the job is located.", True),
+        ("No", "No, I do not and will not require sponsorship", True),
+        ("No", "No, but I will in the future", False),
+        ("Yes", "Yes, but I will require sponsorship", False),
+        ("United", "United States", True),
+        ("they/them", "they", False),
+        ("Man", "Mango", False),
+    ],
+)
+def test_a_unique_prefix_commit_is_accepted_where_options_were_unknown(formfill, expected, actual, ok):
+    row = {"action": "select", "options_unknown": True, "value": expected}
+    assert formfill._values_equal(expected, actual, row) is ok
+
+
+def test_a_prefix_commit_is_not_accepted_where_the_plan_matched_a_known_option(formfill):
+    row = {"action": "select", "value": "United States"}
+    assert not formfill._values_equal("United States", "United States Minor Outlying Islands", row)
+
+
+def test_figma_and_gitlab_choice_rewrites_verify(formfill):
+    form = [field("Pronouns", "combobox", id="question_20374544004"),
+            field("What is your current country of residence?", "combobox", id="question_38115715002", required=True)]  # fmt: skip
+    plan = formfill.build_plan(form, {}, extra={"question_20374544004": "they/them",
+                                                 "question_38115715002": "United States"})  # fmt: skip
+    filled = set_value(copy.deepcopy(form), "Pronouns", "they/them/theirs")
+    set_value(filled, "What is your current country of residence?", "United States of America")
+    assert formfill.diff(plan, filled) == []
+
+
+# ── B2: checkboxes ───────────────────────────────────────────────────────────────────────────
+def test_spotify_pronoun_checkboxes_plan_one_check_row(formfill):
+    filled = after("lv2-spotify")
+    plan = formfill.build_plan(blank(filled), {"pronouns": "they/them"}, ats="lever", company="Spotify", role="X")
+    row = next(r for r in plan["rows"] if r.get("group") == "pronouns")
+    assert row["action"] == "check" and [c["label"] for c in row["checks"]] == ["They/them"]
+    assert not any(r.get("label") == "They/them" and r.get("action") == "fill" for r in plan["rows"])
+    mismatches = formfill.diff(plan, filled)
+    assert not any(m["label"].startswith("pronouns") for m in mismatches)
+    # ticking a second pronoun is caught
+    two = copy.deepcopy(filled)
+    next(f for f in two if f["label"] == "He/him")["value"] = True
+    assert "pronouns: He/him" in {m["label"] for m in formfill.diff(plan, two)}
+
+
+def test_notion_how_did_you_hear_checkboxes_never_receive_urls(formfill):
+    filled = after("as2-notion")
+    confirmed = {"linkedin_url": "https://www.linkedin.com/in/x", "portfolio_url": "https://x.example"}
+    plan = formfill.build_plan(blank(filled), confirmed, ats="ashby", company="Notion", role="X")
+    assert not any(r.get("value", "").startswith("http") and "checkbox" in r.get("id", "") for r in plan["rows"])
+    stem = "eec5f04b-2a21-4232-b705-e1a4da94a750_0b3b7773-f6d9-4032-9ab1-368c4164e95a-labeled-checkbox"
+    plan = formfill.build_plan(
+        blank(filled), confirmed, extra={stem: "LinkedIn"}, ats="ashby", company="Notion", role="X"
+    )
+    row = next(r for r in plan["rows"] if r.get("group") == stem)
+    assert [c["label"] for c in row["checks"]] == ["LinkedIn"]
+    # the eval's read-back ticked "Notion Website", not LinkedIn
+    labels = {m["label"]: m for m in formfill.diff(plan, filled)}
+    assert labels[f"{stem}: LinkedIn"]["expected"] == "ticked"
+    assert labels[f"{stem}: Notion Website"]["expected"] == "unticked"
+
+
+def test_a_group_answer_matching_no_option_is_asked_about(formfill):
+    form = [
+        field("A", "checkbox", name="q[]", required=True, value=False),
+        field("B", "checkbox", name="q[]", value=False),
+    ]
+    plan = formfill.build_plan(form, {}, extra={"q[]": "C"})
+    assert plan["unmapped"][0]["reason"] == "answer matches no option"
+    assert plan["unmapped"][0]["options"] == ["A", "B"]
+
+
+def test_a_single_checkbox_takes_yes_or_no(formfill):
+    form = [field("Send me job alerts", "checkbox", id="alerts", value=False)]
+    assert formfill.build_plan(form, {}, extra={"alerts": "yes"})["rows"][0]["checks"][0]["id"] == "alerts"
+    assert formfill.build_plan(form, {}, extra={"alerts": "no"})["rows"][0]["checks"] == []
+    assert (
+        formfill.build_plan(form, {}, extra={"alerts": "maybe"})["unmapped"][0]["reason"]
+        == "a checkbox takes yes or no"
+    )
+
+
+def test_a_required_checkbox_reads_unticked_as_empty(formfill):
+    form = [field("Agree", "checkbox", id="a", required=True, value=False)]
+    plan = {"rows": [], "baseline": {}}
+    assert formfill.diff(plan, form)[0]["expected"] == "(required — not yet filled)"
+
+
+# ── B3 / B4: locations ───────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "actual,ok",
+    [
+        ("Portland, OR, USA", True),
+        ("Portland, Oregon, United States, 97201", True),
+        ("Portland, Oregon, US", True),
+        ("Portland, ME, USA", False),
+        ("Portland", False),
+        ("South Portland, Oregon, United States", False),
+    ],
+)
+def test_location_autocomplete_rewrites(formfill, actual, ok):
+    row = {"key": "current_location", "action": "fill", "value": "Portland, Oregon, United States"}
+    assert formfill._values_equal("Portland, Oregon, United States", actual, row) is ok
+
+
+def test_zoox_location_verifies(formfill):
+    form = [field("Current location", "text", name="location", id="location-input", required=True)]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"}, ats="lever")
+    assert formfill.diff(plan, set_value(copy.deepcopy(form), "Current location", "Portland, OR, USA")) == []
+
+
+def test_blueground_city_is_satisfied_by_the_visible_address(formfill):
+    filled = after("wk2-blueground")
+    confirmed = {"current_location": "Portland, Oregon, United States"}
+    form = blank(filled)
+    plan = formfill.build_plan(form, confirmed, ats="workable", company="Blueground", role="X")
+    assert any(r.get("id") == "city" and r.get("value") == "Portland" for r in plan["rows"])
+    mismatches = formfill.diff(plan, filled)
+    assert not any(m["label"] == "city" for m in mismatches)
+    # without the companion it's still a mismatch
+    no_address = set_value(copy.deepcopy(filled), "Address (Optional)SVGs not supported by this browser.", "")
+    assert any(m["label"] == "city" for m in formfill.diff(plan, no_address))
+
+
+def test_address_parts_filled_by_the_picker_are_derived(formfill):
+    form = [field("Location", "text", id="loc", required=True), field("postcode", "text", id="postcode")]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"})
+    filled = set_value(copy.deepcopy(form), "Location", "Portland, Oregon, United States")
+    set_value(filled, "postcode", "97201")
+    mismatches, readback = formfill.review(plan, filled)
+    assert mismatches == [] and {r["label"]: r["from"] for r in readback}["postcode"] == "derived"
+
+
+# ── C: Enter on the core-gate path ───────────────────────────────────────────────────────────
+def test_a_bare_enter_is_not_a_floor_submit(submitgate):
+    assert submitgate.is_submit_like("browser_press", {"key": "Enter"})  # the fallback keeps it
+    assert not submitgate.is_floor_submit("browser_press", {"key": "Enter"})
+    assert submitgate.is_floor_submit("browser_press", {"key": "Enter", "selector": "button[type=submit]"})
+    assert submitgate.is_floor_submit("browser_click", {"selector": "Submit application"})
+
+
+# ── D: the Greenhouse phone country ──────────────────────────────────────────────────────────
+def test_gitlab_country_before_the_phone_is_the_phone_country(formfill):
+    form = blank(after("gh1-gitlab"))
+    plan = formfill.build_plan(form, {"phone_country": "United States", "phone_number": "5550100199"})
+    rows = [r for r in plan["rows"] if r.get("key") in {"phone_country", "phone_number"}]
+    assert [(r["id"], r["key"]) for r in rows] == [("country", "phone_country"), ("phone", "phone_number")]
+
+
+def test_a_country_question_elsewhere_is_not_the_phone_country(formfill):
+    form = [field("Country", "combobox", id="country"), field("Why us?", "textarea", id="q1"),
+            field("Phone", "tel", id="phone")]  # fmt: skip
+    plan = formfill.build_plan(form, {"phone_country": "United States"})
+    assert not any(r.get("key") == "phone_country" and r["action"] != "skip" for r in plan["rows"])
+
+
+# ── E: gh_jid careers pages ──────────────────────────────────────────────────────────────────
+def test_detect_reads_the_embeddable_form(ats):
+    got = ats.detect("https://job-boards.greenhouse.io/embed/job_app?for=airbnb&token=7826337")
+    assert got["board"] == "airbnb" and got["job_id"] == "7826337"
+    assert got["apply_url"] == "https://job-boards.greenhouse.io/embed/job_app?for=airbnb&token=7826337"
+
+
+def test_board_candidates_start_with_the_careers_host(ats):
+    assert ats.board_candidates("https://careers.airbnb.com/positions/7826337?gh_jid=7826337")[0] == "airbnb"
+    assert "gitlab" in ats.board_candidates("https://about.gitlab.com/jobs/apply/?gh_jid=1", "GitLab")
+    assert len(ats.board_candidates("https://careers.x.com/?gh_jid=1", "Some Long Company Name")) <= 6
+
+
+def test_prepare_on_a_gh_jid_page_returns_the_embed_url(tools, ats, monkeypatch):
+    seen = []
+
+    async def fake_fetch(board, job_id):
+        seen.append(board)
+        if board == "airbnb":
+            return {"title": "ML Engineer", "questions": [
+                {"label": "Email", "required": True, "fields": [{"name": "email", "type": "input_text"}]}]}, ""  # fmt: skip
+        return None, "HTTP 404"
+
+    monkeypatch.setattr(ats, "fetch_schema", fake_fetch)
+    out = asyncio.run(
+        tools["careercoach_prepare_application"].ainvoke(
+            {"url": "https://careers.airbnb.com/positions/7826337?gh_jid=7826337", "company": "Airbnb"}
+        )
+    )
+    assert seen[0] == "airbnb"
+    assert "https://job-boards.greenhouse.io/embed/job_app?for=airbnb&token=7826337" in out
+    assert "Prepared from the Greenhouse public schema" in out
+
+
+# ── F: name keys ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "f,key",
+    [
+        (field("First Name", id="first_name"), "first_name"),
+        (field("Last Name", id="last_name"), "last_name"),
+        (field("Full name✱", name="name"), "full_name"),
+        (field("Name", id="_systemfield_name"), "full_name"),
+        (field("", name="firstname", id="firstname"), "first_name"),
+        (field("Company name", id="org"), None),
+        (field("Preferred first name", id="pref"), None),
+        (field("Name of the employee who referred you", id="ref"), None),
+    ],
+)
+def test_name_fields_classify(formfill, f, key):
+    assert formfill.classify(f) == key
+
+
+def test_name_keys_seed_from_the_profile_or_the_setting(answers):
+    assert set(answers.seed_names({"identity": {"name": "Testy McTestface"}})) == {
+        "full_name",
+        "first_name",
+        "last_name",
+    }
+    stored = answers.load()
+    assert stored["first_name"]["value"] == "Testy" and stored["first_name"]["status"] == answers.DRAFT
+    assert answers.seed_names({"identity": {"name": "Someone Else"}}) == []  # never overwrites
+
+
+def test_a_three_word_name_seeds_only_the_full_name(answers):
+    assert answers.seed_names({}, fallback_name="Mary Ann Smith") == ["full_name"]
+
+
+def test_get_answers_seeds_missing_name_keys_for_an_existing_store(tools, answers):
+    answers.propose("email", "a@b.co")
+    out = tools["careercoach_get_answers"].invoke({})
+    assert "full_name" in out  # listed as missing, or seeded when the profile has a name
+
+
+# ── G: location autocomplete ─────────────────────────────────────────────────────────────────
+def test_a_location_combobox_plans_an_autocomplete_select(formfill):
+    form = [field("Location (City)", "combobox", id="candidate-location", required=True)]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"})
+    row = plan["rows"][0]
+    assert row["action"] == "select" and row["autocomplete"] and row["search"] == "Portland"
+    filled = set_value(copy.deepcopy(form), "Location (City)", "Portland, Oregon, United States")
+    assert formfill.diff(plan, filled) == []
+
+
+def test_the_plan_render_names_the_autocomplete_and_check_steps(tools):
+    form = [
+        field("Location (City)", "combobox", id="candidate-location", required=True),
+        field("He/him", "checkbox", name="pronouns", value=False),
+        field("They/them", "checkbox", name="pronouns", value=False),
+    ]
+    out = tools["careercoach_plan_fill"].invoke(
+        {"form_json": json.dumps(form), "company": "A", "role": "B", "ats": "greenhouse",
+         "extra_answers": json.dumps({"candidate-location": "Portland, Oregon, United States", "pronouns": "They/them"})}
+    )  # fmt: skip
+    assert "browser_click to tick: They/them" in out
+    assert "Type, pick or tick NOTHING" in out

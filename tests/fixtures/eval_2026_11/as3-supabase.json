@@ -1,0 +1,118 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://jobs.ashbyhq.com/supabase/3b5d54ca-741b-45ac-bd3f-31605a0d3541/application",
+ "fields": [
+  {
+   "label": "",
+   "kind": "file",
+   "name": "",
+   "id": "",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Name",
+   "kind": "text",
+   "name": "_systemfield_name",
+   "id": "_systemfield_name",
+   "required": true,
+   "value": "Testy McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "email",
+   "name": "_systemfield_email",
+   "id": "_systemfield_email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Resume",
+   "kind": "file",
+   "name": "",
+   "id": "_systemfield_resume",
+   "required": true,
+   "value": "resume-supabase.pdf"
+  },
+  {
+   "label": "Passport Country",
+   "kind": "text",
+   "name": "5c60106e-bfac-4204-8e04-f490aceae780",
+   "id": "5c60106e-bfac-4204-8e04-f490aceae780",
+   "required": true,
+   "value": "United States"
+  },
+  {
+   "label": "Country of Residence",
+   "kind": "text",
+   "name": "15c66e51-3f59-4684-997e-86fd80103c7a",
+   "id": "15c66e51-3f59-4684-997e-86fd80103c7a",
+   "required": true,
+   "value": "United States"
+  },
+  {
+   "label": "27cb2e41-18c5-45f9-a60e-bfe732273692",
+   "kind": "checkbox",
+   "name": "27cb2e41-18c5-45f9-a60e-bfe732273692",
+   "id": "",
+   "required": false,
+   "value": true
+  },
+  {
+   "label": "Twitter / X profile",
+   "kind": "text",
+   "name": "238da55a-7c7e-4f7a-9cae-53fb3ac9badb",
+   "id": "238da55a-7c7e-4f7a-9cae-53fb3ac9badb",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Github Profile",
+   "kind": "text",
+   "name": "f4337c35-1043-450b-b4f0-1eb10defc88f",
+   "id": "f4337c35-1043-450b-b4f0-1eb10defc88f",
+   "required": true,
+   "value": "https://github.com/testy-mctestface-example"
+  },
+  {
+   "label": "Linkedin",
+   "kind": "text",
+   "name": "d9415c3c-22be-43c9-9616-c64bd942004f",
+   "id": "d9415c3c-22be-43c9-9616-c64bd942004f",
+   "required": true,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "Tell us about your experience working in an async and/or remote environment. What practices or approaches have worked well for you? What challenges have you faced?",
+   "kind": "textarea",
+   "name": "33653c13-8823-4187-a806-079124784eeb",
+   "id": "33653c13-8823-4187-a806-079124784eeb",
+   "required": true,
+   "value": "My résumé doesn't list a dedicated remote role, so I'll point to the work itself. At Example Widgets Inc. I built a React and FastAPI internal tooling platform used by 40 teams. I also cut CI time from 30 to 12 minutes by parallelising the test suite."
+  },
+  {
+   "label": "Have you made any open source contributions in the past that you'd like to share with us?",
+   "kind": "textarea",
+   "name": "c3c51ba4-c1aa-4708-9755-053793af43ed",
+   "id": "c3c51ba4-c1aa-4708-9755-053793af43ed",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Where did you hear about this vacancy?",
+   "kind": "text",
+   "name": "a6c582e1-3e7c-4bfb-b9f7-f070c7ba1479",
+   "id": "a6c582e1-3e7c-4bfb-b9f7-f070c7ba1479",
+   "required": false,
+   "value": "The company's careers page"
+  },
+  {
+   "label": "g-recaptcha-response",
+   "kind": "textarea",
+   "name": "g-recaptcha-response",
+   "id": "g-recaptcha-response-100000",
+   "required": false,
+   "value": ""
+  }
+ ]
+}

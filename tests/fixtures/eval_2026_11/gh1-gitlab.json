@@ -1,0 +1,174 @@
+{
+ "source": "careercoach live eval 2026-11-08, browser_form_read after the agent's fill (no submit)",
+ "url": "https://job-boards.greenhouse.io/gitlab/jobs/8771512002",
+ "fields": [
+  {
+   "label": "First Name",
+   "kind": "text",
+   "name": "",
+   "id": "first_name",
+   "required": true,
+   "value": "Testy"
+  },
+  {
+   "label": "Last Name",
+   "kind": "text",
+   "name": "",
+   "id": "last_name",
+   "required": true,
+   "value": "McTestface"
+  },
+  {
+   "label": "Email",
+   "kind": "text",
+   "name": "",
+   "id": "email",
+   "required": true,
+   "value": "testy.mctestface@example.com"
+  },
+  {
+   "label": "Country",
+   "kind": "combobox",
+   "name": "",
+   "id": "country",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Search",
+   "kind": "combobox",
+   "name": "",
+   "id": "iti-0__search-input",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Phone",
+   "kind": "tel",
+   "name": "",
+   "id": "phone",
+   "required": false,
+   "value": "(555) 010-0199"
+  },
+  {
+   "label": "Attach",
+   "kind": "file",
+   "name": "",
+   "id": "cover_letter",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "What is your current country of residence?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_38115715002",
+   "required": true,
+   "value": "United States of America"
+  },
+  {
+   "label": "LinkedIn Profile",
+   "kind": "text",
+   "name": "",
+   "id": "question_38115708002",
+   "required": false,
+   "value": "https://www.linkedin.com/in/testy-mctestface-example"
+  },
+  {
+   "label": "What's the name you'd prefer us to use throughout the interview process?",
+   "kind": "text",
+   "name": "",
+   "id": "question_38115709002",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Are you subject to any employment agreements and/or post-employment restrictions with your current employer or a past employer?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_38115710002",
+   "required": true,
+   "value": "No"
+  },
+  {
+   "label": "It is important to us to create an accessible and inclusive interview experience. Please let us know if there are any adjustments we can make to assist you during the hiring and interview process.",
+   "kind": "text",
+   "name": "",
+   "id": "question_38115711002",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "What is your GitLab username?",
+   "kind": "text",
+   "name": "",
+   "id": "question_38115712002",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Will you now or in the future require sponsorship for a visa to remain in your current location?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_38115713002",
+   "required": true,
+   "value": "No"
+  },
+  {
+   "label": "Have you previously worked at or consulted for GitLab?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_38115714002",
+   "required": true,
+   "value": "No"
+  },
+  {
+   "label": "Do you reside in the United States or Canada?",
+   "kind": "combobox",
+   "name": "",
+   "id": "question_38960386002",
+   "required": true,
+   "value": "Yes"
+  },
+  {
+   "label": "Gender",
+   "kind": "combobox",
+   "name": "",
+   "id": "gender",
+   "required": false,
+   "value": "Decline To Self Identify"
+  },
+  {
+   "label": "Are you Hispanic/Latino?",
+   "kind": "combobox",
+   "name": "",
+   "id": "hispanic_ethnicity",
+   "required": false,
+   "value": "Decline To Self Identify"
+  },
+  {
+   "label": "Veteran Status",
+   "kind": "combobox",
+   "name": "",
+   "id": "veteran_status",
+   "required": false,
+   "value": "I don't wish to answer"
+  },
+  {
+   "label": "g-recaptcha-response",
+   "kind": "textarea",
+   "name": "g-recaptcha-response",
+   "id": "g-recaptcha-response-100000",
+   "required": false,
+   "value": ""
+  },
+  {
+   "label": "Resume/CV",
+   "kind": "file",
+   "name": "resume",
+   "id": "resume",
+   "required": true,
+   "value": "resume-gitlab.pdf"
+  }
+ ]
+}

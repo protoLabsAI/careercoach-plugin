@@ -154,11 +154,16 @@ def test_prepare_on_a_non_greenhouse_url_points_to_the_live_path(tools):
     assert not out.startswith("Could not prepare")  # a readable message, not a caught exception
 
 
-def test_prepare_on_a_gh_jid_careers_page_cannot_fetch_and_says_so(tools):
+def test_prepare_on_a_gh_jid_careers_page_without_a_known_board_says_how_to_find_it(tools, ats, monkeypatch):
+    async def not_found(board, job_id):
+        return None, "HTTP 404"
+
+    monkeypatch.setattr(ats, "fetch_schema", not_found)  # no candidate board knows the job
     out = _invoke(
         tools["careercoach_prepare_application"], url="https://about.gitlab.com/jobs/apply/?gh_jid=8698330002"
     )
-    assert "not the board token" in out and "8698330002" in out
+    assert "not its board token" in out and "8698330002" in out
+    assert "embed/job_app?for=<board>&token=8698330002" in out  # how to open the iframe's form directly
     assert "careercoach_plan_fill" in out  # fall back to the live-form path
 
 
