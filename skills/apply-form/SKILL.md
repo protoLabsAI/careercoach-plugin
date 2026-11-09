@@ -232,7 +232,10 @@ agree to, call `careercoach_handoff(session_id, reason)` with `reason` one of
 in the visible browser (the Browser panel, or the real window if the browser's `headed` setting is
 on) and the coach touches none of it. A captcha or login can re-render the form and clear filled
 fields, so when the operator reports Done, go back to step 7: `browser_form_read` and
-`careercoach_verify_fill` again before anything else. If the turn is headless, the handoff refuses
+`careercoach_verify_fill` again before anything else. Whatever the operator set during the step (the
+attestation box they ticked, the answer they chose) reads as "not in the plan" there, because no plan
+put it there: ask them to confirm exactly what they set, re-plan with those values in `extra_answers`
+(keyed by each field's id or name), and verify again. Never clear what the operator set. If the turn is headless, the handoff refuses
 without pausing — stop and report that a human has to finish the step interactively.
 
 #### 9. Request submit, then click exactly once

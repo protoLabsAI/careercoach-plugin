@@ -128,7 +128,7 @@ def test_a_replan_after_filling_does_not_launder_an_improvised_value(formfill):
     assert "Passport Country" in unplanned
 
 
-def test_a_replan_under_a_respelled_role_still_finds_the_first_baseline(formfill):
+def test_a_replan_under_a_respelled_role_gets_no_baseline_at_all(formfill):
     filled = after("as3-supabase")
     formfill.build_plan(blank(filled), SUPABASE_CONFIRMED, ats="ashby", company="Supabase", role="AI")
     plan2 = formfill.build_plan(filled, SUPABASE_CONFIRMED, ats="ashby", company="Supabase Inc", role="AI eng")
@@ -225,23 +225,40 @@ def test_verify_records_the_readback_for_the_card(formfill):
 
 
 # ── B1: the option browser_select committed ─────────────────────────────────────────────────
+AUTH_YES = "Yes, I am currently legally authorized to work in the country where the job is located."
+AUTH_NO = "No, I am not currently legally authorized to work in the country where the job is located."
+SPONSOR_NO = "No, I do not and will not require sponsorship"
+
+
 @pytest.mark.parametrize(
     "expected,actual,ok",
     [
+        # with no options seen, only known spellings of one choice pass
         ("they/them", "they/them/theirs", True),
         ("United States", "United States of America", True),
-        ("Yes", "Yes, I am currently legally authorized to work in the country where the job is located.", True),
-        ("No", "No, I do not and will not require sponsorship", True),
-        ("No", "No, but I will in the future", False),
-        ("Yes", "Yes, but I will require sponsorship", False),
-        ("United", "United States", True),
+        ("Yes", AUTH_YES, False),  # a bare prefix proves nothing about WHICH option was picked
+        ("United", "United States", False),
         ("they/them", "they", False),
         ("Man", "Mango", False),
     ],
 )
-def test_a_unique_prefix_commit_is_accepted_where_options_were_unknown(formfill, expected, actual, ok):
+def test_without_options_only_known_spellings_of_one_choice_pass(formfill, expected, actual, ok):
     row = {"action": "select", "options_unknown": True, "value": expected}
     assert formfill._values_equal(expected, actual, row) is ok
+
+
+@pytest.mark.parametrize(
+    "expected,actual,options,ok",
+    [
+        ("Yes", AUTH_YES, [AUTH_YES, AUTH_NO], True),
+        ("No", SPONSOR_NO, ["Yes, I will require sponsorship", SPONSOR_NO], True),
+        ("No", "No, but I will in the future", ["Yes", "No, but I will in the future"], False),
+        ("Yes", "Yes, but I will require sponsorship", ["Yes, but I will require sponsorship", "No"], False),
+    ],
+)
+def test_with_the_readback_options_a_unique_prefix_passes(formfill, expected, actual, options, ok):
+    row = {"action": "select", "options_unknown": True, "value": expected}
+    assert formfill._values_equal(expected, actual, row, options) is ok
 
 
 def test_a_prefix_commit_is_not_accepted_where_the_plan_matched_a_known_option(formfill):
@@ -355,8 +372,9 @@ def test_blueground_city_is_satisfied_by_the_visible_address(formfill):
 
 def test_address_parts_filled_by_the_picker_are_derived(formfill):
     form = [field("Location", "text", id="loc", required=True), field("postcode", "text", id="postcode")]
-    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"})
-    filled = set_value(copy.deepcopy(form), "Location", "Portland, Oregon, United States")
+    # a postcode counts as derived only when the planned location itself names it (QA, PR #121)
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon 97201, United States"})
+    filled = set_value(copy.deepcopy(form), "Location", "Portland, Oregon 97201, United States")
     set_value(filled, "postcode", "97201")
     mismatches, readback = formfill.review(plan, filled)
     assert mismatches == [] and {r["label"]: r["from"] for r in readback}["postcode"] == "derived"
@@ -480,3 +498,133 @@ def test_the_plan_render_names_the_autocomplete_and_check_steps(tools):
     )  # fmt: skip
     assert "browser_click to tick: They/them" in out
     assert "Type, pick or tick NOTHING" in out
+
+
+# ── QA panel, PR #121: one regression per finding (each fails on 5e98902) ─────────────────────
+def _press_action(target, categories=()):
+    return {
+        "tool": "browser_press",
+        "verb": "press",
+        "selector": "",
+        "key": "Enter",
+        "page_url": "https://boards.greenhouse.io/acme/jobs/1",
+        "target": target,
+        "verdict": {"categories": sorted(categories), "reason": "", "description": ""},
+        "gated": [],
+    }
+
+
+def _never_verified(_sid):
+    return ""
+
+
+@pytest.mark.parametrize(
+    "target",
+    [None, {"found": False}, {"found": True, "tag": "", "note": "frame"}, {"found": True}],
+)
+def test_qa1_a_bare_enter_the_core_could_not_resolve_still_needs_the_grant(submitgate, target):
+    submitgate.clear()
+    decision = submitgate.core_policy_decision(_press_action(target), _never_verified, None, enter_floor=True)
+    assert decision == {"decision": "deny", "reason": submitgate.BLOCKED}
+
+
+def test_qa1_a_bare_enter_on_a_resolved_non_submit_target_defers_to_the_core(submitgate):
+    target = {"found": True, "tag": "input", "role": "combobox", "name": "Location (City)"}
+    decision = submitgate.core_policy_decision(_press_action(target), _never_verified, None, enter_floor=True)
+    assert decision is None
+
+
+def test_qa1_an_unresolved_bare_enter_spends_a_live_grant_once(submitgate):
+    submitgate.clear()
+    submitgate.grant("sid", "vid")
+    current = {"sid": "vid"}.get
+    first = submitgate.core_policy_decision(_press_action(None), current, None, enter_floor=True)
+    second = submitgate.core_policy_decision(_press_action(None), current, None, enter_floor=True)
+    assert first["decision"] == "allow" and second["decision"] == "deny"
+    submitgate.clear()
+
+
+def test_qa2_a_city_only_plan_never_verifies_another_state(formfill):
+    row = {"key": "current_location", "action": "fill", "value": "Portland"}
+    assert not formfill._values_equal("Portland", "Portland, Maine, United States", row)
+    assert formfill._values_equal("Portland", "Portland", row)
+
+
+def test_qa3_a_prefix_option_is_not_another_country(formfill):
+    row = {"action": "select", "options_unknown": True, "value": "United States"}
+    assert not formfill._values_equal("United States", "United States Minor Outlying Islands", row)
+    assert not formfill._values_equal("Congo", "Congo, the Democratic Republic of the", row)
+    both = ["United States", "United States Minor Outlying Islands"]
+    assert not formfill._values_equal("United", "United States Minor Outlying Islands", row, both)
+
+
+def test_qa4_an_address_part_is_derived_only_when_it_matches_the_location(formfill):
+    form = [field("Location", "text", id="loc", required=True), field("country", "text", id="country"),
+            field("postcode", "text", id="postcode")]  # fmt: skip
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"}, company="A", role="B")
+    filled = set_value(copy.deepcopy(form), "Location", "Portland, Oregon, United States")
+    set_value(filled, "country", "Canada")
+    set_value(filled, "postcode", "97201")
+    unplanned = {m["label"] for m in formfill.diff(plan, filled) if m.get("unplanned")}
+    assert unplanned == {"country", "postcode"}  # neither is named by the planned location
+    set_value(filled, "country", "USA")
+    set_value(filled, "postcode", "")
+    mismatches, readback = formfill.review(plan, filled)
+    assert mismatches == [] and {r["label"]: r["from"] for r in readback}["country"] == "derived"
+
+
+def test_qa4_the_hidden_city_companion_must_name_the_same_city(formfill):
+    form = [field("Address", "text", id="address"), field("city", "text", id="city")]
+    plan = formfill.build_plan(form, {"current_location": "Portland, Oregon, United States"}, company="A", role="B")
+    filled = set_value(copy.deepcopy(form), "Address", "South Portland, Maine, United States")
+    assert any(m["label"] == "city" for m in formfill.diff(plan, filled))
+
+
+def test_qa5_another_application_never_inherits_a_baseline(formfill):
+    form = [field("Email", "email", id="email"), field("Country", "text", id="country"),
+            field("Phone", "tel", id="phone"), field("City", "text", id="cityq")]  # fmt: skip
+    prefilled_a = set_value(copy.deepcopy(form), "Country", "Greece")
+    formfill.build_plan(prefilled_a, {}, company="Acme", role="Eng")
+    # Beta's own page pre-fills "Canada"; Acme's "Greece" must not pass as Beta's page value
+    plan_b = formfill.build_plan(form, {}, company="Beta", role="Data")
+    assert plan_b["baseline"] == {}
+    filled = set_value(copy.deepcopy(form), "Country", "Greece")
+    assert [m["label"] for m in formfill.diff(plan_b, filled)] == ["Country"]
+
+
+def test_qa5_a_plan_with_no_identity_gets_no_baseline(formfill):
+    form = [field("Country", "text", id="country", value="United States")]
+    plan = formfill.build_plan(form, {})
+    assert plan["baseline"] == {}
+    assert [m["label"] for m in formfill.diff(plan, form)] == ["Country"]
+
+
+def test_qa6_the_handoff_done_message_says_to_replan_with_what_the_operator_set(plugin):
+    import inspect
+
+    src = inspect.getsource(plugin._register_handoff)
+    assert "re-plan with those values in" in src and "Never clear what they set" in src
+    skill = (Path(__file__).resolve().parent.parent / "skills/apply-form/SKILL.md").read_text(encoding="utf-8")
+    assert "Never clear what the operator set" in skill
+
+
+def test_qa6_an_attestation_the_operator_ticked_verifies_once_replanned(formfill):
+    form = [field("Email", "email", id="email", required=True),
+            field("I certify that the information above is true", "checkbox", id="attest", required=True, value=False)]  # fmt: skip
+    formfill.build_plan(form, {"email": "a@b.co"}, company="A", role="B")
+    filled = set_value(copy.deepcopy(form), "Email", "a@b.co")
+    filled[1]["value"] = True  # the operator ticked it in the visible browser during the handoff
+    replan = formfill.build_plan(filled, {"email": "a@b.co"}, {"attest": "yes"}, company="A", role="B")
+    mismatches, readback = formfill.review(replan, filled)
+    assert mismatches == []
+    assert next(r for r in readback if r["target"] == "#attest")["sensitive"] is True
+
+
+def test_qa7_pyproject_documents_why_host_packages_are_undeclared():
+    text = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert "No [project.dependencies] on purpose" in text and "langchain" in text
+
+
+def test_qa8_board_candidates_docstring_reads_as_one_order(ats):
+    doc = " ".join(ats.board_candidates.__doc__.split())
+    assert "first the site's own name from its host" in doc and "company name the site's" not in doc

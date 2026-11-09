@@ -2276,8 +2276,10 @@ def _register_submit_middleware(registry) -> None:
             so the call spends it even when the core's policy never ran."""
             call = getattr(request, "tool_call", None) or {}
             name = call.get("name", "")
-            # A bare Enter names no target, so on this path the core's resolved verdict decides it;
-            # the floor applies to an Enter only when its own arguments point at a submit control.
+            # A BARE Enter names no target the arguments can judge, so its floor moves into the policy,
+            # which sees the core's resolution of the focused element before the key is pressed: it
+            # defers only to a positively resolved non-submit target and otherwise still needs the
+            # grant (see ``_bare_enter``). Every other submit-like call meets the floor here, as before.
             if not submitgate.is_floor_submit(name, call.get("args", {})):
                 return None, None
             held = submitgate.live_grant_for_current_verification(formfill.current_verification)
@@ -2285,17 +2287,33 @@ def _register_submit_middleware(registry) -> None:
                 return ToolMessage(content=BLOCKED, tool_call_id=call.get("id", ""), name=name), None
             return None, held
 
+        def _bare_enter(self, request) -> bool:
+            call = getattr(request, "tool_call", None) or {}
+            return submitgate.is_bare_enter(call.get("name", ""), call.get("args", {}))
+
+        def _after_bare_enter(self, live) -> None:
+            # The core runs the policy for every press it resolves. If it never did for this Enter,
+            # the floor couldn't be applied: spend any live grant (fail closed) and say so.
+            if not live.seen:
+                log.warning("[careercoach] core gate never ran the submit policy for a bare Enter")
+                held = submitgate.active_grant()
+                if held is not None:
+                    submitgate.consume(*held)
+
         def wrap_tool_call(self, request, handler):
             if self._core_gate():
                 blocked, held = self._floor(request)
                 if blocked is not None:
                     return blocked
-                with submitgate.core_gate_call() as live:  # the policy is live for the tool this call runs
+                bare = self._bare_enter(request)
+                with submitgate.core_gate_call(enter_floor=bare) as live:  # the policy is live for this call
                     try:
                         return handler(request)
                     finally:
                         if held is not None and not live.allowed:
                             submitgate.consume(*held)  # one grant, one submit-like call, either way
+                        if bare:
+                            self._after_bare_enter(live)
             blocked = self._blocked(request)
             return blocked if blocked is not None else handler(request)
 
@@ -2304,12 +2322,15 @@ def _register_submit_middleware(registry) -> None:
                 blocked, held = self._floor(request)
                 if blocked is not None:
                     return blocked
-                with submitgate.core_gate_call() as live:
+                bare = self._bare_enter(request)
+                with submitgate.core_gate_call(enter_floor=bare) as live:
                     try:
                         return await handler(request)
                     finally:
                         if held is not None and not live.allowed:
                             submitgate.consume(*held)
+                        if bare:
+                            self._after_bare_enter(live)
             blocked = self._blocked(request)
             if blocked is not None:
                 return blocked
@@ -2438,7 +2459,10 @@ def _register_handoff(registry) -> None:
                     f"Operator completed the {key} step. Before any submit, re-read the form with "
                     f"browser_form_read and run {verify} — a {key} can re-render the form and clear filled "
                     "fields, so this read-back is mandatory and must report VERIFIED before "
-                    "careercoach_request_submit. Never request submit on a form you haven't re-read since the handoff."
+                    "careercoach_request_submit. Never request submit on a form you haven't re-read since the handoff. "
+                    "Anything the operator set during the step (a box they ticked, an answer they chose) reads as "
+                    "'not in the plan': ask them to confirm exactly what they set, re-plan with those values in "
+                    "extra_answers keyed by each field's id or name, and verify again. Never clear what they set."
                 )
             return "Operator cancelled the handoff; stop."
         except Exception as e:  # noqa: BLE001 — a tool returns a readable string, never raises…

@@ -1231,7 +1231,7 @@ def _basename(text: object) -> str:
     return name or PurePath(s).name
 
 
-def _values_equal(expected: str, actual: str, row: dict) -> bool:
+def _values_equal(expected: str, actual: str, row: dict, options: list[str] | None = None) -> bool:
     """Whether a read-back value matches what was planned, tolerant of presentation only. Phone
     compares digits (a country code prefix on one side is allowed); a file compares basenames;
     everything else compares whitespace/case-normalized text."""
@@ -1266,11 +1266,14 @@ def _values_equal(expected: str, actual: str, row: dict) -> bool:
     if row.get("action") == SELECT:
         if _norm_option(expected) == _norm_option(actual):
             return True
-        # browser_select commits a UNIQUE-PREFIX match when no option equals the answer: "they/them"
-        # → "they/them/theirs", "United States" → "United States of America". Where the plan couldn't
-        # see the options (a combobox, an autocomplete), the committed option is accepted when the
-        # answer is its prefix — never on a select whose options the plan matched exactly.
-        if (row.get("options_unknown") or row.get("autocomplete")) and _committed_prefix(expected, actual):
+        # browser_select commits a UNIQUE-PREFIX match when no option equals the answer. Where the plan
+        # couldn't see the options (a combobox, an autocomplete) the committed option is accepted only
+        # when that's provably the one the answer names: the read-back lists the options and exactly
+        # one starts with the answer, or the two are known spellings of one choice ("United States" /
+        # "United States of America", "they/them" / "they/them/theirs"). A bare prefix is not enough:
+        # "United States" must never pass for "United States Minor Outlying Islands" (QA, PR #121).
+        # A select whose options the plan matched exactly keeps exact matching.
+        if (row.get("options_unknown") or row.get("autocomplete")) and _committed_option(expected, actual, options):
             return True
     if _is_location_row(row) and _location_equivalent(expected, actual):
         return True
@@ -1287,8 +1290,9 @@ _NO_QUALIFIER = re.compile(r"\b(?:but|however|unless|except|only|future|later|ye
 
 
 def _committed_prefix(expected: str, actual: str) -> bool:
-    """Whether ``actual`` is the option a unique-prefix pick of ``expected`` commits: it starts with
-    the answer at a word boundary ("they/them" → "they/them/theirs")."""
+    """Whether ``actual`` starts with the answer ``expected`` at a word boundary and the rest doesn't
+    qualify a Yes/No ("they/them" → "they/them/theirs"). On its own this proves nothing about WHICH
+    option was picked — ``_committed_option`` adds that."""
     e, a = _norm_option(expected), _norm_option(actual)
     if not e or not a.startswith(e) or len(a) == len(e) or a[len(e)].isalnum():
         return False
@@ -1298,6 +1302,29 @@ def _committed_prefix(expected: str, actual: str) -> bool:
     if e in {"no", "n"}:
         return _NO_QUALIFIER.search(rest) is None
     return True
+
+
+# Spellings of ONE choice that forms list under different wordings. Exact members only, never a
+# prefix family: "United States" is "United States of America", not "United States Minor Outlying
+# Islands".
+_SAME_CHOICE = (
+    {"united states", "united states of america", "usa", "us", "u s", "u s a"},
+    {"united kingdom", "united kingdom of great britain and northern ireland", "uk", "u k", "great britain"},
+    {"they/them", "they/them/theirs"},
+    {"he/him", "he/him/his"},
+    {"she/her", "she/her/hers"},
+)
+
+
+def _committed_option(expected: str, actual: str, options: list[str] | None) -> bool:
+    """Whether ``actual`` is the option a pick of ``expected`` provably committed, on a select whose
+    options the plan never saw. With the read-back's options: exactly one option starts with the
+    answer, and it's ``actual``. Without them: the two are spellings of one choice (``_SAME_CHOICE``)."""
+    e, a = _norm_option(expected), _norm_option(actual)
+    if options:
+        hits = [o for o in options if _committed_prefix(expected, o)]
+        return len(hits) == 1 and _norm_option(hits[0]) == a and _committed_prefix(expected, actual)
+    return any(e in group and a in group for group in _SAME_CHOICE)
 
 
 # ── location equivalence: "Portland, OR, USA" is "Portland, Oregon, United States" ──────────
@@ -1344,14 +1371,14 @@ def _same_place_part(a: str, b: str) -> bool:
 
 
 def _location_equivalent(expected: str, actual: str) -> bool:
-    """Whether a location widget's rewrite names the same place: the read-back contains or extends
-    the answer, or it has the same city and every other part it shows is one of the answer's parts
-    (a state code for the state, "USA" for "United States"). A bare city, or a different state, is not."""
+    """Whether a location widget's rewrite names the same place: the same city, plus at least one
+    more part, every one of which is one of the answer's own parts (a state code for the state, "USA"
+    for "United States"; a ZIP is dropped). So the planned city alone never verifies a read-back that
+    adds a region the answer doesn't name: "Portland" is not "Portland, Maine, United States" (QA,
+    PR #121), and neither a bare city nor a different state is the answer."""
     e, a = _norm_option(expected), _norm_option(actual)
     if not e or not a:
         return False
-    if a.startswith(e) and (len(a) == len(e) or not a[len(e)].isalnum()):
-        return True  # the widget kept the answer and appended to it ("…, United States, 97201")
     ep, ap = _loc_parts(expected), _loc_parts(actual)
     if len(ap) < 2 or not ep or ep[0] != ap[0]:
         return False
@@ -1401,14 +1428,28 @@ UNPLANNED_REASON = (
 )
 # Address parts a location picker fills from the location you typed (Workable's Address → city,
 # postcode, country): derived from a planned answer, not typed by anyone.
-_ADDRESS_PART = re.compile(
-    r"^(?:city|town|locality|state|region|province|country|post\s?code|zip(?:\s?code)?|lat|lng|lon)$"
-)
+_ADDRESS_PART = re.compile(r"^(?:city|town|locality|state|region|province|country|post\s?code|zip(?:\s?code)?)$")
 
 
 def _is_address_part(field: dict) -> bool:
     texts = [_clean_label(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
     return any(t and _ADDRESS_PART.match(t) for t in texts)
+
+
+_POSTCODE = re.compile(r"^(?:post\s?code|zip(?:\s?code)?)$")
+
+
+def _consistent_with_location(value: str, field: dict, locations: list[str]) -> bool:
+    """Whether an address part's value is one the planned location itself names: the city, the
+    region (or its code), the country (or an alias) — or, for a postcode, digits the planned location
+    contains. Anything else ("Canada" in the country box of a Portland, Oregon answer) is not derived
+    from the answer, however the field is labelled (QA, PR #121)."""
+    texts = [_clean_label(field.get("label"))] + [_split_ident(field.get(k)) for k in ("name", "id")]
+    if any(t and _POSTCODE.match(t) for t in texts):
+        digits = re.sub(r"\D", "", value)
+        return bool(digits) and any(digits in re.sub(r"\D", " ", loc).split() for loc in locations)
+    v = " ".join(_norm_option(value.replace(".", " ")).split())
+    return bool(v) and any(_same_place_part(v, part) for loc in locations for part in _loc_parts(loc))
 
 
 def _member_field(member: dict, fields: list[dict]) -> dict | None:
@@ -1510,7 +1551,7 @@ def review(plan: dict, form_fields_after) -> tuple[list[dict], list[dict]]:
         if _norm(row.get("kind")) in {"radio", "radio-group"} and row.get("name"):
             planned_radio_names.add(str(row["name"]))
         actual = _readback_value(field, row.get("kind", "")) if field else ""
-        if _values_equal(expected, actual, row):
+        if _values_equal(expected, actual, row, _options(field) if field else None):
             if field is not None:
                 origin[id(field)] = {"from": src(row), "sensitive": bool(row.get("sensitive")), "label": label}
             if _is_location_row(row):
@@ -1558,7 +1599,7 @@ def review(plan: dict, form_fields_after) -> tuple[list[dict], list[dict]]:
         if key and key in baseline and baseline[key] and _norm(baseline[key]) == _norm(value):
             origin[id(field)] = {"from": "page", "sensitive": is_sensitive(field), "label": _field_label(field)}
             continue
-        if _is_address_part(field) and location_landed:
+        if _is_address_part(field) and location_landed and _consistent_with_location(value, field, location_landed):
             origin[id(field)] = {"from": "derived", "sensitive": False, "label": _field_label(field)}
             continue
         reason = UNPLANNED_REASON
@@ -1621,8 +1662,9 @@ def _companion_holds(expected: str, field: dict, visible: list[dict]) -> bool:
         value = _present_value(other)
         if not value:
             continue
-        if _norm_option(expected) in _norm_option(value) or _location_equivalent(expected, value):
-            return True
+        parts = _loc_parts(value)
+        if _location_equivalent(expected, value) or (parts and parts[0] == _norm_option(expected)):
+            return True  # the same place, or (a city-only row) the companion's own city
     return False
 
 
@@ -1742,25 +1784,43 @@ def _read_baselines() -> list[dict]:
 def _app_key(company: str, role: str, posting: str = "") -> str:
     if not (_norm(company) or _norm(role) or _norm(posting)):
         return ""
-    return "|".join((_norm(company), _norm(role)))
+    return "|".join((_norm(company), _norm(role), _norm(posting)))
 
 
-def _find_baseline(baselines: list[dict], app: str, keys: set[str]) -> dict | None:
+def _find_baseline(baselines: list[dict], app: str) -> dict | None:
+    """The stored baseline of exactly this application — never a look-alike (QA, PR #121)."""
     for b in reversed(baselines):
         if app and b.get("app") == app:
-            return b
-    for b in reversed(baselines):
-        known = set(b.get("values", {}))
-        common = known & keys
-        if len(common) >= 3 and len(common) / max(1, len(known | keys)) >= 0.6:
             return b
     return None
 
 
+def _looks_seen(baselines: list[dict], keys: set[str]) -> bool:
+    """Whether most of this form's fields already belong to some stored baseline — the same form
+    under another company/role spelling, most likely. Its values may be the agent's, so they never
+    seed a new baseline."""
+    for b in baselines:
+        known = set(b.get("values", {}))
+        common = known & keys
+        if len(common) >= 3 and len(common) / max(1, len(known | keys)) >= 0.6:
+            return True
+    return False
+
+
 def _merge_baseline(baselines: list[dict], snapshot: dict, app_parts) -> dict[str, str]:
-    """The baseline for this plan, updating ``baselines`` in place (caller holds the lock)."""
+    """The baseline for this plan, updating ``baselines`` in place (caller holds the lock).
+
+    Only the SAME application (company, role and posting, normalized) reuses a stored baseline. A
+    plan with no identity gets none: nothing on its form counts as the page's. A new identity whose
+    form mostly matches a stored one gets none either, and records none — that is how a re-spelled
+    company or role would otherwise pass values the agent already typed off as pre-filled. Only a
+    genuinely new form starts a baseline from what it reads now."""
     app = _app_key(*app_parts)
-    found = _find_baseline(baselines, app, set(snapshot))
+    if not app:
+        return {}
+    found = _find_baseline(baselines, app)
+    if found is None and _looks_seen(baselines, set(snapshot)):
+        return {}
     if found is None:
         found = {"app": app, "values": dict(snapshot), "created": _now_ts()}
         baselines.append(found)

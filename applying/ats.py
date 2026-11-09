@@ -177,9 +177,9 @@ def embed_url(board: str, job_id: str) -> str:
 
 
 def board_candidates(url: str, company: str = "") -> list[str]:
-    """Likely Greenhouse board tokens for a careers page that embeds a ``gh_jid`` job: slugs of the
-    company name the site's own name from its host (``careers.airbnb.com`` → ``airbnb``), then slugs of the company
-    name (``search.boards.slug_candidates``). Deduplicated, at most six — each one is a probe."""
+    """Likely Greenhouse board tokens for a careers page that embeds a ``gh_jid`` job, in probe order:
+    first the site's own name from its host (``careers.airbnb.com`` → ``airbnb``), then slugs of the
+    company name (``search.boards.slug_candidates``). Deduplicated, at most six — each one is a probe."""
     from ..search.boards import slug_candidates
 
     out: list[str] = []

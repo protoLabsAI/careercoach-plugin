@@ -288,10 +288,12 @@ def test_the_argument_text_floor_still_blocks_a_worded_submit_without_a_grant(ga
     assert len(gate.service.policies) == 1  # the core path was taken; the floor answered first
 
 
-def _enter_through_core(gate, categories):
+def _enter_through_core(gate, categories, target=...):
     """A bare browser_press("Enter") the middleware wraps; core resolves the focused element."""
     seen = {}
     act = action(selector="", categories=categories, verb="press")
+    if target is not ...:
+        act["target"] = target
 
     def handler(req):
         seen["votes"] = gate.service.run(act)
@@ -306,6 +308,25 @@ def test_a_bare_enter_in_a_dropdown_defers_to_the_core_verdict(gate):
     # the core could see it targeted a dropdown, not a submit. With the core gate on, it now runs.
     out, votes = _enter_through_core(gate, ())
     assert out == "RAN" and votes == [None]
+
+
+@pytest.mark.parametrize("target", [None, {"found": False}, {"found": True, "tag": "", "note": "frame"}])
+def test_a_bare_enter_the_core_could_not_resolve_keeps_the_floor(gate, target):
+    # QA, PR #121: when the core's probe can't read the page it reports no submit at all. A bare Enter
+    # there must still need the grant: the floor holds unless the core POSITIVELY resolved a non-submit.
+    _out, votes = _enter_through_core(gate, (), target)
+    assert votes == [{"decision": "deny", "reason": gate.submitgate.BLOCKED}]
+    sid = _verified(gate.formfill)
+    _grant(gate, sid)
+    _out, votes = _enter_through_core(gate, (), target)
+    assert votes[0]["decision"] == "allow" and gate.submitgate.active_grant() is None
+
+
+def test_a_bare_enter_the_policy_never_saw_spends_any_grant(gate):
+    sid = _verified(gate.formfill)
+    _grant(gate, sid)
+    out = gate.middleware.wrap_tool_call(FakeReq("browser_press", {"key": "Enter"}), lambda req: "RAN")
+    assert out == "RAN" and gate.submitgate.active_grant() is None  # fail closed on the grant
 
 
 def test_a_bare_enter_the_core_reads_as_a_submit_still_needs_the_grant(gate):
