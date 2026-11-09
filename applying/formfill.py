@@ -884,15 +884,22 @@ def build_plan(
     seen_unconfirmed: set[str] = set()
     phone_country_at = _phone_country_positions(fields)
     groups = _checkbox_groups(fields)
+    companions = _group_companions(fields, groups)
+    forced: dict[int, dict] = {}  # index → the row a checkbox group decided for its companion field
 
     for idx, field in enumerate(fields):
         if not isinstance(field, dict):
+            continue
+        if idx in forced:
+            rows.append(forced.pop(idx))
             continue
         if _is_checkbox(field):
             out = _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts)
             if out is None:
                 continue  # a non-first member of a group already planned
             kind_out, item = out
+            if idx in companions:
+                kind_out, item = _settle_companions(kind_out, item, fields, companions[idx], forced)
             if kind_out == "row":
                 rows.append(item)
             elif kind_out == "unconfirmed":
@@ -1129,6 +1136,73 @@ def build_plan(
     return plan
 
 
+# A checkbox group's free-text companion: the "Custom" / "Other" box and its "Write here…" input that
+# sit just after the group (Lever's pronouns), or an "Other" member of the group itself. The group
+# and its companion answer ONE question, so exactly one of them takes the answer (QA, PR #121).
+_CUSTOM_LABEL = re.compile(r"^(?:custom|other|something else|self[\s-]?describe|prefer to self[\s-]?describe)\b")
+_CUSTOM_HINT = re.compile(r"custom|\bother\b|write here|type your response|please specify|specify|self[\s-]?describe")
+
+
+def _group_companions(fields: list[dict], groups: dict) -> dict[int, dict]:
+    """``{first member index: {"text": idx|None, "box": idx|None, "member": member index|None}}`` for
+    each checkbox group with a free-text companion: a non-checkbox input within three fields after
+    the group's last member that shares the group's name or reads as a custom/other answer box, plus
+    the single Custom/Other checkbox that toggles it (or the group's own Other member)."""
+    out: dict[int, dict] = {}
+    for first, (gkey, members) in groups.items():
+        if first != members[0]:
+            continue
+        last = members[-1]
+        text = box = None
+        for j in range(last + 1, min(len(fields), last + 4)):
+            f = fields[j]
+            hay = " ".join(_norm(f.get(k)) for k in ("label", "id", "name"))
+            if _is_checkbox(f):
+                if box is None and j not in groups and _CUSTOM_HINT.search(hay):
+                    box = j
+                continue
+            if text is None and (str(f.get("name") or "").strip() == gkey or _CUSTOM_HINT.search(hay)):
+                text = j
+            break
+        member = next((i for i in members if _CUSTOM_LABEL.match(_clean_label(fields[i].get("label")))), None)
+        if text is not None:
+            out[first] = {"text": text, "box": box, "member": member}
+    return out
+
+
+def _settle_companions(kind_out, item, fields, comp, forced):
+    """Decide a group's companion once the group is planned. A listed option matched → the companion
+    text box and its Custom/Other toggle are skipped, so the answer isn't given twice. No listed option
+    matched → the answer goes in the text box instead, ticking the Custom/Other toggle (or the group's
+    Other member) that opens it; the group itself ticks nothing else."""
+    text, box = comp["text"], comp["box"]
+
+    def skip(j):
+        return {**_member_ident(fields[j]), "kind": str(fields[j].get("kind") or ""), "key": None, "value": "",
+                "action": SKIP}  # fmt: skip
+
+    if kind_out == "row" and item.get("action") == CHECK and item.get("checks"):
+        forced[text] = skip(text)
+        if box is not None:
+            forced[box] = skip(box)
+        return kind_out, item
+    if kind_out == "unmapped" and item.get("reason") == "answer matches no option" and item.get("answer"):
+        answer, source = item["answer"], item.get("source")
+        forced[text] = {**_member_ident(fields[text]), "kind": str(fields[text].get("kind") or ""),
+                        "key": item.get("key"), "value": answer, "action": FILL, "source": source}  # fmt: skip
+        group_row = {k: v for k, v in item.items() if k not in {"reason", "answer", "options", "required"}}
+        group_row.update({"value": "", "action": CHECK, "checks": [], "source": source})
+        if box is not None:
+            forced[box] = {**_member_ident(fields[box]), "kind": "checkbox", "key": None, "value": "yes",
+                           "action": CHECK, "source": source, "members": [_member_ident(fields[box])],
+                           "checks": [_member_ident(fields[box])]}  # fmt: skip
+        elif comp["member"] is not None:
+            other = _member_ident(fields[comp["member"]])
+            group_row.update({"value": other["label"], "checks": [other]})
+        return "row", group_row
+    return kind_out, item
+
+
 def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirmed, drafts):
     """Plan one checkbox, or one whole checkbox group at its first member: ``("row", row)``,
     ``("unmapped", entry)``, ``("unconfirmed", entry)``, or ``None`` for a later group member.
@@ -1209,6 +1283,7 @@ def _plan_checkbox(field, idx, fields, groups, extra_norm, label_counts, confirm
             "reason": "answer matches no option" if group else "a checkbox takes yes or no",
             "answer": value,
             "options": labels,
+            "source": source,
         }
     row = {**ident, "key": key, "value": value, "action": CHECK, "source": source}
     row["checks"] = [ident["members"][i] for i in picked]

@@ -54,7 +54,7 @@ browser itself checks what a click will hit, so a submit can't slip past by its 
 
 ## Quick start
 
-**Fastest:** in the protoAgent desktop app (v0.221.0 or later), create a new agent and pick
+**Fastest:** in the protoAgent desktop app (v0.231.0 or later), create a new agent and pick
 **Career Coach**. It installs the plugin and the coach persona for you.
 
 **On an agent you already have:**

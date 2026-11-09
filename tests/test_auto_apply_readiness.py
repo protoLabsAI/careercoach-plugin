@@ -628,3 +628,52 @@ def test_qa7_pyproject_documents_why_host_packages_are_undeclared():
 def test_qa8_board_candidates_docstring_reads_as_one_order(ats):
     doc = " ".join(ats.board_candidates.__doc__.split())
     assert "first the site's own name from its host" in doc and "company name the site's" not in doc
+
+
+# ── QA re-review, PR #121 at 9e115ca: a checkbox group and its free-text companion ───────────────
+def _by_target(plan):
+    return {r.get("target"): r for r in plan["rows"]}
+
+
+def test_qa_rr1_a_matched_pronoun_box_is_not_also_typed_into_custom(formfill):
+    """Lever (Spotify eval): "they/them" ticks the They/them box ONCE. The Custom toggle and its
+    "Write here..." box (name ``pronouns`` too) are skipped, not given the same answer again."""
+    form = blank(after("lv2-spotify"))
+    plan = formfill.build_plan(form, {"pronouns": "they/them"}, ats="lever", company="Spotify", role="X")
+    rows = _by_target(plan)
+    assert rows["#customPronounsTextField"]["action"] == "skip"
+    assert rows["#customPronounsOption"]["action"] == "skip"
+    answered = [r for r in plan["rows"] if r.get("value") and r["action"] != "skip" and r.get("key") == "pronouns"]
+    assert [(r["action"], r.get("group")) for r in answered] == [("check", "pronouns")]
+
+
+def test_qa_rr1_an_unlisted_pronoun_goes_in_custom_and_ticks_its_toggle(formfill):
+    form = blank(after("lv2-spotify"))
+    plan = formfill.build_plan(form, {"pronouns": "ze/zir"}, ats="lever", company="Spotify", role="X")
+    rows = _by_target(plan)
+    assert (rows["#customPronounsTextField"]["action"], rows["#customPronounsTextField"]["value"]) == ("fill", "ze/zir")
+    assert [c["id"] for c in rows["#customPronounsOption"]["checks"]] == ["customPronounsOption"]
+    group = next(r for r in plan["rows"] if r.get("group") == "pronouns")
+    assert group["action"] == "check" and group["checks"] == []
+    assert not any(u.get("group") == "pronouns" for u in plan["unmapped"])
+    # filled that way, it verifies; also ticking They/them does not
+    filled = copy.deepcopy(form)
+    next(f for f in filled if f.get("id") == "customPronounsTextField")["value"] = "ze/zir"
+    next(f for f in filled if f.get("id") == "customPronounsOption")["value"] = True
+    assert not any(
+        "pronoun" in m["label"].lower() or "custom" in m["label"].lower() for m in formfill.diff(plan, filled)
+    )
+    next(f for f in filled if f.get("label") == "They/them")["value"] = True
+    assert "pronouns: They/them" in {m["label"] for m in formfill.diff(plan, filled)}
+
+
+def test_qa_rr1_an_unlisted_answer_ticks_the_groups_own_other_member(formfill):
+    form = [
+        field("LinkedIn", "checkbox", name="q[f3]", value=False),
+        field("Other", "checkbox", name="q[f3]", value=False),
+        field("Type your response", "text", name="q[f4]"),
+    ]
+    plan = formfill.build_plan(form, {}, extra={"q[f3]": "A podcast"})
+    group = next(r for r in plan["rows"] if r.get("group") == "q[f3]")
+    assert [c["label"] for c in group["checks"]] == ["Other"]
+    assert next(r for r in plan["rows"] if r.get("name") == "q[f4]")["value"] == "A podcast"
