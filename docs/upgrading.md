@@ -3,6 +3,23 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.15.0
+
+- **The browser checks submits.** On a core offering `agent_browser.add_gate_policy`, a submit is allowed
+  only by spending the one-shot grant from `careercoach_request_submit`, bound to the exact form read-back
+  you approved. This covers clicks by snapshot ref too. Older cores retain the argument-text submit guard;
+  the optional service does not raise the minimum protoAgent version. Form JSON works with or without
+  `AGENT_BROWSER_PAGE_CONTENT` boundary markers.
+- **The whole form must be ready.** Unplanned values block verification, and the approval card shows the
+  full read-back. Unchanged page defaults are recognized from the original plan, even across re-plans.
+  Answers you give mid-fill need a fresh plan, and legal or attestation questions require your own answer.
+  Dropdown and location checks also recognize supported equivalent values returned by the browser.
+- **Answers show where they came from.** Extra answers are checked against what you said in the
+  conversation; unsupported answers are labeled as the agent's, and cannot verify legal or attestation
+  fields. Verification reads the browser's form directly when supported, otherwise uses the latest
+  `browser_form_read` result from the conversation and rejects stale reads. If neither is available, the
+  supplied read-back must still include every field from the plan.
+
 ## 0.14.0
 
 - **Needs protoAgent 0.231.0 or newer.** 0.231.0 renamed the agent's memory tools (ADR 0125), and the skills

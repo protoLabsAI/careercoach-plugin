@@ -1,6 +1,6 @@
 [project]
 name = "careercoach"
-version = "0.14.0"            # keep in lockstep with protoagent.plugin.yaml
+version = "0.15.0"            # keep in lockstep with protoagent.plugin.yaml
 requires-python = ">=3.11"
 # No [project.dependencies] on purpose: this is a protoAgent plugin, loaded INTO the host, which
 # provides langchain / langchain-core / langgraph / fastapi / httpx at its own pinned versions.
