@@ -808,7 +808,9 @@
   // The matched target role, pulled from the server's reason. A quick-fit reason (0.16+) names it as
   // 'title ~ "X"' with '(NN%)' when only part of it matched; an older card says 'title matches "X"
   // (n/m words)' and its score IS the title-match percentage. Empty when nothing was quoted.
-  function fitReason(it) { return /title ~ "/.test(it.reason || ''); }
+  // Every quick-fit reason starts with its stack part ("stack 4/5 …", "stack unknown …").
+  function fitReason(it) { return /^stack /.test(it.reason || ''); }
+  function fitNoTitle(it) { return fitReason(it) && !/title ~ "/.test(it.reason || ''); }
   function matchedRole(it) {
     var r = it.reason || '';
     var m = fitReason(it) ? /title ~ "([^"]+)"/.exec(r) : /"([^"]+)"/.exec(r);
@@ -822,7 +824,7 @@
   // a partial one → "Title partly matches X", score 0 (the miss group) → "Title doesn't match your targets".
   function reasonText(it) {
     var score = Number(it.score || 0);
-    if (score <= 0) return 'Title doesn’t match your targets';
+    if (score <= 0 || fitNoTitle(it)) return 'Title doesn’t match your targets';
     var role = matchedRole(it), verb = titleFull(it) ? 'Title matches' : 'Title partly matches';
     return role ? verb + ' <em>' + esc(role) + '</em>' : verb + ' your targets';
   }
@@ -831,6 +833,7 @@
   function reasonSentence(it) {
     var score = Number(it.score || 0);
     if (score <= 0) return 'The title doesn’t match your target roles. The watch kept it because the company is on your list.';
+    if (fitNoTitle(it)) return 'The title doesn’t match your target roles. From the posting: ' + esc(it.reason) + '.';
     var role = matchedRole(it), verb = titleFull(it) ? 'Title matches' : 'Title partly matches';
     var out = role ? verb + ' <em>' + esc(role) + '</em>, one of your target roles.' : verb + ' your target roles.';
     if (fitReason(it)) out += ' From the posting: ' + esc(it.reason) + '.';

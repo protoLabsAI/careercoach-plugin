@@ -827,10 +827,13 @@ def test_a_quick_fit_reason_reads_its_title_match_not_its_score(plugin):
                     reason='stack 4/6 · mid/senior · title ~ "AI Engineer" · pay not posted'),
         _inbox_item("half", 81, "2026-10-30T18:00:00Z", title="Forward Deployed Engineer",
                     reason='stack 7/7 · mid/senior · title ~ "AI Engineer" (50%)'),
+        _inbox_item("none", 55, "2026-10-30T18:00:00Z", title="Data Scientist",
+                    reason="stack 3/6 · mid/senior · pay not posted"),
     ]  # fmt: skip
     out = _render_inbox(ctx, inbox)
     assert "Title matches <em>AI Engineer</em>" in out
     assert "Title partly matches <em>AI Engineer</em>" in out
+    assert "Title doesn’t match your targets" in out  # a 0% title match on a quick-fit card
     assert ">72<" not in out and ">81<" not in out
 
 

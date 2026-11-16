@@ -299,3 +299,24 @@ def test_lookup_outcomes_are_recorded_and_shown(resolve, mods, monkeypatch, trac
     assert "board doesn't list this title" in tool.invoke({"action": "show", "inbox_id": "a"})
     assert "has no Ashby/Greenhouse/Lever board" in tool.invoke({"action": "show", "inbox_id": "b"})
     assert "wasn't looked up" in tool.invoke({"action": "show", "inbox_id": "c"})
+
+
+def test_a_board_that_fails_to_load_is_not_called_missing(resolve, mods, monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.ashbyhq.com" and request.url.path.endswith("/acme"):
+            handler.n += 1
+            return httpx.Response(200, json=ASHBY_ACME) if handler.n == 1 else httpx.Response(503, json={})
+        return httpx.Response(404, json={})
+
+    handler.n = 0
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    job = {"title": "AI Engineer", "company": "Acme", "url": "https://himalayas.app/companies/acme/jobs/ai"}
+    asyncio.run(resolve.resolve([job]))  # the probe finds the board; the board read then 503s
+    assert "ats_lookup" not in job and "apply_url" not in job
+
+
+def test_a_deterministic_probe_rejection_is_cached(resolve):
+    assert not resolve._transient("ashby/acme is 'Other Co''s board, not 'Acme'")
+    assert not resolve._transient("lever/acme matched by the short name 'acme' — confirm it's Acme's board")
+    assert resolve._transient("greenhouse/acme: HTTPStatusError: 429 Too Many Requests")

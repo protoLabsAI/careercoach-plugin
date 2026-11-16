@@ -52,6 +52,13 @@ def match_title(title: str, board_jobs: list[dict]) -> dict | None:
     return best_j if best >= 0.8 else None
 
 
+def _transient(problem: str) -> bool:
+    """A probe problem that may clear up (a 429, timeout, 5xx), as opposed to its deterministic
+    rejections — a board that names another company, or one matched only by a short-name guess —
+    which are a real "no board here" and safe to cache."""
+    return "'s board, not " not in problem and "matched by the short name" not in problem
+
+
 def _fresh(entry: dict, now: datetime) -> bool:
     try:
         at = datetime.fromisoformat(entry.get("checked", ""))
@@ -102,7 +109,7 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 for cand in ([slug] if slug else []) + [""]:
                     try:
                         found, problems = await boards.probe(name, cand, client=client, sem=sem)
-                        trouble += problems
+                        trouble += [p for p in problems if _transient(p)]
                     except Exception as e:  # noqa: BLE001
                         log.info("[careercoach] ATS probe failed for %s: %s", name, e)
                         found, trouble = [], trouble + [str(e)]
@@ -118,9 +125,9 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 cache[key] = {"company": name, "ats": ats, "slug": s, "checked": now.isoformat()}
             try:
                 return key, await boards.fetch_board(ats, s, name, client=client)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001 — the board exists; it just didn't load this time
                 log.info("[careercoach] ATS board read failed for %s (%s/%s): %s", name, ats, s, e)
-                return key, None
+                return key, "retry"
 
         calls = []
         for key, group in by_co.items():
