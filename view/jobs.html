@@ -805,26 +805,36 @@
     return (typeof g === 'string') ? g : g.join('; ');
   }
   function hasGhost(it) { return !!(it.ghost && it.ghost.length); }
-  // The matched target role, pulled from the server's match reason ('title matches "X" (…)'), so the
-  // row can emphasise it. Empty when nothing was quoted.
+  // The matched target role, pulled from the server's reason. A quick-fit reason (0.16+) names it as
+  // 'title ~ "X"' with '(NN%)' when only part of it matched; an older card says 'title matches "X"
+  // (n/m words)' and its score IS the title-match percentage. Empty when nothing was quoted.
+  function fitReason(it) { return /title ~ "/.test(it.reason || ''); }
   function matchedRole(it) {
-    var m = /"([^"]+)"/.exec(it.reason || '');
+    var r = it.reason || '';
+    var m = fitReason(it) ? /title ~ "([^"]+)"/.exec(r) : /"([^"]+)"/.exec(r);
     return m ? m[1] : '';
   }
-  // Match reason AS TEXT (§3): the score itself never shows. 100 → "Title matches X", a partial
-  // score → "Title partly matches X", 0 (the miss group) → "Title doesn't match your targets".
+  function titleFull(it) {
+    if (fitReason(it)) return !/title ~ "[^"]+" \(\d+%\)/.test(it.reason || '');
+    return Number(it.score || 0) >= 100;
+  }
+  // Match reason AS TEXT (§3): the score itself never shows. A full title match → "Title matches X",
+  // a partial one → "Title partly matches X", score 0 (the miss group) → "Title doesn't match your targets".
   function reasonText(it) {
     var score = Number(it.score || 0);
     if (score <= 0) return 'Title doesn’t match your targets';
-    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
+    var role = matchedRole(it), verb = titleFull(it) ? 'Title matches' : 'Title partly matches';
     return role ? verb + ' <em>' + esc(role) + '</em>' : verb + ' your targets';
   }
-  // The longer form shown in the inbox drawer's "Why it surfaced" section.
+  // The longer form shown in the inbox drawer's "Why it surfaced" section; a quick-fit card adds
+  // what the posting itself said (stack overlap, seniority, pay).
   function reasonSentence(it) {
     var score = Number(it.score || 0);
     if (score <= 0) return 'The title doesn’t match your target roles. The watch kept it because the company is on your list.';
-    var role = matchedRole(it), verb = score >= 100 ? 'Title matches' : 'Title partly matches';
-    return role ? verb + ' <em>' + esc(role) + '</em>, one of your target roles.' : verb + ' your target roles.';
+    var role = matchedRole(it), verb = titleFull(it) ? 'Title matches' : 'Title partly matches';
+    var out = role ? verb + ' <em>' + esc(role) + '</em>, one of your target roles.' : verb + ' your target roles.';
+    if (fitReason(it)) out += ' From the posting: ' + esc(it.reason) + '.';
+    return out;
   }
   function findInbox(id) {
     var l = JOBS.inbox || [];

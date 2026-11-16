@@ -240,6 +240,7 @@ def test_show_without_an_ats_match_says_how_to_apply(track):
     wl.add_to_inbox([_card("two", description="Posting.")])
     out = tool.invoke({"action": "show", "company": "Acme", "role": "AI Engineer"})
     assert "company's careers page" in out and "Posting." in out
+    assert "wasn't looked up" in out  # never claims a lookup that didn't run
 
 
 def test_inbox_lists_best_fit_first_with_reasons(track):
@@ -260,3 +261,41 @@ def test_the_board_view_payload_leaves_descriptions_out(plugin, iso, monkeypatch
     route = next(r for r in router.routes if getattr(r, "path", "") == "/jobs")
     data = json.loads(asyncio.run(route.endpoint()).body)
     assert data["inbox"] and "description" not in data["inbox"][0]
+
+
+def test_a_rate_limited_probe_is_not_cached_as_a_miss(resolve, mods, monkeypatch):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(429, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    job = {"title": "AI Engineer", "company": "Acme", "url": "https://himalayas.app/companies/acme/jobs/ai"}
+    asyncio.run(resolve.resolve([job]))
+    assert "ats_lookup" not in job  # inconclusive: no claim either way
+    first = len(calls)
+    asyncio.run(resolve.resolve([dict(job)]))
+    assert len(calls) > first  # looked again, nothing was cached
+
+
+def test_lookup_outcomes_are_recorded_and_shown(resolve, mods, monkeypatch, track):
+    calls: list[str] = []
+    _ats_net(monkeypatch, calls)
+    on_board = {
+        "title": "Staff Data Engineer",
+        "company": "Acme",
+        "id": "a",
+        "url": "https://himalayas.app/companies/acme/jobs/data",
+        "hash": "a",
+    }
+    no_board = {"title": "AI Engineer", "company": "Nowhere Inc", "id": "b",
+                "url": "https://himalayas.app/companies/nowhere/jobs/ai", "hash": "b"}  # fmt: skip
+    asyncio.run(resolve.resolve([on_board, no_board]))
+    assert on_board["ats_lookup"] == "no title" and no_board["ats_lookup"] == "no board"
+    tool, wl = track
+    wl.add_to_inbox([on_board, no_board, _card("c", company="Elsewhere")])
+    assert "board doesn't list this title" in tool.invoke({"action": "show", "inbox_id": "a"})
+    assert "has no Ashby/Greenhouse/Lever board" in tool.invoke({"action": "show", "inbox_id": "b"})
+    assert "wasn't looked up" in tool.invoke({"action": "show", "inbox_id": "c"})

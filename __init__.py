@@ -153,11 +153,14 @@ def _show_card(card: dict) -> str:
         if blocked(card.get("url", "")):
             head.append(f"Listed on: {card.get('url', '')} (that page blocks automated reads; use the link above)")
     elif blocked(card.get("url", "")):
+        why = {
+            "no title": "the company's own Ashby/Greenhouse/Lever board doesn't list this title",
+            "no board": "the company has no Ashby/Greenhouse/Lever board we could find",
+        }.get(card.get("ats_lookup") or "", "the company's own board wasn't looked up for this card")
         head.append(
-            f"Listed on: {card.get('url', '')}. That page blocks automated reads, and the company's own "
-            "Ashby/Greenhouse/Lever board didn't list this title. The text below is the full posting from "
-            "the board's API; to apply, find the role on the company's careers page (or the operator opens "
-            "the link above in their own browser)."
+            f"Listed on: {card.get('url', '')}. That page blocks automated reads, and {why}. The text below "
+            "is the full posting from the board's API; to apply, find the role on the company's careers "
+            "page (or the operator opens the link above in their own browser)."
         )
     else:
         head.append(f"Posting: {card.get('url', '')}")

@@ -818,6 +818,22 @@ def test_inbox_match_reason_is_text_and_shows_no_numeric_score(plugin):
     assert "100" not in out and ">67<" not in out and "fit 67" not in out  # no numeric score
 
 
+def test_a_quick_fit_reason_reads_its_title_match_not_its_score(plugin):
+    """0.16: the score blends stack, seniority and pay, so a 72 can be a full title match. The text
+    reads the match off the reason ('title ~ "X"', '(NN%)' when partial), never off the score."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("fit", 72, "2026-10-30T18:00:00Z", title="Senior AI Engineer",
+                    reason='stack 4/6 · mid/senior · title ~ "AI Engineer" · pay not posted'),
+        _inbox_item("half", 81, "2026-10-30T18:00:00Z", title="Forward Deployed Engineer",
+                    reason='stack 7/7 · mid/senior · title ~ "AI Engineer" (50%)'),
+    ]  # fmt: skip
+    out = _render_inbox(ctx, inbox)
+    assert "Title matches <em>AI Engineer</em>" in out
+    assert "Title partly matches <em>AI Engineer</em>" in out
+    assert ">72<" not in out and ">81<" not in out
+
+
 def test_inbox_ghost_warning_badge_and_conditional_filter_chip(plugin):
     """§3: ghost = a 'Possible ghost job' pl-badge--warning with evidence; the Hide-ghost chip (with
     count) renders ONLY when a ghost exists, and hiding filters the row out."""

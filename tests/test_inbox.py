@@ -31,17 +31,6 @@ def job(jid="one", **overrides):
     }
 
 
-def test_reason_is_pure_and_uses_best_role(mods):
-    j = job()
-    before = dict(j)
-    assert mods.watchlist.match_reason(j, "Design Engineer; AI Engineer") == (
-        'title matches "AI Engineer" (2/2 words) · remote · posted 2026-10-26'
-    )
-    assert j == before
-    assert mods.watchlist.match_reason({}, "") == "No target title words matched"
-    assert "\n" not in mods.watchlist.match_reason(j, "AI\nEngineer")
-
-
 def test_retains_evidence_and_digest_marks(mods):
     wl = mods.watchlist
     wl.add_to_inbox([job(), job(), job("two", posted="2026-10-27")])

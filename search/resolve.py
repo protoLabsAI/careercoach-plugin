@@ -21,7 +21,7 @@ log = logging.getLogger("protoagent.plugins.careercoach")
 BLOCKED_HOSTS = ("himalayas.app",)  # boards whose own job pages refuse automated fetches
 CACHE = "ats-lookup.json"
 CACHE_DAYS = 7
-MAX_COMPANIES = 8  # per pass: probing tries every (ATS, slug guess), so keep a pass bounded
+MAX_COMPANIES = 15  # per pass (the watch batch is 15 roles): probing tries every (ATS, slug guess)
 
 
 def blocked(url: str) -> bool:
@@ -62,8 +62,10 @@ def _fresh(entry: dict, now: datetime) -> bool:
 
 async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
     """Fill ``apply_url`` (and a fuller ``description``) in place for jobs whose ``url`` is on a
-    blocked board, from the company's own ATS. Returns how many it resolved. Never raises: a
-    lookup that fails leaves the job as it was."""
+    blocked board, from the company's own ATS, and record the outcome as ``ats_lookup``: "found",
+    "no title" (the company's board doesn't list it) or "no board" (no Ashby/Greenhouse/Lever board).
+    A job not looked up this pass (past the cap, or a probe that hit a 429/timeout) is left without
+    ``ats_lookup``. Returns how many it resolved. Never raises."""
     import httpx
 
     from ..record.companies import company_key
@@ -95,16 +97,21 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 ats, s = entry["ats"], entry["slug"]
             else:
                 found: list = []
+                trouble: list = []
                 # the board's own company slug first (often the ATS slug too), then name guesses
                 for cand in ([slug] if slug else []) + [""]:
                     try:
-                        found, _ = await boards.probe(name, cand, client=client, sem=sem)
+                        found, problems = await boards.probe(name, cand, client=client, sem=sem)
+                        trouble += problems
                     except Exception as e:  # noqa: BLE001
                         log.info("[careercoach] ATS probe failed for %s: %s", name, e)
-                        found = []
+                        found, trouble = [], trouble + [str(e)]
                     if found:
                         break
                 if not found:
+                    if trouble:  # a 429 or timeout isn't "no board": look again next pass, cache nothing
+                        log.info("[careercoach] ATS lookup inconclusive for %s: %s", name, trouble[:2])
+                        return key, "retry"
                     cache[key] = {"company": name, "ats": "", "slug": "", "checked": now.isoformat()}
                     return key, None
                 ats, s = found[0][0], found[0][1]
@@ -122,16 +129,20 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
             probed += 1
             calls.append(_lookup(key, group[0]["company"], group[0].get("company_slug") or ""))
         for key, got in await asyncio.gather(*calls):
-            if got:
-                boards_for[key] = got
+            if got == "retry":
+                continue
+            # a company looked up and found on no board: say so on its cards, so nothing claims a
+            # lookup that never ran (companies past the cap, or an inconclusive probe, stay unmarked)
+            boards_for[key] = got or []
 
     resolved = 0
     for key, group in by_co.items():
-        board_jobs = boards_for.get(key)
-        if not board_jobs:
+        if key not in boards_for:
             continue
+        board_jobs = boards_for[key]
         for j in group:
-            hit = match_title(j.get("title", ""), board_jobs)
+            hit = match_title(j.get("title", ""), board_jobs) if board_jobs else None
+            j["ats_lookup"] = "found" if hit and hit.get("url") else ("no title" if board_jobs else "no board")
             if hit and hit.get("url"):
                 j["apply_url"] = hit["url"]
                 if len(hit.get("description") or "") > len(j.get("description") or ""):
