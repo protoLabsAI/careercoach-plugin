@@ -35,7 +35,8 @@ Every setting lives under **Settings → Career Coach**, and in YAML under `care
 |---|---|---|---|
 | Background job-watch | `watch_enabled` | off | Periodically scans your watchlist and the job source and queues new matches for the digest. Never writes your board |
 | Watch interval (min) | `watch_interval_min` | `180` | How often the watch scans, in minutes. The minimum is 5 |
-| Watch match threshold | `watch_min_score` | `75` | Only surface postings whose quick keyword score is at least this, from 0 to 100. The coach still runs the full evaluation |
+| Watch match threshold | `watch_min_score` | `65` | Only surface postings whose quick fit score is at least this, from 0 to 100. The score reads the posting: how much of its stack your profile names, the seniority in the title, the title match, and pay against your floor. The coach still runs the full evaluation |
+| Minimum salary | `min_salary` | `0` | Your annual pay floor, e.g. `120000`. A posted range entirely under it scores 40 at most; a role that doesn't post pay isn't penalised. `0` turns the pay part off |
 | Follow-up after (days) | `followup_days` | `10` | An applied role with no change for this many days is flagged on the board as due a follow-up |
 
 ## Advanced

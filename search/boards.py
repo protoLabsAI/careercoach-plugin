@@ -100,6 +100,7 @@ def _job(*, company: str, ats: str, slug: str, job_id: str, title: str, location
         "comp": comp,
         "department": department,
         "snippet": description[:400],
+        "description": description[:8000],
         "desc_len": len(description),
         "hash": content_hash(title or "", description, location or ""),
         "source": ats,

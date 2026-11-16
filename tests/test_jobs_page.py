@@ -984,7 +984,8 @@ def test_inbox_item_renders_all_fields_and_a_safe_posting_link(plugin):
     assert ">Keep<" in out and ">Dismiss<" in out and ">View posting<" in out
     html = plugin._DASHBOARD_HTML
     assert 'target="_blank" rel="noopener"' in html
-    assert '''href="' + esc(it.url) + '"''' in html
+    # the company's own application page when the watch found one, else the listing
+    assert '''href="' + esc(it.apply_url || it.url) + '"''' in html
 
 
 def test_all_posting_and_inbox_text_is_escaped(plugin):
@@ -993,7 +994,7 @@ def test_all_posting_and_inbox_text_is_escaped(plugin):
     for frag in (
         "esc(it.title)",
         "esc(it.company)",
-        "esc(it.url)",
+        "esc(it.apply_url || it.url)",
         "esc(a.role)",
         "esc(a.company)",
         "esc(a.id)",

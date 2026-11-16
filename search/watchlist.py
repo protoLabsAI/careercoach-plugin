@@ -238,6 +238,8 @@ def add_to_inbox(jobs: list[dict]) -> int:
         "ghost",
         "reason",
         "snippet",
+        "description",
+        "apply_url",
         "hash",
     )
     with _store._locked("inbox"):

@@ -35,8 +35,19 @@ HN_SEARCH_URL = "https://hn.algolia.com/api/v1/search"
 HN_BY_DATE_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
 
+DESCRIPTION_CAP = 8000  # the full posting text, for scoring and reading without a page fetch
+
+
 def _job(
-    *, title: str, company: str, location: str, url: str, posted: str = "", snippet: str = "", source: str = ""
+    *,
+    title: str,
+    company: str,
+    location: str,
+    url: str,
+    posted: str = "",
+    snippet: str = "",
+    source: str = "",
+    description: str = "",
 ) -> dict:
     return {
         "title": title.strip(),
@@ -45,6 +56,7 @@ def _job(
         "url": url.strip(),
         "posted": posted,
         "snippet": snippet.strip(),
+        "description": (description or "").strip()[:DESCRIPTION_CAP],
         "source": source,
     }
 
@@ -69,6 +81,7 @@ def parse_jsearch(payload: dict) -> list[dict]:
                 posted=j.get("job_posted_at_datetime_utc") or "",
                 snippet=(j.get("job_description") or "")[:400],
                 source="jsearch",
+                description=j.get("job_description") or "",
             )
         )
     return out
@@ -86,6 +99,7 @@ def parse_remotive(payload: dict) -> list[dict]:
                 posted=j.get("publication_date") or "",
                 snippet=_strip_html(j.get("description") or "")[:400],
                 source="remotive",
+                description=_strip_html(j.get("description") or ""),
             )
         )
     return out
@@ -109,7 +123,12 @@ def parse_himalayas(payload: dict) -> list[dict]:
             posted=_iso_epoch(j.get("pubDate")),
             snippet=_strip_html(j.get("excerpt") or j.get("description") or "")[:400],
             source="himalayas",
+            # the whole posting: himalayas.app job pages refuse automated fetches (Cloudflare),
+            # so this API text is the only copy of the posting the coach can read
+            description=_strip_html(j.get("description") or j.get("excerpt") or ""),
         )
+        if j.get("companySlug"):
+            job["company_slug"] = j["companySlug"]
         lo, hi = j.get("minSalary"), j.get("maxSalary")
         if lo and hi:
             job["comp"] = f"{j.get('currency') or ''} {int(lo):,}–{int(hi):,}".strip()
@@ -157,6 +176,7 @@ def parse_hn(payload: dict) -> list[dict]:
                 posted=h.get("created_at") or "",
                 snippet=_strip_html(h.get("comment_text") or "")[:400],
                 source="hn",
+                description=_strip_html(h.get("comment_text") or ""),
             )
         )
     return out

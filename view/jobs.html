@@ -854,7 +854,7 @@
           '<span class="muted sm">' + esc(ghost) + '</span></div>' : '') +
       '</div>' +
       '<div class="ibx-acts">' +
-        (it.url ? '<a class="pl-btn pl-btn--ghost pl-btn--xs" href="' + esc(it.url) + '" target="_blank" rel="noopener" data-a="open" tabindex="-1">View posting</a>' : '') +
+        (it.url ? '<a class="pl-btn pl-btn--ghost pl-btn--xs" href="' + esc(it.apply_url || it.url) + '" target="_blank" rel="noopener" data-a="open" tabindex="-1">View posting</a>' : '') +
         '<button class="pl-btn pl-btn--xs" type="button" data-a="dismiss" tabindex="-1">Dismiss</button>' +
         '<button class="pl-btn pl-btn--primary pl-btn--xs" type="button" data-a="keep" tabindex="-1">Keep</button>' +
       '</div></div>';
@@ -990,7 +990,7 @@
   function openPosting(id) {
     var it = findInbox(id);
     if (!it) return;
-    if (it.url) { try { window.open(it.url, '_blank', 'noopener'); return; } catch (e) {} }
+    if (it.url) { try { window.open(it.apply_url || it.url, '_blank', 'noopener'); return; } catch (e) {} }
     toast('No posting link for this role.');
   }
   // Keep (§3): optimistic remove + an immediate write (the route promotes the role to Saved and
@@ -1056,7 +1056,7 @@
       '<div class="detail-role">' + esc(it.title || 'This role') + '</div>' +
       '<div class="detail-co">' + esc(it.company || '') + (when ? ' · posted ' + esc(relAge(when)) : '') + '</div>' +
       '<label>Status <select class="pl-select pl-dropselect" disabled><option>Inbox</option></select></label>' +
-      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.url) + '" target="_blank" rel="noopener">View posting</a>' : '');
+      (it.url ? '<a class="pl-btn pl-btn--ghost" href="' + esc(it.apply_url || it.url) + '" target="_blank" rel="noopener">View posting</a>' : '');
     var html = '<section class="dsec"><h4>Next step</h4><div class="action-btns">' +
       '<button class="pl-btn pl-btn--primary" type="button" id="ibx-d-keep">Keep (move to Saved)</button>' +
       '<button class="pl-btn" type="button" id="ibx-d-dismiss">Dismiss</button>' +
