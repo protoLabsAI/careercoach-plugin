@@ -132,6 +132,10 @@ def parse_himalayas(payload: dict) -> list[dict]:
         lo, hi = j.get("minSalary"), j.get("maxSalary")
         if lo and hi:
             job["comp"] = f"{j.get('currency') or ''} {int(lo):,}–{int(hi):,}".strip()
+            period = (j.get("salaryPeriod") or "").strip().lower()
+            if period and period not in ("year", "yearly", "annual", "annually"):
+                per = {"hourly": "hour", "daily": "day", "weekly": "week", "monthly": "month"}.get(period, period)
+                job["comp"] += f" per {per}"
         out.append(job)
     return out
 

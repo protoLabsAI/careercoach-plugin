@@ -84,6 +84,8 @@ def test_pay_range_parsing(fs):
     assert fs.pay_range("USD 190,000–255,000") == (190_000, 255_000)
     assert fs.pay_range("$150K - $210K") == (150_000, 210_000)
     assert fs.pay_range("Upto $150/hr") is None
+    assert fs.pay_range("USD 2,500–3,000") is None  # a monthly figure, not an annual salary
+    assert fs.pay_range("USD 8,000–9,000 per month") is None
     assert fs.pay_range("") is None
 
 
@@ -328,3 +330,15 @@ def test_an_off_domain_title_is_not_capped_when_the_profile_names_it(fs, title):
     profile = "Embedded systems and hardware bring-up: C++, Python, firmware, RTOS, FPGA, CUDA, GPU simulation."
     _, why = fs.score(_job(title, desc), "Software Engineer, Hardware Engineer, Engineer", profile)
     assert "off-domain title" not in why
+
+
+def test_himalayas_labels_a_non_annual_pay_period(plugin):
+    js = importlib.import_module(plugin.__name__ + ".search.jobsource")
+    base = {"title": "AI Engineer", "companyName": "Acme", "applicationLink": "https://himalayas.app/x",
+            "minSalary": 2500, "maxSalary": 3000, "currency": "USD"}  # fmt: skip
+    [monthly] = js.parse_himalayas({"jobs": [{**base, "salaryPeriod": "monthly"}]})
+    [yearly] = js.parse_himalayas(
+        {"jobs": [{**base, "minSalary": 150000, "maxSalary": 190000, "salaryPeriod": "year"}]}
+    )
+    assert monthly["comp"] == "USD 2,500–3,000 per month"
+    assert yearly["comp"] == "USD 150,000–190,000"
