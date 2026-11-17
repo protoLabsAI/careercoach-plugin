@@ -155,7 +155,9 @@ _MONEY = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|K)?")
 def pay_range(comp: str) -> tuple[int, int] | None:
     """Annual (lo, hi) from a comp string like "USD 190,000–255,000" or "$150K - $210K". Hourly or
     monthly figures (under 1,000 after the k) aren't annual salaries: None."""
-    if not comp or re.search(r"/\s*(?:hr|hour|month|mo)\b|hourly|per\s+hour", comp, re.I):
+    if not comp or re.search(
+        r"/\s*(?:hr|hour|month|mo|week|wk|day)\b|hourly|monthly|weekly|daily|per\s+(?:hour|month|week|day)", comp, re.I
+    ):
         return None
     nums = []
     for n, k in _MONEY.findall(comp):
@@ -164,7 +166,7 @@ def pay_range(comp: str) -> tuple[int, int] | None:
             v *= 1000
         if v >= 1000:
             nums.append(int(v))
-    if not nums:
+    if not nums or max(nums) < 10_000:  # under $10K can't be an annual salary (a monthly figure)
         return None
     return min(nums), max(nums)
 

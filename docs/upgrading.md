@@ -3,6 +3,12 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.16.1
+
+- **Monthly pay isn't read as a salary.** A Himalayas range posted per month (or week, day, hour) is
+  labelled with its period and leaves the pay part of the fit score neutral, instead of reading as an annual
+  salary far under your floor.
+
 ## 0.16.0
 
 - **Inbox scores mean something.** The watch used to score a role by the same title match it had just
