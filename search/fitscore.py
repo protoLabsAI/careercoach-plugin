@@ -154,7 +154,7 @@ _MONEY = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|K)?")
 
 def pay_range(comp: str) -> tuple[int, int] | None:
     """Annual (lo, hi) from a comp string like "USD 190,000–255,000" or "$150K - $210K". Hourly or
-    monthly figures (under 1,000 after the k) aren't annual salaries: None."""
+    monthly figures (a period label, or a top figure under $10K) aren't annual salaries: None."""
     if not comp or re.search(
         r"/\s*(?:hr|hour|month|mo|week|wk|day)\b|hourly|monthly|weekly|daily|per\s+(?:hour|month|week|day)", comp, re.I
     ):
