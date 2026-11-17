@@ -175,7 +175,13 @@ def _show_card(card: dict) -> str:
 
 
 def _loose_id(jid: str) -> str:
-    return (jid or "").strip().split("?", 1)[0].rstrip("/").lower()
+    """An inbox id with only its TRACKING parameters (utm_*) and a trailing slash dropped. Other query
+    parameters stay: an HN card's whole identity is its ``item?id=N``."""
+    from urllib.parse import parse_qsl, urlencode
+
+    base, _, query = (jid or "").strip().partition("?")
+    kept = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if not k.lower().startswith("utm_")]
+    return (base.rstrip("/") + ("?" + urlencode(kept) if kept else "")).lower()
 
 
 def _inbox_card(inbox_id: str, company: str, role: str) -> dict | None:
@@ -683,7 +689,8 @@ def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
                 return "What should I search the market for? Pass a role title or keywords as `query`."
             # A comma list (the target roles, by default) is several searches, not one query: sent whole,
             # 28 roles made one unmatchable query, and HN's search answered it with a 400.
-            many = [r.strip() for r in q.split(",") if r.strip()]
+            # Only the defaulted target-role list fans out; a caller's own query is searched as given.
+            many = [r.strip() for r in q.split(",") if r.strip()] if not (query or roles) else [q]
             if len(many) <= 1:
                 return await search_jobs.ainvoke(
                     {"query": q, "location": locations, "remote": remote, "limit": limit or 10, "source": provider}

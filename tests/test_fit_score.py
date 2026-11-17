@@ -410,3 +410,37 @@ def test_a_market_search_over_the_target_roles_runs_one_search_per_role(plugin, 
     out = asyncio.run(tool.ainvoke({"source": "market"}))
     assert seen == [f"Role {i} Engineer" for i in range(6)]  # one query per role, capped
     assert "first 6 of 9 roles" in out
+
+
+def test_a_loose_id_keeps_an_hn_cards_identity(track):
+    tool, wl = track
+    wl.add_to_inbox(
+        [
+            _card("h1", id="hn:https://news.ycombinator.com/item?id=111", company="One", description="First."),
+            _card("h2", id="hn:https://news.ycombinator.com/item?id=222", company="Two", description="Second."),
+        ]
+    )
+    assert "Second." in tool.invoke({"action": "show", "inbox_id": "hn:https://news.ycombinator.com/item?id=222"})
+    out = tool.invoke({"action": "show", "inbox_id": "hn:https://news.ycombinator.com/item?id=999"})
+    assert "No inbox card matches" in out  # a wrong HN id never lands on another HN card
+
+
+def test_an_explicit_comma_query_is_one_search(plugin, iso, monkeypatch):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "himalayas.app":
+            seen.append(request.url.params.get("q", ""))
+            return httpx.Response(200, json={"jobs": []})
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    reg = FakeRegistry(
+        {"target_roles": "A Engineer, B Engineer", "jobs_provider": "himalayas"}, plugin_id="careercoach"
+    )
+    plugin.register(reg)
+    tool = next(t for t in reg.tools if t.name == "careercoach_find_roles")
+    asyncio.run(tool.ainvoke({"source": "market", "query": "python, fastapi"}))
+    assert seen == ["python, fastapi"]
