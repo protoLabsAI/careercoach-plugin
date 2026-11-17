@@ -149,15 +149,17 @@ def seniority(title: str) -> tuple[int, str]:
     return 100, "mid/senior"
 
 
+_NOT_ANNUAL = re.compile(
+    r"/\s*(?:hr|hour|month|mo|week|wk|day)\b|hourly|monthly|weekly|daily|per\s+(?:hour|month|week|day)",
+    re.I,
+)
 _MONEY = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|K)?")
 
 
 def pay_range(comp: str) -> tuple[int, int] | None:
     """Annual (lo, hi) from a comp string like "USD 190,000–255,000" or "$150K - $210K". Hourly or
     monthly figures (a period label, or a top figure under $10K) aren't annual salaries: None."""
-    if not comp or re.search(
-        r"/\s*(?:hr|hour|month|mo|week|wk|day)\b|hourly|monthly|weekly|daily|per\s+(?:hour|month|week|day)", comp, re.I
-    ):
+    if not comp or _NOT_ANNUAL.search(comp):
         return None
     nums = []
     for n, k in _MONEY.findall(comp):
