@@ -585,8 +585,9 @@ def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin,
     many = {"jobs": [{**ASHBY["jobs"][0], "id": f"a{i}", "jobUrl": f"https://jobs.ashbyhq.com/acme/{i}",
                       "title": f"Forward Deployed Engineer {i}"} for i in range(20)]}  # fmt: skip
     monkeypatch.setitem(BOARDS, ("api.ashbyhq.com", "acme"), many)
-    first = asyncio.run(plugin._watch_tick(reg, cfg, 75))
-    second = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    # threshold 0: this pins the per-scan CAP, not the score (short fixture text caps the score at 70)
+    first = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    second = asyncio.run(plugin._watch_tick(reg, cfg, 0))
     assert len(first) == 15 and len(second) >= 5
     assert not {m["url"] for m in first} & {m["url"] for m in second}
 

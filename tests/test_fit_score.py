@@ -37,8 +37,12 @@ def resolve(plugin):
     return importlib.import_module(plugin.__name__ + ".search.resolve")
 
 
+FILLER = " We ship weekly, own our work end to end, and care about the people who use what we build." * 8
+
+
 def _job(title, description="", comp=""):
-    return {"title": title, "description": description, "comp": comp}
+    """A posting with enough text to judge (the excerpt cap is tested on its own)."""
+    return {"title": title, "description": (description + FILLER) if description else "", "comp": comp}
 
 
 # ── the score spreads; it doesn't just echo the title filter ──────────────────
@@ -342,3 +346,101 @@ def test_himalayas_labels_a_non_annual_pay_period(plugin):
     )
     assert monthly["comp"] == "USD 2,500–3,000 per month"
     assert yearly["comp"] == "USD 150,000–190,000"
+
+
+def test_an_excerpt_caps_the_score(fs):
+    desc = "Python, TypeScript, React, LLM agents and evals."
+    full, _ = fs.score(_job("Senior AI Engineer", desc), ROLES, PROFILE)
+    thin, why = fs.score({"title": "Senior AI Engineer", "snippet": desc}, ROLES, PROFILE)
+    assert full > 70 and thin <= 70 and "excerpt only" in why
+
+
+def test_pay_in_another_currency_is_not_compared(fs):
+    desc = "Python, TypeScript, React, LLM agents and evals."
+    s, why = fs.score(_job("Product Engineer", desc, "CAD 142,800–184,800"), ROLES, PROFILE, 200_000)
+    assert "pay posted in CAD, not compared" in why and s > 40
+    assert fs.foreign_currency("USD 150,000–190,000") == ""
+    assert fs.foreign_currency("€80K") == "€"
+
+
+def test_resolve_prefers_the_companys_usd_range_over_a_cad_one(resolve, mods, monkeypatch):
+    calls: list[str] = []
+    board = {
+        "jobs": [{**ASHBY_ACME["jobs"][0], "compensation": {"scrapeableCompensationSalarySummary": "$150K – $210K"}}]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "api.ashbyhq.com" and request.url.path.endswith("/acme"):
+            return httpx.Response(200, json=board)
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    job = {"title": "AI Engineer", "company": "Acme", "comp": "CAD 142,800–184,800",
+           "url": "https://himalayas.app/companies/acme/jobs/ai"}  # fmt: skip
+    asyncio.run(resolve.resolve([job]))
+    assert job["apply_url"] and "CAD" not in job["comp"]
+
+
+def test_show_finds_a_card_by_an_id_missing_its_tracking_query(track):
+    tool, wl = track
+    wl.add_to_inbox([_card("x", id="himalayas:https://himalayas.app/companies/yo/jobs/fe?utm_source=api",
+                           description="Posting.")])  # fmt: skip
+    out = tool.invoke({"action": "show", "inbox_id": "himalayas:https://himalayas.app/companies/yo/jobs/fe"})
+    assert "Posting." in out
+
+
+def test_a_market_search_over_the_target_roles_runs_one_search_per_role(plugin, iso, monkeypatch):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "himalayas.app":
+            seen.append(request.url.params.get("q", ""))
+            return httpx.Response(200, json={"jobs": []})
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    roles = ", ".join(f"Role {i} Engineer" for i in range(9))
+    reg = FakeRegistry({"target_roles": roles, "jobs_provider": "himalayas"}, plugin_id="careercoach")
+    plugin.register(reg)
+    tool = next(t for t in reg.tools if t.name == "careercoach_find_roles")
+    out = asyncio.run(tool.ainvoke({"source": "market"}))
+    assert seen == [f"Role {i} Engineer" for i in range(6)]  # one query per role, capped
+    assert "first 6 of 9 roles" in out
+
+
+def test_a_loose_id_keeps_an_hn_cards_identity(track):
+    tool, wl = track
+    wl.add_to_inbox(
+        [
+            _card("h1", id="hn:https://news.ycombinator.com/item?id=111", company="One", description="First."),
+            _card("h2", id="hn:https://news.ycombinator.com/item?id=222", company="Two", description="Second."),
+        ]
+    )
+    assert "Second." in tool.invoke({"action": "show", "inbox_id": "hn:https://news.ycombinator.com/item?id=222"})
+    out = tool.invoke({"action": "show", "inbox_id": "hn:https://news.ycombinator.com/item?id=999"})
+    assert "No inbox card matches" in out  # a wrong HN id never lands on another HN card
+
+
+def test_an_explicit_comma_query_is_one_search(plugin, iso, monkeypatch):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "himalayas.app":
+            seen.append(request.url.params.get("q", ""))
+            return httpx.Response(200, json={"jobs": []})
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    reg = FakeRegistry(
+        {"target_roles": "A Engineer, B Engineer", "jobs_provider": "himalayas"}, plugin_id="careercoach"
+    )
+    plugin.register(reg)
+    tool = next(t for t in reg.tools if t.name == "careercoach_find_roles")
+    asyncio.run(tool.ainvoke({"source": "market", "query": "python, fastapi"}))
+    assert seen == ["python, fastapi"]
