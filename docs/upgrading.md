@@ -3,6 +3,17 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.16.2
+
+- **An excerpt can't score high.** A card with under 600 characters of posting text (most cards queued
+  before 0.16.0) is capped at 70 and its reason says "excerpt only"; it scored 80–94 off one sentence.
+- **Pay in another currency isn't compared to your floor.** A range in CAD, EUR, GBP… leaves the pay part
+  neutral and says so, and a role resolved to the company's own posting takes that posting's range.
+- **A market search over your target roles searches each one.** With no `query`, every target role went
+  out as one search, which matched nothing and made Hacker News answer 400. It now runs one search per
+  role (the first 6).
+- **`show` finds a card by an id copied without its `?utm_source=api` tail.**
+
 ## 0.16.1
 
 - **Monthly pay isn't read as a salary.** A Himalayas range posted per month (or week, day, hour) is

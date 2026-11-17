@@ -24,6 +24,12 @@ CACHE_DAYS = 7
 MAX_COMPANIES = 15  # per pass (the watch batch is 15 roles): probing tries every (ATS, slug guess)
 
 
+def _foreign(comp: str) -> bool:
+    from .fitscore import foreign_currency
+
+    return bool(foreign_currency(comp))
+
+
 def blocked(url: str) -> bool:
     return any(h in (url or "") for h in BLOCKED_HOSTS)
 
@@ -154,8 +160,8 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 j["apply_url"] = hit["url"]
                 if len(hit.get("description") or "") > len(j.get("description") or ""):
                     j["description"] = hit["description"]
-                if hit.get("comp") and not j.get("comp"):
-                    j["comp"] = hit["comp"]
+                if hit.get("comp") and (not j.get("comp") or _foreign(j["comp"])):
+                    j["comp"] = hit["comp"]  # the company's own range beats a board's other-currency one
                 resolved += 1
     try:
         wl._save(CACHE, cache)

@@ -108,6 +108,7 @@ def _as_bool(value) -> bool:
 
 
 # ── agent tools: the application tracker ──────────────────────────────────────
+MARKET_ROLE_CAP = 6  # a market search over the target roles runs one search per role, this many at most
 INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
 
 
@@ -173,6 +174,10 @@ def _show_card(card: dict) -> str:
     return "\n".join(head) + "\n\n" + text
 
 
+def _loose_id(jid: str) -> str:
+    return (jid or "").strip().split("?", 1)[0].rstrip("/").lower()
+
+
 def _inbox_card(inbox_id: str, company: str, role: str) -> dict | None:
     """The inbox card named by id, or by company + role. Raises on an unreadable inbox."""
     from .search import watchlist as wl
@@ -181,7 +186,11 @@ def _inbox_card(inbox_id: str, company: str, role: str) -> dict | None:
     cards = wl.inbox_for_view()
     wanted = (inbox_id or "").strip()
     if wanted:
-        return next((j for j in cards if j.get("id") == wanted), None)
+        hit = next((j for j in cards if j.get("id") == wanted), None)
+        if hit is None:  # an id copied without its tracking query (?utm_source=api) or a trailing slash
+            loose = _loose_id(wanted)
+            hit = next((j for j in cards if _loose_id(j.get("id", "")) == loose), None)
+        return hit
     key = (company_key(company or ""), role_key(role or ""))
     return next((j for j in cards if (company_key(j.get("company", "")), role_key(j.get("title", ""))) == key), None)
 
@@ -672,9 +681,23 @@ def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
             locations = locations or defaults["locations"]
             if not q:
                 return "What should I search the market for? Pass a role title or keywords as `query`."
-            return await search_jobs.ainvoke(
-                {"query": q, "location": locations, "remote": remote, "limit": limit or 10, "source": provider}
-            )
+            # A comma list (the target roles, by default) is several searches, not one query: sent whole,
+            # 28 roles made one unmatchable query, and HN's search answered it with a 400.
+            many = [r.strip() for r in q.split(",") if r.strip()]
+            if len(many) <= 1:
+                return await search_jobs.ainvoke(
+                    {"query": q, "location": locations, "remote": remote, "limit": limit or 10, "source": provider}
+                )
+            picked = many[:MARKET_ROLE_CAP]
+            parts = []
+            for role in picked:
+                out = await search_jobs.ainvoke(
+                    {"query": role, "location": locations, "remote": remote, "limit": limit or 5, "source": provider}
+                )
+                parts.append(f"## {role}\n{out}")
+            if len(many) > len(picked):
+                parts.append(f"(Searched the first {len(picked)} of {len(many)} roles; pass `query` to search others.)")
+            return "\n\n".join(parts)
         if src in ("watched", ""):
             return await scan_boards.ainvoke(
                 {
