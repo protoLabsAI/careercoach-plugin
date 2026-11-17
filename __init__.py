@@ -3480,7 +3480,7 @@ def _register_watch_verifier(registry) -> None:
         log.info("[careercoach] watch verifier skipped (host-free?): %s", e)
         return
 
-    def _verify(min_score: int = 65, **_ignored):
+    def _verify(min_score: int = 75, **_ignored):
         from .record import state
         from .search import watchlist as wl
 

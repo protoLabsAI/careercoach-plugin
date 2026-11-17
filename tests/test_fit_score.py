@@ -320,3 +320,11 @@ def test_a_deterministic_probe_rejection_is_cached(resolve):
     assert not resolve._transient("ashby/acme is 'Other Co''s board, not 'Acme'")
     assert not resolve._transient("lever/acme matched by the short name 'acme' — confirm it's Acme's board")
     assert resolve._transient("greenhouse/acme: HTTPStatusError: 429 Too Many Requests")
+
+
+@pytest.mark.parametrize("title", ["Embedded Software Engineer", "Hardware Engineer", "GPU Simulation Engineer"])
+def test_an_off_domain_title_is_not_capped_when_the_profile_names_it(fs, title):
+    desc = "C++, Python, Linux, firmware, RTOS, FPGA bring-up, CUDA."
+    profile = "Embedded systems and hardware bring-up: C++, Python, firmware, RTOS, FPGA, CUDA, GPU simulation."
+    _, why = fs.score(_job(title, desc), "Software Engineer, Hardware Engineer, Engineer", profile)
+    assert "off-domain title" not in why

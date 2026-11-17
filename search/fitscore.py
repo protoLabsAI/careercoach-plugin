@@ -228,9 +228,14 @@ def score(job: dict, roles: str, profile_text: str, min_salary: int = 0) -> tupl
                 why.append(f"pay ${lo // 1000}–{hi // 1000}K straddles your floor")
 
     off = sorted((want & OFF_DOMAIN) - have)
-    off_title = _OFF_TITLE.search(title)
-    if off_title and not terms(off_title.group(0)) & have:
-        why.append(f'off-domain title ("{off_title.group(0)}")')
+    m = _OFF_TITLE.search(title)
+    # off-domain for THIS operator only if their profile names neither the word nor its technology
+    # ("hardware", "GPU", "simulation" aren't vocabulary terms, so check the word itself too)
+    off_title = (
+        m and not terms(m.group(0)) & have and not re.search(rf"\b{re.escape(m.group(0))}\b", profile_text or "", re.I)
+    )
+    if off_title:
+        why.append(f'off-domain title ("{m.group(0)}")')
     elif len(off) >= 2:
         why.append(f"off-domain stack ({', '.join(off)})")
 
@@ -241,7 +246,7 @@ def score(job: dict, roles: str, profile_text: str, min_salary: int = 0) -> tupl
         overall = min(overall, 40)
     if label == "junior":  # below the level the operator works at, however well the stack fits
         overall = min(overall, 50)
-    if off_title and not terms(off_title.group(0)) & have:
+    if off_title:
         overall = min(overall, 45)
     elif len(off) >= 2:
         overall = min(overall, 55)
