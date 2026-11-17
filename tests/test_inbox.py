@@ -31,17 +31,6 @@ def job(jid="one", **overrides):
     }
 
 
-def test_reason_is_pure_and_uses_best_role(mods):
-    j = job()
-    before = dict(j)
-    assert mods.watchlist.match_reason(j, "Design Engineer; AI Engineer") == (
-        'title matches "AI Engineer" (2/2 words) · remote · posted 2026-10-26'
-    )
-    assert j == before
-    assert mods.watchlist.match_reason({}, "") == "No target title words matched"
-    assert "\n" not in mods.watchlist.match_reason(j, "AI\nEngineer")
-
-
 def test_retains_evidence_and_digest_marks(mods):
     wl = mods.watchlist
     wl.add_to_inbox([job(), job(), job("two", posted="2026-10-27")])
@@ -115,7 +104,8 @@ def test_watch_populates_all_evidence(watch_env, mods):
     saved = {j["id"]: j for j in mods.watchlist.inbox_for_view()}
     for j in matches:
         assert saved[j["id"]]["score"] == j["score"]
-        assert saved[j["id"]]["reason"] == mods.watchlist.match_reason(j, cfg["target_roles"])
+        assert saved[j["id"]]["reason"] == j["reason"]
+        assert 'title ~ "' in j["reason"]  # the quick fit score explains itself
         assert saved[j["id"]]["snippet"] and saved[j["id"]]["hash"]
 
 
@@ -135,14 +125,15 @@ def test_scan_feeds_untracked_matches_without_changing_text(hunt_tools, mods, mo
     assert out == (
         "Scanned 1 board(s), 2 open roles → 2 match (roles: AI Engineer; locations: remote, portland; "
         "≤ 30 days old); 2 new since the last scan.\n\n"
-        "1. AI Engineer — Example · Remote · posted 2d ago\n   https://example.com/jobs/one\n"
-        "2. AI Engineer — Example · Remote · posted 2d ago  [already tracked: applied]\n"
+        "1. AI Engineer — Example · Remote · posted 2d ago · fit 100\n   https://example.com/jobs/one\n"
+        "2. AI Engineer — Example · Remote · posted 2d ago · fit 100  [already tracked: applied]\n"
         "   https://example.com/jobs/tracked"
     )
     saved = wl.inbox_for_view()
     assert len(saved) == 1
-    assert saved[0]["score"] == 100
-    assert saved[0]["reason"] == wl.match_reason(jobs[0], "AI Engineer")
+    # rescored by the quick fit score: no profile skills here, so the stack part is neutral
+    assert saved[0]["reason"].startswith("stack unknown")
+    assert 0 < saved[0]["score"] < 100
     assert saved[0]["snippet"] == jobs[0]["snippet"] and saved[0]["hash"] == jobs[0]["hash"]
     assert wl.peek_inbox() == []  # surfaced by the scan — the digest must not raise it again
 
@@ -162,7 +153,7 @@ def test_digest_prechange_golden_and_no_repeat(hunt_tools, mods, monkeypatch):
         "## New roles\nNo watchlist or target roles yet — add companies with careercoach_watchlist and set "
         "Target roles in Settings.\n\n"
         "## From the background watch (1 queued)\n"
-        "1. AI Engineer — Example · Remote · posted 2d ago\n   https://example.com/jobs/one\n\n"
+        "1. AI Engineer — Example · Remote · posted 2d ago · fit 100\n   https://example.com/jobs/one\n\n"
         "## Pipeline\nempty"
     )
     again = asyncio.run(hunt_tools["careercoach_digest"].ainvoke({}))

@@ -818,6 +818,25 @@ def test_inbox_match_reason_is_text_and_shows_no_numeric_score(plugin):
     assert "100" not in out and ">67<" not in out and "fit 67" not in out  # no numeric score
 
 
+def test_a_quick_fit_reason_reads_its_title_match_not_its_score(plugin):
+    """0.16: the score blends stack, seniority and pay, so a 72 can be a full title match. The text
+    reads the match off the reason ('title ~ "X"', '(NN%)' when partial), never off the score."""
+    ctx = _view_ctx(plugin)
+    inbox = [
+        _inbox_item("fit", 72, "2026-10-30T18:00:00Z", title="Senior AI Engineer",
+                    reason='stack 4/6 · mid/senior · title ~ "AI Engineer" · pay not posted'),
+        _inbox_item("half", 81, "2026-10-30T18:00:00Z", title="Forward Deployed Engineer",
+                    reason='stack 7/7 · mid/senior · title ~ "AI Engineer" (50%)'),
+        _inbox_item("none", 55, "2026-10-30T18:00:00Z", title="Data Scientist",
+                    reason="stack 3/6 · mid/senior · pay not posted"),
+    ]  # fmt: skip
+    out = _render_inbox(ctx, inbox)
+    assert "Title matches <em>AI Engineer</em>" in out
+    assert "Title partly matches <em>AI Engineer</em>" in out
+    assert "Title doesn’t match your targets" in out  # a 0% title match on a quick-fit card
+    assert ">72<" not in out and ">81<" not in out
+
+
 def test_inbox_ghost_warning_badge_and_conditional_filter_chip(plugin):
     """§3: ghost = a 'Possible ghost job' pl-badge--warning with evidence; the Hide-ghost chip (with
     count) renders ONLY when a ghost exists, and hiding filters the row out."""
@@ -984,7 +1003,8 @@ def test_inbox_item_renders_all_fields_and_a_safe_posting_link(plugin):
     assert ">Keep<" in out and ">Dismiss<" in out and ">View posting<" in out
     html = plugin._DASHBOARD_HTML
     assert 'target="_blank" rel="noopener"' in html
-    assert '''href="' + esc(it.url) + '"''' in html
+    # the company's own application page when the watch found one, else the listing
+    assert '''href="' + esc(it.apply_url || it.url) + '"''' in html
 
 
 def test_all_posting_and_inbox_text_is_escaped(plugin):
@@ -993,7 +1013,7 @@ def test_all_posting_and_inbox_text_is_escaped(plugin):
     for frag in (
         "esc(it.title)",
         "esc(it.company)",
-        "esc(it.url)",
+        "esc(it.apply_url || it.url)",
         "esc(a.role)",
         "esc(a.company)",
         "esc(a.id)",

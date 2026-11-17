@@ -195,8 +195,6 @@ def register_hunt_tools(registry, cfg, extended: bool):
             rows, roles=roles, exclude=f["exclude"], locations=locations or f["locations"], max_age_days=age,
             tracker_rows=state.load_applications(),
         )  # fmt: skip
-        from . import jobsource
-
         jobs = res.new if only_new else res.matches
         shown = jobs[: max(1, min(limit, 100))]
         # Feed the inbox so the standalone view (S1c) reflects what manual scans surfaced too — but
@@ -205,12 +203,10 @@ def register_hunt_tools(registry, cfg, extended: bool):
         # the next scan), and mark only the displayed slice as already surfaced so
         # peek_inbox / the digest skip them. Best-effort: a corrupt inbox must not lose scan results.
         try:
+            from . import fitscore
+
             wl.add_to_inbox(
-                [
-                    {**j, "score": jobsource.best_prescore(j, roles), "reason": wl.match_reason(j, roles)}
-                    for j in res.new
-                    if not j.get("tracked")
-                ]
+                fitscore.rate_all([dict(j) for j in res.new if not j.get("tracked")], roles, fitscore.min_salary(cfg))
             )
             wl.drop_from_inbox([j["id"] for j in shown if not j.get("tracked")])
         except wl.StoreUnreadable as e:

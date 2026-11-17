@@ -68,8 +68,9 @@ def test_get_shows_manifest_defaults_for_unset_keys(plugin, iso):
     out = invoke(tool, {"action": "get"})
     assert "max_age_days: 30" in out
     assert "watch_interval_min: 180" in out
-    assert "watch_min_score: 75" in out
+    assert "watch_min_score: 65" in out
     assert "followup_days: 10" in out
+    assert "min_salary: 0" in out
     assert "watch_enabled: false" in out
     assert "title_exclude: intern, internship, new grad" in out
     assert "locations: (blank)" in out
@@ -351,7 +352,7 @@ def test_no_host_save_is_explicitly_session_only(plugin, iso, monkeypatch):
     assert reg.config["max_age_days"] == 7
 
 
-@pytest.mark.parametrize("threshold, expected", [(None, 75), ("", 75), (0, 0), ("0", 0), (80, 80)])
+@pytest.mark.parametrize("threshold, expected", [(None, 65), ("", 65), (0, 0), ("0", 0), (80, 80)])
 def test_watch_scans_with_cleared_or_explicit_threshold(plugin, iso, monkeypatch, threshold, expected):
     import sys
     from types import SimpleNamespace

@@ -3,6 +3,19 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.16.0
+
+- **Inbox scores mean something.** The watch used to score a role by the same title match it had just
+  filtered on, so every role it surfaced scored 100. The quick fit score now reads the posting: how much
+  of its stack your profile names (an off-domain stack or title, like a compiler or chip role, caps it),
+  the seniority in the title (junior roles cap at 50), the title match, and pay against the new
+  **Minimum salary** setting. The default **Watch match threshold** drops from 75 to 65 to match; a value
+  you set yourself is kept, so check it. Cards already in the inbox keep their old score.
+- **Himalayas roles can be read and applied to.** Himalayas' job pages refuse automated reads, and only a
+  400-character excerpt was kept. Cards now keep the full posting text, and the watch looks each
+  Himalayas role up on the company's own Ashby, Greenhouse or Lever board (cached for a week), so the card
+  links to the real application page. `careercoach_track(action="show")` returns one card in full.
+
 ## 0.15.0
 
 - **The browser checks submits.** On a core offering `agent_browser.add_gate_policy`, a submit is allowed

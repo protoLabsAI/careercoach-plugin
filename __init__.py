@@ -113,8 +113,9 @@ INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
 
 def _promote_inbox_item(item: dict) -> dict:
     """Keep an inbox card: a `considering` pipeline row carrying its reason and posting evidence. An
-    existing application is left exactly as it is. The card's score is a keyword title match, not a
-    fit evaluation, so `fit_score` stays 0 (unscored) until the role is actually evaluated."""
+    existing application is left exactly as it is. The card's score is a quick triage score
+    (``search/fitscore.py``), not the rubric, so `fit_score` stays 0 (unscored) until the role is
+    actually evaluated."""
     from .record import state
     from .search import watchlist as wl
 
@@ -123,12 +124,53 @@ def _promote_inbox_item(item: dict) -> dict:
         role=item.get("title") or "",
         status="considering",
         notes=item.get("reason") or "",
-        source=item.get("url") or "",
-        posting={k: item.get(k) for k in ("title", "location", "snippet", "url", "posted")},
+        source=item.get("apply_url") or item.get("url") or "",
+        posting={k: item.get(k) for k in ("title", "location", "snippet", "url", "apply_url", "posted")},
         insert_only=True,
     )
     wl.mark_kept(item["id"])
     return row
+
+
+def _show_card(card: dict) -> str:
+    """One inbox card in full: what it is, the quick score and why, where to apply, and the posting
+    text the board sent, so the coach never has to open a page that refuses automated reads."""
+    from .search.resolve import blocked
+
+    head = [
+        f"{card.get('title', '')} @ {card.get('company', '')}",
+        f"Location: {card.get('location') or 'unknown'}",
+    ]
+    if card.get("comp"):
+        head.append(f"Pay: {card['comp']}")
+    if card.get("posted"):
+        head.append(f"Posted: {str(card['posted'])[:10]}")
+    head.append(f"Fit (quick triage score, not the rubric): {card.get('score', 0)}")
+    if card.get("reason"):
+        head.append(f"Why: {card['reason']}")
+    if card.get("apply_url"):
+        head.append(f"Apply on the company's own page: {card['apply_url']}")
+        if blocked(card.get("url", "")):
+            head.append(f"Listed on: {card.get('url', '')} (that page blocks automated reads; use the link above)")
+    elif blocked(card.get("url", "")):
+        why = {
+            "no title": "the company's own Ashby/Greenhouse/Lever board doesn't list this title",
+            "no board": "the company has no Ashby/Greenhouse/Lever board we could find",
+        }.get(card.get("ats_lookup") or "", "the company's own board wasn't looked up for this card")
+        head.append(
+            f"Listed on: {card.get('url', '')}. That page blocks automated reads, and {why}. The text below "
+            "is the full posting from the board's API; to apply, find the role on the company's careers "
+            "page (or the operator opens the link above in their own browser)."
+        )
+    else:
+        head.append(f"Posting: {card.get('url', '')}")
+    head.append(f"inbox_id: {card.get('id', '')}")
+    text = card.get("description") or card.get("snippet") or ""
+    if not card.get("description"):
+        text = (
+            text + "\n\n(Only a short excerpt is on file for this card; it was queued before full postings were kept.)"
+        ).strip()
+    return "\n".join(head) + "\n\n" + text
 
 
 def _inbox_card(inbox_id: str, company: str, role: str) -> dict | None:
@@ -215,7 +257,9 @@ def _register_tracker_tools(registry, extended: bool) -> None:
         role — company, role, 0-100 fit_score, status considering/preparing/applied/interviewing/offer/
         rejected/passed, notes, source posting URL; tracking a role clears its inbox card); "list" (show
         the pipeline, optional `status` filter); "move" (move an application to `status` — name it by
-        `app_id`, or by `company` + `role`); "inbox" (show new roles waiting for a decision); "keep" (add
+        `app_id`, or by `company` + `role`); "inbox" (show new roles waiting for a decision, best fit
+        first); "show" (one inbox card in full — the whole posting text and where to apply; use it
+        instead of fetching a himalayas.app link, which blocks automated reads); "keep" (add
         an inbox card to the pipeline) and "dismiss" (drop a card for good) — name the card by `inbox_id`,
         or by `company` + `role`. Defaults to "track"."""
         act = (action or "track").strip().lower()
@@ -226,14 +270,30 @@ def _register_tracker_tools(registry, extended: bool) -> None:
                 return f"Can't read the inbox: {e}"
             if not cards:
                 return "The inbox is empty: no new roles are waiting for a decision."
+            cards = sorted(cards, key=lambda j: -int(j.get("score") or 0))
             lines = [
-                f"- {j.get('title', '')} @ {j.get('company', '')} — score {j.get('score', 0)}, "
-                f"{j.get('location') or 'location unknown'}, inbox_id: {j.get('id', '')}"
+                f"- {j.get('title', '')} @ {j.get('company', '')} — fit {j.get('score', 0)}"
+                + (f" ({j['reason']})" if j.get("reason") else "")
+                + f", {j.get('location') or 'location unknown'}"
+                + (f", apply: {j['apply_url']}" if j.get("apply_url") else "")
+                + f", inbox_id: {j.get('id', '')}"
                 for j in cards[:INBOX_LIST_CAP]
             ]
             more = len(cards) - len(lines)
             tail = f"\n{more} more in the Career Coach view." if more > 0 else ""
-            return f"{len(cards)} new role(s), newest first:\n" + "\n".join(lines) + tail
+            return (
+                f"{len(cards)} new role(s), best fit first (a quick triage score, not the rubric; "
+                'action="show" reads one posting in full):\n' + "\n".join(lines) + tail
+            )
+        if act == "show":
+            try:
+                card = _inbox_card(inbox_id, company, role)
+            except wl.StoreUnreadable as e:
+                return f"Can't read the inbox: {e}"
+            if card is None:
+                named = inbox_id or " / ".join(x for x in (company, role) if x) or "nothing"
+                return f'No inbox card matches {named}. Use action="inbox" to see what is waiting.'
+            return _show_card(card)
         if act in ("keep", "dismiss"):
             try:
                 card = _inbox_card(inbox_id, company, role)
@@ -538,11 +598,12 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                     **j,
                     "id": f"{j['source']}:{j['url']}",
                     "hash": boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", "")),
-                    "score": jobsource.best_prescore(j, query),
-                    "reason": watchlist.match_reason(j, query),
                 }
                 for j in jobs
             ]
+            from .search import fitscore
+
+            fitscore.rate_all(matches, query, fitscore.min_salary(cfg))
             untracked = [j for j in matches if not scan.annotate(j, index)["tracked"]]
             watchlist.add_to_inbox(untracked)
             # Retain displayed results for the view without repeating them in the digest.
@@ -644,7 +705,7 @@ def _register_hunt_tools(registry, cfg, extended: bool):
 # live config and the snapshot captured by scan tools, and persists through the host's plugin-config
 # store (ADR 0019) so it survives a restart. YAML is never hand-edited.
 _SETTINGS_STR_KEYS = ("target_roles", "title_exclude", "locations", "search_country")
-_SETTINGS_INT_KEYS = ("max_age_days", "watch_interval_min", "watch_min_score", "followup_days")
+_SETTINGS_INT_KEYS = ("max_age_days", "watch_interval_min", "watch_min_score", "followup_days", "min_salary")
 _SETTINGS_BOOL_KEYS = ("watch_enabled",)
 _SETTINGS_KEYS = _SETTINGS_STR_KEYS + _SETTINGS_INT_KEYS + _SETTINGS_BOOL_KEYS
 _SECRET_KEYS = frozenset({"jobs_api_key"})  # mirrors the manifest `secrets:` — refused, never read back
@@ -656,8 +717,9 @@ _SETTINGS_DEFAULTS = {
     "search_country": "",
     "max_age_days": 30,
     "watch_interval_min": 180,
-    "watch_min_score": 75,
+    "watch_min_score": 65,
     "followup_days": 10,
+    "min_salary": 0,
     "watch_enabled": False,
 }
 # Sensible bounds for the number keys, matching the manifest/usage (watch_interval_min floors at 5,
@@ -668,6 +730,7 @@ _SETTINGS_INT_BOUNDS = {
     "watch_interval_min": (5, None, "at least 5 (minutes)"),
     "watch_min_score": (0, 100, "between 0 and 100"),
     "followup_days": (1, None, "at least 1 (days)"),
+    "min_salary": (0, None, "0 or more (annual, 0 = no pay floor)"),
 }
 
 
@@ -3074,7 +3137,8 @@ def _register_views(registry, cfg) -> None:
         days = _followup_days()
         today = state._today()
         try:
-            inbox = wl.inbox_for_view()
+            # the full posting text stays server-side: 200 cards of it is megabytes per refresh
+            inbox = [{k: v for k, v in j.items() if k != "description"} for j in wl.inbox_for_view()]
         except wl.StoreUnreadable:
             inbox = []  # an unreadable inbox reads as empty — the board still renders the pipeline
         apps = [{**r, "followup": state.needs_followup(r, days, today)} for r in state.load_applications()]
@@ -3278,10 +3342,10 @@ def _register_job_watch(registry, cfg) -> None:
             if last_scan is not None and time.monotonic() - last_scan < interval_s:
                 return
             try:
-                min_score = current.get("watch_min_score", 75)
+                min_score = current.get("watch_min_score", 65)
                 # Cleared Settings fields use the default, while an explicit zero is valid.
                 if min_score is None or min_score == "":
-                    min_score = 75
+                    min_score = 65
                 await _watch_tick(registry, current, int(min_score))
             finally:
                 holder["last_scan"] = time.monotonic()
@@ -3312,7 +3376,7 @@ def _register_job_watch(registry, cfg) -> None:
 
 async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     """One background-watch pass (see ``_register_job_watch``). Returns what it tracked."""
-    from .search import boards, jobsource, scan
+    from .search import boards, fitscore, jobsource, resolve, scan
     from .record import state
     from .search import watchlist as wl
     from .search.hunt import filters
@@ -3375,11 +3439,14 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         # The watch never writes the TRACKER — that's the operator's record of roles they chose.
         # New matches wait in the watch inbox; the digest shows them, and the coach tracks the
         # ones the operator wants.
-        matches = []
-        for j in batch:
-            score = jobsource.best_prescore(j, roles)
-            if score >= min_score:
-                matches.append({**j, "score": score, "reason": wl.match_reason(j, roles)})
+        # Read each role's real posting first: a Himalayas link can't be opened by the coach, so
+        # find the company's own ATS copy (full text + the link to apply on) before scoring.
+        try:
+            await resolve.resolve(batch)
+        except Exception as e:  # noqa: BLE001 — resolution is a bonus; scoring works without it
+            log.info("[careercoach] ATS resolution skipped: %s", e)
+        fitscore.rate_all(batch, roles, fitscore.min_salary(cfg))
+        matches = [j for j in batch if j["score"] >= min_score]
         wl.add_to_inbox(matches)
         wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
     except state.StoreUnreadable as e:

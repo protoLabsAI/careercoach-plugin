@@ -14,7 +14,6 @@ helpers (``profile.py``). Host-free; network only through ``boards``.
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -171,24 +170,6 @@ DISMISSED = "inbox-dismissed.json"
 INBOX_CAP = 200  # trim to this: handled (digested/kept) rows evict first, oldest within each group
 
 
-def match_reason(job: dict, roles: str) -> str:
-    """Explain title overlap, location and posting date without I/O or a clock."""
-    title = set(re.findall(r"[a-z0-9]+", (job.get("title") or "").lower()))
-    best = None
-    for role in re.split(r"[,;\n]", roles or ""):
-        words = re.findall(r"[a-z0-9]+", role.lower())
-        if words:
-            hits = sum(w in title for w in words)
-            if best is None or hits / len(words) > best[0]:
-                best = (hits / len(words), role.strip(), hits, len(words))
-    bits = [f'title matches "{best[1]}" ({best[2]}/{best[3]} words)'] if best and best[2] else []
-    if job.get("remote") or "remote" in (job.get("location") or "").lower():
-        bits.append("remote")
-    if job.get("posted"):
-        bits.append(f"posted {job['posted'][:10]}")
-    return " ".join(" · ".join(bits or ["No target title words matched"]).split())
-
-
 def _dismissed(job: dict, dismissed: dict) -> bool:
     return job.get("id") in dismissed or bool(
         job.get("hash") and job["hash"] in {h for hashes in dismissed.values() for h in hashes}
@@ -238,6 +219,9 @@ def add_to_inbox(jobs: list[dict]) -> int:
         "ghost",
         "reason",
         "snippet",
+        "description",
+        "apply_url",
+        "ats_lookup",
         "hash",
     )
     with _store._locked("inbox"):

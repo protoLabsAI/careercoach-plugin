@@ -35,8 +35,19 @@ HN_SEARCH_URL = "https://hn.algolia.com/api/v1/search"
 HN_BY_DATE_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
 
+DESCRIPTION_CAP = 8000  # the full posting text, for scoring and reading without a page fetch
+
+
 def _job(
-    *, title: str, company: str, location: str, url: str, posted: str = "", snippet: str = "", source: str = ""
+    *,
+    title: str,
+    company: str,
+    location: str,
+    url: str,
+    posted: str = "",
+    snippet: str = "",
+    source: str = "",
+    description: str = "",
 ) -> dict:
     return {
         "title": title.strip(),
@@ -45,6 +56,7 @@ def _job(
         "url": url.strip(),
         "posted": posted,
         "snippet": snippet.strip(),
+        "description": (description or "").strip()[:DESCRIPTION_CAP],
         "source": source,
     }
 
@@ -69,6 +81,7 @@ def parse_jsearch(payload: dict) -> list[dict]:
                 posted=j.get("job_posted_at_datetime_utc") or "",
                 snippet=(j.get("job_description") or "")[:400],
                 source="jsearch",
+                description=j.get("job_description") or "",
             )
         )
     return out
@@ -86,6 +99,7 @@ def parse_remotive(payload: dict) -> list[dict]:
                 posted=j.get("publication_date") or "",
                 snippet=_strip_html(j.get("description") or "")[:400],
                 source="remotive",
+                description=_strip_html(j.get("description") or ""),
             )
         )
     return out
@@ -109,7 +123,12 @@ def parse_himalayas(payload: dict) -> list[dict]:
             posted=_iso_epoch(j.get("pubDate")),
             snippet=_strip_html(j.get("excerpt") or j.get("description") or "")[:400],
             source="himalayas",
+            # the whole posting: himalayas.app job pages refuse automated fetches (Cloudflare),
+            # so this API text is the only copy of the posting the coach can read
+            description=_strip_html(j.get("description") or j.get("excerpt") or ""),
         )
+        if j.get("companySlug"):
+            job["company_slug"] = j["companySlug"]
         lo, hi = j.get("minSalary"), j.get("maxSalary")
         if lo and hi:
             job["comp"] = f"{j.get('currency') or ''} {int(lo):,}–{int(hi):,}".strip()
@@ -157,6 +176,7 @@ def parse_hn(payload: dict) -> list[dict]:
                 posted=h.get("created_at") or "",
                 snippet=_strip_html(h.get("comment_text") or "")[:400],
                 source="hn",
+                description=_strip_html(h.get("comment_text") or ""),
             )
         )
     return out
@@ -190,22 +210,6 @@ def prescore(job: dict, target_roles: str) -> int:
     coverage = len(anywhere) / len(terms)
     title_hit = 1.0 if any(t in title for t in terms) else 0.0
     return min(100, round(70 * coverage + 30 * title_hit))
-
-
-def best_prescore(job: dict, target_roles: str) -> int:
-    """How much of the best-matching target role's wording the TITLE carries (0-100), each
-    comma-separated role scored on its own. Scoring against all roles at once (``prescore``) divides
-    by every word of every role, so listing more roles sank every score — an exact "Forward Deployed
-    Engineer" title scored 60 against five roles."""
-    roles = [r for r in re.split(r"[,;\n]", target_roles or "") if r.strip()]
-    title = set(re.findall(r"[a-z0-9]+", (job.get("title") or "").lower()))
-    best = 0
-    for r in roles:
-        # every word counts here, "AI" and "ML" included — "AI Engineer" must not reduce to "engineer"
-        words = re.findall(r"[a-z0-9]+", r.lower())
-        if words:
-            best = max(best, round(100 * sum(w in title for w in words) / len(words)))
-    return best
 
 
 PROVIDER_LABELS = {

@@ -130,6 +130,13 @@ def format_job(j: dict, i: int | None = None) -> str:
         marks.append(f"you've applied to {j['applied_here']} role(s) here")
     if j.get("ghost"):
         marks.append("⚠ " + "; ".join(j["ghost"]))
+    if j.get("score") is not None and j.get("reason"):
+        bits.append(f"fit {j['score']}")
     head = f"{i}. " if i is not None else "- "
     line = head + " · ".join(bits) + (f"  [{' | '.join(marks)}]" if marks else "")
-    return f"{line}\n   {j.get('url', '')}"
+    from .resolve import blocked
+
+    url = j.get("apply_url") or j.get("url", "")
+    if blocked(url):  # a page the coach can't open: say where the readable copy is
+        url += "  (job board page, blocks automated reads: careercoach_track(action='show') has the full text)"
+    return f"{line}\n   {url}"

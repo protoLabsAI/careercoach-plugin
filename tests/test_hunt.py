@@ -640,16 +640,6 @@ def test_job_specific_url(mods):
     assert not js("https://acme.com/careers?utm_campaign=2026101")
 
 
-def test_watch_records_fit_zero_and_gates_on_the_whole_role(mods):
-    bp = (
-        mods.boards
-        and importlib.import_module(mods.state.__name__.rsplit(".", 2)[0] + ".search.jobsource").best_prescore
-    )
-    roles = "AI Engineer, Forward Deployed Engineer"
-    assert bp({"title": "Solutions Engineer"}, roles) < 75  # "AI" counts — not just "engineer"
-    assert bp({"title": "Senior AI Engineer"}, roles) == 100
-
-
 # ── city + state terms, slug guesses, export zip errors ──
 def test_a_state_after_a_city_stays_with_the_city(mods):
     b = mods.boards
