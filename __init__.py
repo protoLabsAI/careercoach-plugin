@@ -573,6 +573,7 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         """Search live job postings for `query` (title, skill or role), optionally by `location` or `remote`-only.
         `source` accepts comma-separated names or "all" (keyless plus RapidAPI if keyed;
         "all,openwebninja" selects that vendor). Single sources (default: Settings): "himalayas" (keyless remote board), "hn" (this month's HN 'Who is hiring?'),
+        "jobicy" / "weworkremotely" / "remoteok" (keyless feeds of recent remote roles),
         "jsearch" (Google for Jobs via RapidAPI; needs a RapidAPI key), "openwebninja" (JSearch via OpenWeb Ninja; needs its key). For watched companies, careercoach_scan_boards is fresher."""
         from .search import jobsource
 

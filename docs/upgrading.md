@@ -3,6 +3,17 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.2
+
+- **Three more free job sources.** Job source accepts `jobicy` (remote roles open to the US, with pay),
+  `weworkremotely` (the programming and design feeds) and `remoteok`. They need no key. Each is a feed
+  of recent postings, downloaded at most once an hour and matched against your search locally. Every
+  role links back to the board it came from.
+- **Roles from JSearch and the feeds get the company's own apply link.** JSearch links to whichever
+  aggregator syndicated a posting (JobLeads, Jobgether, Indeed). The watch now looks each company up on
+  Ashby, Greenhouse and Lever, as it already did for Himalayas, and shows the company's own posting when
+  it finds one. The aggregator link stays as the fallback.
+
 ## 0.17.1
 
 - **JSearch on RapidAPI works again.** RapidAPI removed the `/search` endpoint, so every search with a
