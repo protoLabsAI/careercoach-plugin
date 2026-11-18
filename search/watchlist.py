@@ -14,7 +14,7 @@ helpers (``profile.py``). Host-free; network only through ``boards``.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..record import profile as _store
@@ -67,6 +67,64 @@ def watch_last_run() -> str:
         return str(_load(WATCH_RUN, {}).get("last_run") or "")
     except StoreUnreadable:
         return ""
+
+
+# ── the JSearch request budget ───────────────────────────────────────────────
+# RapidAPI's free JSearch plan is 200 requests a month. The watch asks for five roles every pass,
+# about 40 a day, so unbudgeted it spends the month in five days and every later call is a 429.
+# Each JSearch answer says how many requests are left and when they refill; the watch spreads
+# what's left over the days until then. A bigger plan gets a bigger daily share by the same sum.
+JSEARCH_QUOTA = "jsearch-quota.json"
+
+
+def _quota_now(now: datetime | None) -> datetime:
+    return now or datetime.now(UTC)
+
+
+def note_jsearch_call(quota: dict, now: datetime | None = None) -> None:
+    """Count one JSearch request against today, and keep the allowance its answer reported
+    (``jobsource.parse_jsearch_quota``; empty when the vendor sent none). Never raises: the
+    count is bookkeeping, and losing it must not cost a search its results."""
+    now = _quota_now(now)
+    today = now.date().isoformat()
+    try:
+        rec = _load(JSEARCH_QUOTA, {})
+    except StoreUnreadable:
+        rec = {}
+    used = int(rec.get("used_today") or 0) if rec.get("day") == today else 0
+    out = {"day": today, "used_today": used + 1}
+    if quota:
+        out["limit"] = int(quota.get("limit") or 0)
+        out["remaining"] = int(quota.get("remaining") or 0)
+        out["reset_at"] = (now + timedelta(seconds=int(quota.get("reset_s") or 0))).isoformat(timespec="seconds")
+    try:
+        _save(JSEARCH_QUOTA, out)
+    except OSError:
+        pass
+
+
+def jsearch_allowance(now: datetime | None = None) -> int | None:
+    """How many more JSearch requests the watch may make today: what's left in the plan, spread
+    evenly over the days until it refills, less today's use. ``None`` when nothing is known yet
+    (no call has reported an allowance, or the plan has refilled since): then there is no cap."""
+    now = _quota_now(now)
+    try:
+        rec = _load(JSEARCH_QUOTA, {})
+    except StoreUnreadable:
+        return None
+    if "remaining" not in rec:
+        return None
+    try:
+        reset_at = datetime.fromisoformat(str(rec.get("reset_at") or ""))
+    except ValueError:
+        return None
+    if reset_at <= now:
+        return None  # refilled; the next answer reports the new allowance
+    remaining = max(0, int(rec.get("remaining") or 0))
+    used = int(rec.get("used_today") or 0) if rec.get("day") == now.date().isoformat() else 0
+    days_left = max(1, -(-(reset_at - now).total_seconds() // 86400))
+    per_day = max(1, int((remaining + used) // days_left)) if remaining else 0
+    return max(0, min(remaining, per_day - used))
 
 
 # ── watchlist ─────────────────────────────────────────────────────────────────

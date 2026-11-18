@@ -3,7 +3,8 @@
 Providers:
 - ``jsearch``    — [JSearch on RapidAPI](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch),
   which aggregates Google-for-Jobs (LinkedIn, Indeed, ZipRecruiter, …). Needs a key
-  (`X-RapidAPI-Key`, the plugin's `jobs_api_key` secret).
+  (`X-RapidAPI-Key`, the plugin's `jobs_api_key` secret). Calls ``/search-v2``: RapidAPI removed
+  ``/search`` (it answers 404), and v2 nests the jobs under ``data.jobs``.
 - ``openwebninja`` — the same JSearch API bought directly from
   [OpenWeb Ninja](https://www.openwebninja.com/api/jsearch): another host and an `x-api-key`
   header. Explicit only: both vendors issue 50-character keys, so ``auto`` can't tell whose key
@@ -15,7 +16,9 @@ Providers:
 - ``remotive``   — the Remotive board. Kept only for an explicit ``jobs_provider: remotive``: since
   2026-10 its API returns one fixed 14-posting feed whatever the query, so ``auto`` never picks it.
 
-Selection: ``provider="auto"`` uses jsearch when a key is present, else himalayas.
+Selection: ``provider="auto"`` uses jsearch when a key is present, else himalayas. When ``auto``
+picked JSearch and JSearch fails (a rejected key, a spent quota, an outage), the search is answered
+by Himalayas instead and the result says why: a bad key must not cost a search its results.
 
 Neither Himalayas' nor Remotive's search is a relevance filter we can rely on (Himalayas matches
 query words loosely — "design engineer" returns plumbing roles), so keyless results are ranked and
@@ -33,6 +36,7 @@ import re
 from dataclasses import dataclass, field
 
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
+JSEARCH_PATH = "/search-v2"  # RapidAPI removed /search (404 "Endpoint '/search' does not exist")
 OPENWEBNINJA_URL = "https://api.openwebninja.com/jsearch/search"
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
 HIMALAYAS_URL = "https://himalayas.app/jobs/api/search"
@@ -80,22 +84,61 @@ def parse_jsearch(payload: dict) -> list[dict]:
     out: list[dict] = []
     for j in data or []:
         loc = ", ".join(x for x in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if x)
-        if not loc and j.get("job_is_remote"):
-            loc = "Remote"
-        out.append(
-            _job(
-                title=j.get("job_title") or "",
-                company=j.get("employer_name") or "",
-                location=loc,
-                url=j.get("job_apply_link") or j.get("job_google_link") or "",
-                # v2 can send a null datetime with the epoch-seconds timestamp still set
-                posted=j.get("job_posted_at_datetime_utc") or _iso_epoch(j.get("job_posted_at_timestamp")),
-                snippet=(j.get("job_description") or "")[:400],
-                source="jsearch",
-                description=j.get("job_description") or "",
-            )
+        remote = bool(j.get("job_is_remote"))
+        if remote:
+            # "Remote (US)", not a bare "US": the location filter reads "remote" from this text
+            loc = f"Remote ({loc})" if loc else "Remote"
+        job = _job(
+            title=j.get("job_title") or "",
+            company=j.get("employer_name") or "",
+            location=loc,
+            url=j.get("job_apply_link") or j.get("job_google_link") or "",
+            # v2 can send a null datetime with the epoch-seconds timestamp still set
+            posted=j.get("job_posted_at_datetime_utc") or _iso_epoch(j.get("job_posted_at_timestamp")),
+            snippet=(j.get("job_description") or "")[:400],
+            source="jsearch",
+            description=j.get("job_description") or "",
         )
+        if remote:
+            job["remote"] = True
+            if j.get("job_country"):
+                # structured, so the filter never reads the text: "Remote (Berlin, DE)" would
+                # otherwise pass as Delaware
+                job["countries"] = [str(j["job_country"])]
+        lo, hi = j.get("job_min_salary"), j.get("job_max_salary")
+        # JSearch sends pay as bare numbers. They are dollars when it says USD, or says nothing
+        # for a US posting. Any other pay is left out, so it is never compared to the (USD) floor
+        # as if it were dollars.
+        currency = str(j.get("job_salary_currency") or "").strip().upper()
+        us = str(j.get("job_country") or "US").strip().upper() in ("US", "USA", "UNITED STATES")
+        if lo and hi and (currency == "USD" or (not currency and us)):
+            job["comp"] = f"{currency} {int(lo):,}–{int(hi):,}".strip()
+            period = (j.get("job_salary_period") or "").strip().lower()
+            if period and period != "year":
+                job["comp"] += f" per {period}"
+        out.append(job)
     return out
+
+
+def parse_jsearch_quota(headers) -> dict:
+    """RapidAPI's request allowance from a response's headers: ``{"limit", "remaining",
+    "reset_s"}`` (requests in the plan's period, requests left, seconds until it refills). ``{}``
+    when the headers aren't there (another vendor, or a proxy that strips them)."""
+
+    def _int(name: str) -> int | None:
+        try:
+            return int(str(headers.get(name) or "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    remaining = _int("x-ratelimit-requests-remaining")
+    if remaining is None:
+        return {}
+    return {
+        "limit": _int("x-ratelimit-requests-limit") or 0,
+        "remaining": max(0, remaining),
+        "reset_s": max(0, _int("x-ratelimit-requests-reset") or 0),
+    }
 
 
 def parse_remotive(payload: dict) -> list[dict]:
@@ -251,15 +294,19 @@ def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
 @dataclass
 class JobSearch:
     """What a search returned and WHO answered it — ``provider`` is the source that was actually
-    queried, ``keyless_fallback`` is True when ``auto`` fell back to a keyless board for want of a key,
-    ``fetched`` is how many postings the provider sent, ``matched`` how many survived relevance
-    filtering (before ``limit``)."""
+    queried, ``keyless_fallback`` is True when ``auto`` fell back to a keyless board (for want of a
+    key, or because JSearch failed: then ``fallback_reason`` says how), ``fetched`` is how many
+    postings the provider sent, ``matched`` how many survived relevance filtering (before
+    ``limit``). ``quota`` is JSearch's request allowance as of this call (``parse_jsearch_quota``),
+    empty when JSearch didn't answer or didn't say."""
 
     jobs: list[dict] = field(default_factory=list)
     provider: str = ""
     keyless_fallback: bool = False
     fetched: int = 0
     matched: int = 0
+    fallback_reason: str = ""
+    quota: dict = field(default_factory=dict)
 
     @property
     def provider_label(self) -> str:
@@ -277,17 +324,23 @@ async def search_jobs(
     provider: str = "auto",
     rank: bool = True,
     country: str = "",
+    max_age_days: float = 0,
 ) -> JobSearch:
     """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
     naming the provider that answered. Keyless results are filtered to the query and ranked
     by ``prescore`` before ``limit`` is applied, unless ``rank=False`` (a caller that scores
     the raw feed itself against more than this one query, like the watch scan). ``country``
-    narrows Himalayas to roles open to that country. Raises ``ValueError`` if jsearch or
-    openwebninja is selected without a key, for an unknown provider, or when either keyed
-    vendor answers with an error (the message says why — see ``_raise_for_job_api``)."""
+    narrows Himalayas to roles open to that country; ``max_age_days`` asks JSearch for postings
+    no older than that. Raises ``ValueError`` if jsearch or openwebninja is selected without a
+    key, for an unknown provider, or when either keyed vendor answers with an error (the message
+    says why — see ``_raise_for_job_api``). Under ``auto`` a JSearch failure doesn't raise: the
+    search falls back to Himalayas and ``fallback_reason`` carries that message."""
     limit = max(1, min(int(limit), 25))
     prov = choose_provider(provider, api_key)
-    keyless = (provider or "auto").strip().lower() == "auto" and prov in KEYLESS
+    auto = (provider or "auto").strip().lower() == "auto"
+    keyless = auto and prov in KEYLESS
+    reason = ""
+    quota: dict = {}
     if prov not in PROVIDER_LABELS:
         raise ValueError(f"unknown job source {prov!r} — use auto, jsearch, openwebninja, himalayas, hn or remotive")
     if prov == "jsearch":
@@ -295,8 +348,13 @@ async def search_jobs(
             raise ValueError(
                 "JSearch needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'himalayas' (keyless)."
             )
-        jobs = await _get_jsearch(query, location, remote, api_key)
-        fetched = len(jobs)
+        try:
+            jobs, quota = await _get_jsearch(query, location, remote, api_key, max_age_days)
+            fetched = len(jobs)
+        except Exception as e:  # noqa: BLE001 — any JSearch failure; under auto it must not cost the search
+            if not auto:
+                raise
+            prov, keyless, reason = "himalayas", True, _failure(e)
     elif prov == "openwebninja":
         if not (api_key or "").strip():
             raise ValueError(
@@ -304,7 +362,7 @@ async def search_jobs(
             )
         jobs = await _get_openwebninja(query, location, remote, api_key)
         fetched = len(jobs)
-    else:
+    if prov in KEYLESS:
         if prov == "himalayas":
             raw = await _get_himalayas(query, country)
         elif prov == "hn":
@@ -313,7 +371,15 @@ async def search_jobs(
             raw = await _get_remotive(query)
         fetched = len(raw)
         jobs = rank_by_query(raw, query) if rank else raw
-    return JobSearch(jobs=jobs[:limit], provider=prov, keyless_fallback=keyless, fetched=fetched, matched=len(jobs))
+    return JobSearch(
+        jobs=jobs[:limit],
+        provider=prov,
+        keyless_fallback=keyless,
+        fetched=fetched,
+        matched=len(jobs),
+        fallback_reason=reason,
+        quota=quota,
+    )
 
 
 #: Who refused the request, as the user knows the vendor (not the feed's label in PROVIDER_LABELS).
@@ -369,7 +435,27 @@ def _raise_for_job_api(resp, provider: str) -> None:
     raise ValueError(f"{label} returned HTTP {status}" + (f": {msg}" if msg else ""))
 
 
-async def _get_jsearch(query: str, location: str, remote: bool, api_key: str) -> list[dict]:
+def _failure(e: Exception) -> str:
+    """A one-line reason for a failed provider call: ``_raise_for_job_api``'s message for a
+    vendor's refusal, else the exception's text (a timeout, a connection error)."""
+    return str(e) or type(e).__name__
+
+
+def _date_posted(max_age_days: float) -> str:
+    """JSearch's ``date_posted`` bucket that covers ``max_age_days`` ("" = any age)."""
+    if not max_age_days or max_age_days <= 0:
+        return ""
+    for days, bucket in ((1, "today"), (3, "3days"), (7, "week"), (31, "month")):
+        if max_age_days <= days:
+            return bucket
+    return ""
+
+
+async def _get_jsearch(
+    query: str, location: str, remote: bool, api_key: str, max_age_days: float = 0
+) -> tuple[list[dict], dict]:
+    """RapidAPI JSearch ``/search-v2`` → ``(jobs, quota)``. v2 dropped ``remote_jobs_only`` (it is
+    ignored without an error, and on-site roles come back); the remote filter is ``work_from_home``."""
     import httpx
 
     q = (query or "software engineer").strip()
@@ -377,12 +463,14 @@ async def _get_jsearch(query: str, location: str, remote: bool, api_key: str) ->
         q = f"{q} in {location}"
     params = {"query": q, "page": "1", "num_pages": "1"}
     if remote:
-        params["remote_jobs_only"] = "true"
+        params["work_from_home"] = "true"
+    if _date_posted(max_age_days):
+        params["date_posted"] = _date_posted(max_age_days)
     headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": JSEARCH_HOST}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.get(f"https://{JSEARCH_HOST}/search", params=params, headers=headers)
+        resp = await client.get(f"https://{JSEARCH_HOST}{JSEARCH_PATH}", params=params, headers=headers)
         _raise_for_job_api(resp, "jsearch")
-        return parse_jsearch(resp.json())
+        return parse_jsearch(resp.json()), parse_jsearch_quota(resp.headers)
 
 
 async def _get_openwebninja(query: str, location: str, remote: bool, api_key: str) -> list[dict]:

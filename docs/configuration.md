@@ -22,7 +22,7 @@ Every setting lives under **Settings → Career Coach**, and in YAML under `care
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|
-| Job source | `jobs_provider` | `auto` | Which source market searches use: `auto` (JSearch on RapidAPI when a key is set, else Himalayas), `jsearch`, `openwebninja` (JSearch with an OpenWeb Ninja key), `himalayas`, `hn` or `remotive` |
+| Job source | `jobs_provider` | `auto` | Which source market searches use: `auto` (JSearch on RapidAPI when a key is set, falling back to Himalayas when there is no key or JSearch fails), `jsearch`, `openwebninja` (JSearch with an OpenWeb Ninja key), `himalayas`, `hn` or `remotive` |
 | Job-source API key | `jobs_api_key` | blank | Optional key for JSearch (Google for Jobs, including LinkedIn and Indeed listings): a RapidAPI key (Job source `auto` or `jsearch`) or an OpenWeb Ninja key (Job source `openwebninja`). Stored as a secret |
 | Search country | `search_country` | blank | Narrows keyless remote-board results to roles open in this country, for example `United States` |
 | Locations | `locations` | blank | Where a role may be: places, plus `remote` for remote and open to the US. Blank means anywhere |

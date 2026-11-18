@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 NOW = datetime.now(UTC)
+_ASYNC_CLIENT = httpx.AsyncClient  # the real class, before any fixture swaps it
 
 
 def _ago(days: float) -> str:
@@ -563,6 +564,102 @@ def test_a_pass_where_every_source_failed_is_not_a_run(watch_env, mods, monkeypa
     monkeypatch.setattr(importlib.import_module(plugin.__name__ + ".search.jobsource"), "search_jobs", down)
     asyncio.run(plugin._watch_tick(reg, cfg, 75))
     assert mods.watchlist.watch_last_run() == ""
+
+
+# ── the watch and a JSearch key: the keyless sweep always runs; JSearch within its budget ─────────
+JSEARCH = {
+    "data": {
+        "jobs": [
+            {"job_title": "Design Engineer", "employer_name": "Googlejobs Co", "job_is_remote": True,
+             "job_country": "US", "job_apply_link": "https://gj.example/1", "job_description": LONG,
+             "job_posted_at_datetime_utc": (NOW - timedelta(days=1)).isoformat()},
+        ]
+    }
+}  # fmt: skip
+
+
+def _with_jsearch(watch_env, monkeypatch, respond):
+    """The watch env plus a mock JSearch. ``respond(request)`` answers each JSearch call; returns
+    the list those calls are logged to."""
+    plugin, reg, cfg = watch_env
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "jsearch.p.rapidapi.com":
+            calls.append(request)
+            return respond(request)
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=HIMALAYAS)
+        return _route(request)
+
+    # watch_env already swapped httpx.AsyncClient for its own mock: replace that one, don't wrap it
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(plugin, "JSEARCH_SPACING_S", 0)
+    cfg["jobs_api_key"] = "KEY"
+    return plugin, reg, cfg, calls
+
+
+def _quota(remaining: int, days: int = 30):
+    return {
+        "X-RateLimit-Requests-Limit": "200",
+        "X-RateLimit-Requests-Remaining": str(remaining),
+        "X-RateLimit-Requests-Reset": str(days * 86400),
+    }
+
+
+def test_a_rejected_jsearch_key_costs_the_watch_nothing_from_the_keyless_board(watch_env, mods, monkeypatch, caplog):
+    """2026-11-18: a key RapidAPI rejected turned the whole market sweep off. Auto picked JSearch
+    for every role, role 1 got a 403, roles 2-5 a 429, and the keyless board was never asked."""
+    plugin, reg, cfg, calls = _with_jsearch(
+        watch_env, monkeypatch, lambda r: httpx.Response(403, json={"message": "You are not subscribed to this API."})
+    )
+    with caplog.at_level("WARNING"):
+        got = asyncio.run(plugin._watch_tick(reg, cfg, 75))
+    assert ("Newco", "Forward Deployed Engineer") in {(m["company"], m["title"]) for m in got}  # Himalayas
+    assert len(calls) == 1  # one refusal answers for the pass: no burst of four more
+    assert "JSearch isn't answering (RapidAPI accepted the key, but its account isn't subscribed" in caplog.text
+    assert mods.watchlist.watch_last_run()
+
+
+def test_the_watch_sweeps_jsearch_and_the_keyless_board_together(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls = _with_jsearch(
+        watch_env, monkeypatch, lambda r: httpx.Response(200, json=JSEARCH, headers=_quota(1000))
+    )
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    companies = {m["company"] for m in got}
+    assert {"Googlejobs Co", "Newco"} <= companies  # JSearch's role and Himalayas' role, one pass
+    assert len(calls) == 5 and all(c.url.path == "/search-v2" for c in calls)
+
+
+def test_the_watch_spreads_a_small_jsearch_plan_over_the_month(watch_env, mods, monkeypatch):
+    """The free plan is 200 requests a month; five a pass, eight passes a day spends it in five days."""
+    left = [193]
+
+    def respond(request):
+        left[0] -= 1
+        return httpx.Response(200, json=JSEARCH, headers=_quota(left[0]))
+
+    plugin, reg, cfg, calls = _with_jsearch(watch_env, monkeypatch, respond)
+    for _ in range(4):  # four passes in one day
+        asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 6  # 193 left over 30 days is 6 a day, however many passes run
+    assert mods.watchlist.jsearch_allowance() == 0
+
+
+def test_the_jsearch_allowance_is_whats_left_spread_over_the_days_left(mods):
+    wl = mods.watchlist
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+    assert wl.jsearch_allowance(now) is None  # nothing known yet: no cap
+    wl.note_jsearch_call({"limit": 200, "remaining": 193, "reset_s": 30 * 86400}, now)
+    assert wl.jsearch_allowance(now) == 5  # (193 + 1 used) // 30 = 6 a day, one spent
+    assert wl.jsearch_allowance(now + timedelta(days=1)) == 6  # a new day, a new share
+    assert wl.jsearch_allowance(now + timedelta(days=31)) is None  # the plan refilled
+    wl.note_jsearch_call({"limit": 200, "remaining": 0, "reset_s": 86400}, now)
+    assert wl.jsearch_allowance(now) == 0  # spent
+    wl.note_jsearch_call({}, now)  # a vendor that reports no allowance
+    assert wl.jsearch_allowance(now) is None
+    wl.note_jsearch_call({"limit": 100000, "remaining": 99000, "reset_s": 30 * 86400}, now)
+    assert wl.jsearch_allowance(now) > 3000  # a paid plan is never the limit on a watch
 
 
 def test_an_unreadable_run_note_reads_as_not_run(mods):
