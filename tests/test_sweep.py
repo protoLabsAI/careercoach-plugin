@@ -208,6 +208,17 @@ def test_a_refusal_ends_the_source_for_the_pass_and_keeps_its_place(mods, monkey
     assert asked2["jsearch.p.rapidapi.com"][0] == mods.sweep.role_groups(ROLES)[0]  # the refused query is asked again
 
 
+def test_no_key_skips_the_keyed_source_silently(mods, monkeypatch, caplog):
+    """`auto` lists JSearch for everyone; with no key that is the normal setup, not a warning."""
+    asked = _net(monkeypatch)
+    with caplog.at_level("INFO"):
+        jobs, answered = _run(mods, ["jsearch", "himalayas"], key="")
+    assert "jsearch.p.rapidapi.com" not in asked and answered and "JSearch" not in caplog.text
+    asked = _net(monkeypatch)
+    _run(mods, ["jsearch"], key="")
+    assert asked["himalayas.app"]  # a keyed-only setup with no key still gets the keyless board
+
+
 def test_keyed_requests_get_the_longer_timeout(mods, monkeypatch):
     seen = []
 

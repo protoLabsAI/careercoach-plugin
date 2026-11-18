@@ -201,7 +201,10 @@ async def market_sweep(
             if source in feeds.FEEDS:
                 got, ok = [{**j, "source": source} for j in await feeds.fetch(source)], True
             elif source in jobsource.JSEARCH_VENDORS:
-                got, ok, refused = await _keyed(source, queries, cfg, api_key, max_age_days)
+                if api_key:
+                    got, ok, refused = await _keyed(source, queries, cfg, api_key, max_age_days)
+                else:  # no key is the normal keyless setup, not a failure: skip it without a word
+                    got, ok, refused = [], False, True
                 if (refused or not ok) and not keyless_configured and not stand_in:
                     stand_in = True
                     sources.append("himalayas")  # a keyed outage must not cost the pass the market
