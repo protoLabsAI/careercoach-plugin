@@ -3,6 +3,19 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.4
+
+- **Another field's engineer no longer scores as a match.** Every word of "Design Engineer" is also in
+  "Utility Infra Design Engineer", and "Automation Engineer" is in "Pharmacy Process & Automation
+  Engineer". Titles naming another discipline (marketing, network, pharmacy, civil, mechanical,
+  electrical, manufacturing and similar) are now treated as off-domain and capped at 45, unless your
+  profile names that field.
+- **Recruiter and reposter listings can't top the inbox.** A posting whose "company" is a recruiter or a
+  reposting site (Jobgether, Recruiting from Scratch, anything "Staffing" or "Recruiting") is capped at
+  55 and says why. It still appears in a search you run; it stays under the default inbox bar of 65.
+- **One card per role across sources.** The same opening from a company's own board, Himalayas and a
+  feed made one card each. The inbox now keeps the first and notes the other sources on it.
+
 ## 0.17.3
 
 - **The watch searches the market for every target role.** It used to search for the first five only.

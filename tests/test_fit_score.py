@@ -61,6 +61,39 @@ def test_two_titles_that_both_pass_the_filter_score_apart(fs):
     assert c <= 45 and "off-domain" in why
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Utility Infra Design Engineer / Specialist",  # all of "Design Engineer" is in it
+        "Senior Pharmacy Process & Automation Engineer",
+        "Product Marketing Engineer - High Performance Computing",
+        "Sr Ethernet AI Network Engineer",
+        "Mechanical Design Engineer",
+    ],
+)
+def test_another_disciplines_engineer_is_an_off_domain_title(fs, title):
+    """Seen in the operator's inbox on 2026-11-18, scoring 70-78 on a title-word match."""
+    desc = "Python, TypeScript, React, LLM agents and evals. " * 20
+    roles = "Design Engineer, Automation Engineer, Product Engineer, AI Engineer"
+    score, why = fs.score(_job(title, desc), roles, PROFILE)
+    assert score <= 45 and "off-domain title" in why
+    plain, why = fs.score(_job("Senior Design Engineer", desc), roles, PROFILE)
+    assert plain > 65 and "off-domain" not in why
+
+
+@pytest.mark.parametrize(
+    "company", ["Recruiting from Scratch", "Jobgether", "remote quest jobs", "Acme Staffing", "Confidential"]
+)
+def test_a_recruiter_or_reposter_listing_cannot_top_the_inbox(fs, company):
+    """ "AI Engineer (Remote)" from Recruiting from Scratch scored 100 and sat first in the inbox."""
+    desc = "Python, TypeScript, React, LLM agents and evals. " * 20
+    job = {**_job("AI Engineer (Remote)", desc), "company": company, "comp": "USD 200,000–240,000"}
+    score, why = fs.score(job, "AI Engineer", PROFILE, 120000)
+    assert score <= fs.REPOSTER_CAP and "recruiter or reposter" in why
+    real, why = fs.score({**job, "company": "Recruitee Analytics Co"}, "AI Engineer", PROFILE, 120000)
+    assert real > 80 and "reposter" not in why  # a product company with a similar name is not caught
+
+
 def test_seniority_and_junior_cap(fs):
     desc = "Python, TypeScript, React, LLM agents and evals."
     senior, _ = fs.score(_job("Senior Product Engineer", desc), ROLES, PROFILE)
