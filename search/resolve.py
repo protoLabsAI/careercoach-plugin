@@ -1,4 +1,8 @@
-"""Find the company's own application page for a role a job board listed.
+"""Find the company's own application page for a role a job board or aggregator listed.
+
+Every role from a board (Himalayas, Jobicy, We Work Remotely, Remote OK) or from JSearch is looked
+up: JSearch's links go to whichever aggregator syndicated the posting, and applying on the
+company's own page beats applying through a middleman. The first case below is why this exists.
 
 Himalayas' "applicationLink" is a page on himalayas.app, and Cloudflare challenges every automated
 fetch of it — so a Himalayas role the coach couldn't open was a role it couldn't evaluate or apply
@@ -32,6 +36,23 @@ def _foreign(comp: str) -> bool:
 
 def blocked(url: str) -> bool:
     return any(h in (url or "") for h in BLOCKED_HOSTS)
+
+
+#: Sources whose link is a job board's or an aggregator's page. JSearch (Google for Jobs) links
+#: to whoever syndicated the posting (JobLeads, Jobgether, Indeed, …), never to the company.
+INDIRECT_SOURCES = ("himalayas", "jsearch", "openwebninja", "jobicy", "weworkremotely", "remoteok")
+#: A link already on one of these is the company's own posting: nothing to look up.
+DIRECT_HOSTS = ("greenhouse.io", "ashbyhq.com", "lever.co", "myworkdayjobs.com", "workable.com", "smartrecruiters.com")
+
+
+def indirect(job: dict) -> bool:
+    """Is this job's link a board's or aggregator's page, so the company's own posting is worth
+    looking up? True for a blocked page, and for any role a job board or aggregator listed unless
+    its link already points at an applicant-tracking system."""
+    url = job.get("url") or ""
+    if blocked(url):
+        return True
+    return job.get("source") in INDIRECT_SOURCES and not any(h in url for h in DIRECT_HOSTS)
 
 
 def _words(title: str) -> set[str]:
@@ -74,8 +95,8 @@ def _fresh(entry: dict, now: datetime) -> bool:
 
 
 async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
-    """Fill ``apply_url`` (and a fuller ``description``) in place for jobs whose ``url`` is on a
-    blocked board, from the company's own ATS, and record the outcome as ``ats_lookup``: "found",
+    """Fill ``apply_url`` (and a fuller ``description``) in place for jobs a board or aggregator
+    listed (``indirect``), from the company's own ATS, and record the outcome as ``ats_lookup``: "found",
     "no title" (the company's board doesn't list it) or "no board" (no Ashby/Greenhouse/Lever board).
     A job not looked up this pass (past the cap, or a probe that hit a 429/timeout) is left without
     ``ats_lookup``. Returns how many it resolved. Never raises."""
@@ -86,7 +107,7 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
     from . import watchlist as wl
 
     now = now or datetime.now(timezone.utc)
-    todo = [j for j in jobs if blocked(j.get("url", "")) and not j.get("apply_url") and j.get("company")]
+    todo = [j for j in jobs if indirect(j) and not j.get("apply_url") and j.get("company")]
     if not todo:
         return 0
     try:
