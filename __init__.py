@@ -29,7 +29,6 @@ the core register anyway).
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json as _json
 import logging
@@ -111,7 +110,6 @@ def _as_bool(value) -> bool:
 # ── agent tools: the application tracker ──────────────────────────────────────
 MARKET_ROLE_CAP = 6  # a market search over the target roles runs one search per role, this many at most
 INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
-JSEARCH_SPACING_S = 1.1  # between the watch's JSearch requests: five inside one second drew 429s
 
 
 def _promote_inbox_item(item: dict) -> dict:
@@ -765,7 +763,14 @@ def _register_hunt_tools(registry, cfg, extended: bool):
 # live config and the snapshot captured by scan tools, and persists through the host's plugin-config
 # store (ADR 0019) so it survives a restart. YAML is never hand-edited.
 _SETTINGS_STR_KEYS = ("target_roles", "title_exclude", "locations", "search_country")
-_SETTINGS_INT_KEYS = ("max_age_days", "watch_interval_min", "watch_min_score", "followup_days", "min_salary")
+_SETTINGS_INT_KEYS = (
+    "max_age_days",
+    "watch_interval_min",
+    "watch_min_score",
+    "watch_market_queries",
+    "followup_days",
+    "min_salary",
+)
 _SETTINGS_BOOL_KEYS = ("watch_enabled",)
 _SETTINGS_KEYS = _SETTINGS_STR_KEYS + _SETTINGS_INT_KEYS + _SETTINGS_BOOL_KEYS
 _SECRET_KEYS = frozenset({"jobs_api_key"})  # mirrors the manifest `secrets:` — refused, never read back
@@ -778,6 +783,7 @@ _SETTINGS_DEFAULTS = {
     "max_age_days": 30,
     "watch_interval_min": 180,
     "watch_min_score": 65,
+    "watch_market_queries": 3,
     "followup_days": 10,
     "min_salary": 0,
     "watch_enabled": False,
@@ -789,6 +795,7 @@ _SETTINGS_INT_BOUNDS = {
     "max_age_days": (0, None, "0 or more (0 = any age)"),
     "watch_interval_min": (5, None, "at least 5 (minutes)"),
     "watch_min_score": (0, 100, "between 0 and 100"),
+    "watch_market_queries": (1, 10, "between 1 and 10 (keyed requests per pass)"),
     "followup_days": (1, None, "at least 1 (days)"),
     "min_salary": (0, None, "0 or more (annual, 0 = no pay floor)"),
 }
@@ -3436,7 +3443,7 @@ def _register_job_watch(registry, cfg) -> None:
 
 async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     """One background-watch pass (see ``_register_job_watch``). Returns what it tracked."""
-    from .search import boards, fitscore, jobsource, resolve, scan
+    from .search import boards, fitscore, jobsource, resolve, scan, sweep
     from .record import state
     from .search import watchlist as wl
     from .search.hunt import filters
@@ -3463,68 +3470,26 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             found += [j for j in res.new if not j["tracked"]]
     except Exception as e:  # noqa: BLE001
         log.info("[careercoach] watch board scan failed: %s", e)
-    # 2) a market sweep per target role, for companies not on the watchlist yet. Under `auto` the
-    # keyless board is swept every pass, and JSearch is swept as well while a key is set, it is
-    # answering, and today's share of its request allowance lasts: a rejected key or a spent plan
-    # costs the pass JSearch's roles, never the keyless ones.
+    # 2) the market, for companies not on the watchlist yet: every target role across every
+    # configured source (search/sweep.py). Under `auto` that is JSearch (while a key is set) plus
+    # the keyless board; a list or `all` names its own.
     market: list[dict] = []
     api_key = (cfg.get("jobs_api_key") or "").strip()
     configured = (cfg.get("jobs_provider") or "auto").strip().lower()
-    jsearch_ok = bool(api_key)
-    jsearch_calls = 0
     try:
         sources = ["jsearch", "himalayas"] if configured == "auto" else jobsource.choose_providers(configured, api_key)
     except ValueError as e:
         log.info("[careercoach] watch market selection failed: %s", e)
         sources = []  # invalid market settings must not discard the watched boards' results
-    for source in sources:
-        for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-            if source in jobsource.JSEARCH_VENDORS:
-                if not jsearch_ok:
-                    continue
-                if wl.jsearch_allowance() == 0:
-                    log.info("[careercoach] watch: today's JSearch requests are spent; back tomorrow")
-                    jsearch_ok = False
-                    continue
-                if jsearch_calls:
-                    await asyncio.sleep(JSEARCH_SPACING_S)  # a burst trips RapidAPI's per-second limit
-                jsearch_calls += 1
-            try:
-                got = await jobsource.search_jobs(
-                    role, remote=True, limit=25, api_key=api_key, provider=source,
-                    country=cfg.get("search_country", "") or "", max_age_days=f["max_age_days"],
-                    _fallback=not any(p in jobsource.KEYLESS for p in sources),
-                )  # fmt: skip
-            except Exception as e:  # noqa: BLE001
-                if source in jobsource.JSEARCH_VENDORS:
-                    # one refusal answers for the whole pass: don't spend four more requests on it
-                    jsearch_ok = False
-                    log.warning(
-                        "[careercoach] watch: JSearch isn't answering (%s); this pass uses the keyless board only.",
-                        jobsource._failure(e),
-                    )
-                else:
-                    log.info("[careercoach] watch market source %s failed for %r: %s", source, role, e)
-                continue
-            if source in jobsource.JSEARCH_VENDORS and got.fallback_reason:
-                jsearch_ok = False
-                log.warning(
-                    "[careercoach] watch: JSearch isn't answering (%s); this pass uses the keyless board only.",
-                    got.fallback_reason,
-                )
-            if not got.provider:
-                continue
-            answered = True
-            if got.provider in jobsource.JSEARCH_VENDORS:
-                wl.note_jsearch_call(got.quota)
-            for j in got.jobs:
-                if boards.passes(
-                    j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
-                ):
-                    origin = got.provider if "," in configured or configured == "all" else j["source"]
-                    j["id"] = f"{origin}:{j['url']}"
-                    j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
-                    market.append({**j, "source": origin})
+    swept, market_answered = await sweep.market_sweep(cfg, roles, sources, api_key, f["max_age_days"])
+    answered = answered or market_answered
+    for j in swept:
+        if boards.passes(
+            j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
+        ):
+            j["id"] = f"{j['source']}:{j['url']}"
+            j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
+            market.append(j)
     if answered:
         try:
             wl.record_watch_run()

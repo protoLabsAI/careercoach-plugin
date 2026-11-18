@@ -3,6 +3,21 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.3
+
+- **The watch searches the market for every target role.** It used to search for the first five only.
+  Roles that are respellings of each other ("Full Stack Engineer", "Fullstack Engineer", "Software
+  Engineer Full-Stack") share one search. Free search boards are asked about every role each pass, and
+  the feeds are read whole.
+- **A keyed source takes your roles in turn.** JSearch is asked about the next few roles each pass
+  (**Keyed searches per watch pass**, default 3) and continues where it stopped, so the whole list is
+  covered over a few passes within the plan's allowance.
+- **A JSearch timeout costs one search.** One slow answer used to end JSearch for the pass. Now the watch
+  moves on to the next role, and stops only after two timeouts in a row or a refusal. JSearch requests
+  wait up to 45 seconds, since one in five took longer than 20.
+- **A timed-out request still counts against the allowance.** The request was sent, so the budget
+  assumes it was spent.
+
 ## 0.17.2
 
 - **Three more free job sources.** Job source accepts `jobicy` (remote roles open to the US, with pay),

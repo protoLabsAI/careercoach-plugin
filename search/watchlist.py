@@ -97,6 +97,12 @@ def note_jsearch_call(quota: dict, now: datetime | None = None) -> None:
         out["limit"] = int(quota.get("limit") or 0)
         out["remaining"] = int(quota.get("remaining") or 0)
         out["reset_at"] = (now + timedelta(seconds=int(quota.get("reset_s") or 0))).isoformat(timespec="seconds")
+    elif "remaining" in rec:
+        # no allowance in this answer (a timeout, or a vendor that reports none): keep what the
+        # last answer said, one request poorer. Forgetting it would lift the cap.
+        out["limit"] = int(rec.get("limit") or 0)
+        out["remaining"] = max(0, int(rec.get("remaining") or 0) - 1)
+        out["reset_at"] = rec.get("reset_at") or ""
     try:
         _save(JSEARCH_QUOTA, out)
     except OSError:

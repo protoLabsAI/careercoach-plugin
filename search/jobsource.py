@@ -41,6 +41,9 @@ from dataclasses import dataclass, field
 from . import feeds
 
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
+#: JSearch runs a live Google-for-Jobs query per request: one in five answers took longer than the
+#: 20 s the other boards get (measured 2026-11-18), and each lost answer still spends a request.
+KEYED_TIMEOUT = 45.0
 JSEARCH_PATH = "/search-v2"  # RapidAPI removed /search (404 "Endpoint '/search' does not exist")
 OPENWEBNINJA_URL = "https://api.openwebninja.com/jsearch/search"
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
@@ -365,6 +368,8 @@ class JobSearch:
 
     providers: list[str] = field(default_factory=list)
     failures: dict[str, str] = field(default_factory=dict)
+    #: The keyed source failed without refusing: a timeout or a dropped connection, worth another try.
+    transient: bool = False
     keyed_quotas: list[dict] = field(default_factory=list)
 
     @property
@@ -447,6 +452,7 @@ async def search_jobs(
     if prov not in PROVIDER_LABELS:
         raise ValueError(f"unknown job source {prov!r} — use auto, all, or any of: {', '.join(PROVIDER_LABELS)}")
     failures = {}
+    transient = False
     if prov in JSEARCH_VENDORS:
         from . import watchlist
 
@@ -466,12 +472,15 @@ async def search_jobs(
             fetched = len(jobs)
             watchlist.clear_source_cooldown(prov)
         except Exception as e:  # noqa: BLE001 — a keyed outage must not cost the search
+            import httpx
+
+            transient = isinstance(e, httpx.TransportError)  # a timeout or a dropped connection
             reason = _failure(e)
             if not any(label in reason for label in ("RapidAPI", "OpenWeb Ninja")):
                 reason = f"{_JOB_API_LABELS[prov]}: {reason}"
             failures[prov] = reason
             if not _fallback:
-                return JobSearch(failures=failures, fallback_reason=reason, keyless_fallback=True)
+                return JobSearch(failures=failures, fallback_reason=reason, keyless_fallback=True, transient=transient)
             prov, keyless = "himalayas", True
     if prov in KEYLESS:
         if prov == "himalayas":
@@ -492,6 +501,7 @@ async def search_jobs(
         matched=len(jobs),
         fallback_reason=reason,
         failures=failures,
+        transient=transient,
         quota=quota,
         keyed_quotas=[quota] if prov in JSEARCH_VENDORS else [],
     )
@@ -585,7 +595,7 @@ async def _get_jsearch(
     if _date_posted(max_age_days):
         params["date_posted"] = _date_posted(max_age_days)
     headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": JSEARCH_HOST}
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=KEYED_TIMEOUT) as client:
         resp = await client.get(f"https://{JSEARCH_HOST}{JSEARCH_PATH}", params=params, headers=headers)
         _raise_for_job_api(resp, "jsearch")
         return parse_jsearch(resp.json()), parse_jsearch_quota(resp.headers)
@@ -602,7 +612,7 @@ async def _get_openwebninja(query: str, location: str, remote: bool, api_key: st
     params = {"query": q, "page": "1", "num_pages": "1"}
     if remote:
         params["remote_jobs_only"] = "true"
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=KEYED_TIMEOUT) as client:
         resp = await client.get(OPENWEBNINJA_URL, params=params, headers={"x-api-key": api_key})
         _raise_for_job_api(resp, "openwebninja")
         return parse_jsearch(resp.json())
