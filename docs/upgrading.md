@@ -3,6 +3,12 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.0
+
+- **A JSearch key bought from OpenWeb Ninja works.** Set **Job source** to `openwebninja` and paste the
+  key under **Job-source API key**. `auto` and `jsearch` still mean a RapidAPI key, which is a different
+  key: the two can't be told apart by format, so the source is never guessed.
+
 ## 0.16.2
 
 - **An excerpt can't score high.** A card with under 600 characters of posting text (most cards queued

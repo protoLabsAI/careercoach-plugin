@@ -570,7 +570,7 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
     ) -> str:
         """Search live job postings for `query` (title, skill or role), optionally by `location` or `remote`-only.
         `source` (default: Settings): "himalayas" (keyless remote board), "hn" (this month's HN 'Who is hiring?'),
-        "jsearch" (Google for Jobs; needs an API key). For watched companies, careercoach_scan_boards is fresher."""
+        "jsearch" / "openwebninja" (Google for Jobs; needs that vendor's API key). For watched companies, careercoach_scan_boards is fresher."""
         from .search import jobsource
 
         try:
