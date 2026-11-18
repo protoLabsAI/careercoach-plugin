@@ -361,3 +361,90 @@ def test_the_tool_reports_which_provider_answered(tools, remotive):
 
     picked = asyncio.run(tool.ainvoke({"query": "data engineer", "source": "remotive"}))
     assert "Remotive" in picked and "fixed feed" in picked
+
+
+# ── a refused or rate-limited key says why, and what to do (careercoach-plugin#131) ──
+_NOT_SUBSCRIBED = {"message": "You are not subscribed to this API."}
+_REAL_ASYNC_CLIENT = httpx.AsyncClient  # captured at import, before any test patches it
+
+
+def _answer(monkeypatch, status: int, **response):
+    """Every job-API request gets this status and body. Safe to call again within one test."""
+    real = _REAL_ASYNC_CLIENT
+    handler = lambda request: httpx.Response(status, **response)  # noqa: E731
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+
+
+def _refusal(js, provider: str) -> str:
+    with pytest.raises(ValueError) as e:
+        _search(js, "data engineer", api_key="KEY", provider=provider)
+    return str(e.value)
+
+
+def test_a_rapidapi_403_not_subscribed_points_at_openwebninja(js, monkeypatch):
+    _answer(monkeypatch, 403, json=_NOT_SUBSCRIBED)
+    for provider in ("jsearch", "auto"):  # auto with a key means RapidAPI
+        msg = _refusal(js, provider)
+        assert "subscribed to JSearch" in msg and "'openwebninja'" in msg
+        assert "rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch" in msg and "Settings → Career Coach" in msg
+
+
+def test_openwebninja_is_not_told_to_switch_to_itself(js, monkeypatch):
+    _answer(monkeypatch, 403, json=_NOT_SUBSCRIBED)
+    msg = _refusal(js, "openwebninja")
+    assert msg == "OpenWeb Ninja (JSearch) denied access: You are not subscribed to this API."
+
+
+@pytest.mark.parametrize("provider,vendor", [("jsearch", "RapidAPI"), ("openwebninja", "OpenWeb Ninja")])
+def test_a_401_names_the_job_source_api_key(js, monkeypatch, provider, vendor):
+    _answer(monkeypatch, 401, json={"message": "Invalid API key."})
+    msg = _refusal(js, provider)
+    assert msg.startswith(f"{vendor} (JSearch) rejected the key")
+    assert "Settings → Career Coach → Job-source API key" in msg and "Job source matches the vendor" in msg
+    assert "Invalid API key." in msg
+
+
+@pytest.mark.parametrize("provider,vendor", [("jsearch", "RapidAPI"), ("openwebninja", "OpenWeb Ninja")])
+def test_a_429_says_rate_limit_or_quota(js, monkeypatch, provider, vendor):
+    _answer(monkeypatch, 429, json={"message": "Too many requests"})
+    msg = _refusal(js, provider)
+    assert msg == f"{vendor} (JSearch) rate limit or monthly quota reached. Wait and retry, or check your plan."
+
+
+@pytest.mark.parametrize("provider,vendor", [("jsearch", "RapidAPI"), ("openwebninja", "OpenWeb Ninja")])
+def test_another_403_carries_the_bodys_message(js, monkeypatch, provider, vendor):
+    _answer(monkeypatch, 403, json={"message": "This endpoint is disabled for your plan."})
+    assert _refusal(js, provider) == f"{vendor} (JSearch) denied access: This endpoint is disabled for your plan."
+
+
+def test_other_errors_keep_the_status_and_a_short_message(js, monkeypatch):
+    _answer(monkeypatch, 500, json={"error": {"message": "upstream   timeout\n" + "x" * 500}})
+    msg = _refusal(js, "openwebninja")
+    assert msg.startswith("OpenWeb Ninja (JSearch) returned HTTP 500: upstream timeout x")
+    assert len(msg) < 260  # the body's message is capped, not dumped
+
+
+@pytest.mark.parametrize(
+    "response", [{"text": "<html><body>Bad Gateway</body></html>"}, {"content": b""}, {"json": ["nope"]}, {"json": {}}]
+)
+def test_an_error_body_with_no_message_still_explains(js, monkeypatch, response):
+    _answer(monkeypatch, 502, **response)
+    assert _refusal(js, "jsearch") == "RapidAPI (JSearch) returned HTTP 502"
+    _answer(monkeypatch, 403, **response)
+    assert _refusal(js, "jsearch") == "RapidAPI (JSearch) denied access: 403 Forbidden, no reason given"
+    _answer(monkeypatch, 401, **response)
+    assert "Job-source API key" in _refusal(js, "jsearch")
+
+
+def test_the_tool_explains_a_not_subscribed_key(plugin, iso, monkeypatch):
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "cc"))
+    reg = FakeRegistry({"packet_root": str(iso / "ws"), "extended_tools": True, "jobs_api_key": "KEY"})
+    plugin.register(reg)
+    tool = {t.name: t for t in reg.tools}["careercoach_search_jobs"]
+    _answer(monkeypatch, 403, json=_NOT_SUBSCRIBED)
+    out = asyncio.run(tool.ainvoke({"query": "data engineer"}))  # Job source auto + a key → RapidAPI
+    assert out.startswith("Job search failed: RapidAPI accepted the key, but its account isn't subscribed to JSearch.")
+    assert "set Job source to 'openwebninja' in Settings → Career Coach" in out
+    assert "openwebninja" in (tool.description or "")

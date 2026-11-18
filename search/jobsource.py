@@ -283,7 +283,8 @@ async def search_jobs(
     by ``prescore`` before ``limit`` is applied, unless ``rank=False`` (a caller that scores
     the raw feed itself against more than this one query, like the watch scan). ``country``
     narrows Himalayas to roles open to that country. Raises ``ValueError`` if jsearch or
-    openwebninja is selected without a key, or for an unknown provider."""
+    openwebninja is selected without a key, for an unknown provider, or when either keyed
+    vendor answers with an error (the message says why — see ``_raise_for_job_api``)."""
     limit = max(1, min(int(limit), 25))
     prov = choose_provider(provider, api_key)
     keyless = (provider or "auto").strip().lower() == "auto" and prov in KEYLESS
@@ -315,6 +316,59 @@ async def search_jobs(
     return JobSearch(jobs=jobs[:limit], provider=prov, keyless_fallback=keyless, fetched=fetched, matched=len(jobs))
 
 
+#: Who refused the request, as the user knows the vendor (not the feed's label in PROVIDER_LABELS).
+_JOB_API_LABELS = {"jsearch": "RapidAPI (JSearch)", "openwebninja": "OpenWeb Ninja (JSearch)"}
+
+
+def _job_api_message(resp) -> str:
+    """The short human reason in an error body: the JSON ``message`` (RapidAPI) or ``error``
+    (a string, or an object carrying ``message``); else the first of a plain-text body."""
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001 — not JSON (an HTML gateway page, an empty body)
+        body = None
+    msg = ""
+    if isinstance(body, dict):
+        err = body.get("error")
+        for cand in (body.get("message"), err.get("message") if isinstance(err, dict) else err):
+            if isinstance(cand, str) and cand.strip():
+                msg = cand
+                break
+    elif body is None:
+        text = (getattr(resp, "text", "") or "").strip()
+        msg = "" if text.startswith("<") else text
+    return re.sub(r"\s+", " ", msg).strip()[:200]
+
+
+def _raise_for_job_api(resp, provider: str) -> None:
+    """``raise_for_status()`` for the keyed JSearch vendors, keeping the reason the body gives.
+    A bare "403 Forbidden" reads as "Settings lost my key"; the vendor's message says whether
+    the key was rejected, belongs to the other vendor, or ran out of quota. Raises
+    ``ValueError`` with what happened and the one step that fixes it; 2xx returns."""
+    status = resp.status_code
+    if 200 <= status < 300:
+        return
+    label = _JOB_API_LABELS.get(provider, provider)
+    msg = _job_api_message(resp)
+    if status == 403 and provider == "jsearch" and "not subscribed" in msg.lower():
+        raise ValueError(
+            "RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe at "
+            "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch, or if this key is from OpenWeb Ninja "
+            "(api.openwebninja.com), set Job source to 'openwebninja' in Settings → Career Coach."
+        )
+    if status == 401:
+        raise ValueError(
+            f"{label} rejected the key. Check Settings → Career Coach → Job-source API key, and that "
+            "Job source matches the vendor the key came from ('jsearch' for RapidAPI, 'openwebninja' "
+            "for OpenWeb Ninja)." + (f" It said: {msg}" if msg else "")
+        )
+    if status == 403:
+        raise ValueError(f"{label} denied access: {msg or '403 Forbidden, no reason given'}")
+    if status == 429:
+        raise ValueError(f"{label} rate limit or monthly quota reached. Wait and retry, or check your plan.")
+    raise ValueError(f"{label} returned HTTP {status}" + (f": {msg}" if msg else ""))
+
+
 async def _get_jsearch(query: str, location: str, remote: bool, api_key: str) -> list[dict]:
     import httpx
 
@@ -327,7 +381,7 @@ async def _get_jsearch(query: str, location: str, remote: bool, api_key: str) ->
     headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": JSEARCH_HOST}
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(f"https://{JSEARCH_HOST}/search", params=params, headers=headers)
-        resp.raise_for_status()
+        _raise_for_job_api(resp, "jsearch")
         return parse_jsearch(resp.json())
 
 
@@ -344,7 +398,7 @@ async def _get_openwebninja(query: str, location: str, remote: bool, api_key: st
         params["remote_jobs_only"] = "true"
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(OPENWEBNINJA_URL, params=params, headers={"x-api-key": api_key})
-        resp.raise_for_status()
+        _raise_for_job_api(resp, "openwebninja")
         return parse_jsearch(resp.json())
 
 
