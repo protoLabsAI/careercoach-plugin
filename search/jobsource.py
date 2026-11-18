@@ -19,8 +19,8 @@ Providers:
 - ``remotive``   — the Remotive board. Kept only for an explicit ``jobs_provider: remotive``: since
   2026-10 its API returns one fixed 14-posting feed whatever the query, so ``auto`` never picks it.
 
-Selection: ``provider="auto"`` uses jsearch when a key is present, else himalayas. When ``auto``
-picked JSearch and JSearch fails (a rejected key, a spent quota, an outage), the search is answered
+Selection: ``provider="auto"`` uses jsearch when a key is present, else himalayas. When a
+keyed source fails (a rejected key, a spent quota, an outage), the search is answered
 by Himalayas instead and the result says why: a bad key must not cost a search its results.
 
 Neither Himalayas' nor Remotive's search is a relevance filter we can rely on (Himalayas matches
@@ -345,8 +345,8 @@ def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
 @dataclass
 class JobSearch:
     """What a search returned and WHO answered it — ``provider`` is the source that was actually
-    queried, ``keyless_fallback`` is True when ``auto`` fell back to a keyless board (for want of a
-    key, or because JSearch failed: then ``fallback_reason`` says how), ``fetched`` is how many
+    queried, ``keyless_fallback`` is True when a search fell back to a keyless board (for want of a
+    key, or because a keyed source failed: then ``fallback_reason`` says how), ``fetched`` is how many
     postings the provider sent, ``matched`` how many survived relevance filtering (before
     ``limit``). ``quota`` is JSearch's request allowance as of this call (``parse_jsearch_quota``),
     empty when JSearch didn't answer or didn't say. ``keyed_quotas`` holds one entry per request a
@@ -386,6 +386,7 @@ async def search_jobs(
     rank: bool = True,
     country: str = "",
     max_age_days: float = 0,
+    _fallback: bool = True,
 ) -> JobSearch:
     """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
     naming the provider that answered. Keyless results are filtered to the query and ranked
@@ -393,9 +394,8 @@ async def search_jobs(
     the raw feed itself against more than this one query, like the watch scan). ``country``
     narrows Himalayas to roles open to that country; ``max_age_days`` asks JSearch for postings
     no older than that. Raises ``ValueError`` if jsearch or openwebninja is selected without a
-    key, for an unknown provider, or when either keyed vendor answers with an error (the message
-    says why — see ``_raise_for_job_api``). Under ``auto`` a JSearch failure doesn't raise: the
-    search falls back to Himalayas and ``fallback_reason`` carries that message. Lists and
+    key or for an unknown provider. A keyed failure falls back to keyless sources and
+    ``fallback_reason`` carries the vendor message, including any active cooldown. Lists and
     ``all`` merge deduped results in source order and retain individual failures."""
     limit = max(1, min(int(limit), 25))
     providers = choose_providers(provider, api_key)
@@ -414,11 +414,19 @@ async def search_jobs(
                     rank=rank,
                     country=country,
                     max_age_days=max_age_days,
+                    _fallback=False,
                 )
             except Exception as exc:  # noqa: BLE001 — partial results survive a source outage
                 combined.failures[selected] = _failure(exc)
                 continue
-            combined.providers.append(result.provider)
+            combined.failures.update(result.failures)
+            if result.fallback_reason:
+                combined.keyless_fallback = True
+                combined.fallback_reason = "; ".join(filter(None, [combined.fallback_reason, result.fallback_reason]))
+                if not any(p in KEYLESS for p in providers):
+                    providers.append("himalayas")
+            if result.provider:
+                combined.providers.append(result.provider)
             combined.fetched += result.fetched
             # Every answering JSearch vendor counts against the budget, whatever its name; the
             # allowance shown is the first one a vendor actually reported.
@@ -438,25 +446,33 @@ async def search_jobs(
     quota: dict = {}
     if prov not in PROVIDER_LABELS:
         raise ValueError(f"unknown job source {prov!r} — use auto, all, or any of: {', '.join(PROVIDER_LABELS)}")
-    if prov == "jsearch":
+    failures = {}
+    if prov in JSEARCH_VENDORS:
+        from . import watchlist
+
         if not (api_key or "").strip():
             raise ValueError(
-                "JSearch needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'himalayas' (keyless)."
+                f"{_JOB_API_LABELS[prov]} needs a Job-source API key (Settings → Career Coach), "
+                "or set jobs_provider to 'himalayas' (keyless)."
             )
+        until = watchlist.source_cooldown(prov)
         try:
-            jobs, quota = await _get_jsearch(query, location, remote, api_key, max_age_days)
+            if until:
+                raise ValueError(f"{_JOB_API_LABELS[prov]} is cooling down until {until}")
+            if prov == "jsearch":
+                jobs, quota = await _get_jsearch(query, location, remote, api_key, max_age_days)
+            else:
+                jobs = await _get_openwebninja(query, location, remote, api_key)
             fetched = len(jobs)
-        except Exception as e:  # noqa: BLE001 — any JSearch failure; under auto it must not cost the search
-            if not auto:
-                raise
-            prov, keyless, reason = "himalayas", True, _failure(e)
-    elif prov == "openwebninja":
-        if not (api_key or "").strip():
-            raise ValueError(
-                "JSearch via OpenWeb Ninja needs a Job-source API key (Settings → Career Coach), or set jobs_provider to 'himalayas' (keyless)."
-            )
-        jobs = await _get_openwebninja(query, location, remote, api_key)
-        fetched = len(jobs)
+            watchlist.clear_source_cooldown(prov)
+        except Exception as e:  # noqa: BLE001 — a keyed outage must not cost the search
+            reason = _failure(e)
+            if not any(label in reason for label in ("RapidAPI", "OpenWeb Ninja")):
+                reason = f"{_JOB_API_LABELS[prov]}: {reason}"
+            failures[prov] = reason
+            if not _fallback:
+                return JobSearch(failures=failures, fallback_reason=reason, keyless_fallback=True)
+            prov, keyless = "himalayas", True
     if prov in KEYLESS:
         if prov == "himalayas":
             raw = await _get_himalayas(query, country)
@@ -475,6 +491,7 @@ async def search_jobs(
         fetched=fetched,
         matched=len(jobs),
         fallback_reason=reason,
+        failures=failures,
         quota=quota,
         keyed_quotas=[quota] if prov in JSEARCH_VENDORS else [],
     )
@@ -529,6 +546,9 @@ def _raise_for_job_api(resp, provider: str) -> None:
     if status == 403:
         raise ValueError(f"{label} denied access: {msg or '403 Forbidden, no reason given'}")
     if status == 429:
+        from . import watchlist
+
+        watchlist.note_source_cooldown(provider, resp.headers.get("Retry-After", ""))
         raise ValueError(f"{label} rate limit or monthly quota reached. Wait and retry, or check your plan.")
     raise ValueError(f"{label} returned HTTP {status}" + (f": {msg}" if msg else ""))
 

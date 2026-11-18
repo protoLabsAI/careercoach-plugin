@@ -53,7 +53,7 @@ _SAME_FOR_EVERY_QUERY = {
 
 
 @pytest.fixture
-def js(plugin):
+def js(plugin, iso):
     return importlib.import_module(plugin.__name__ + ".search.jobsource")
 
 
@@ -510,10 +510,10 @@ def test_auto_falls_back_to_the_keyless_board_when_jsearch_refuses(js, monkeypat
     assert out.jobs[0]["company"] == "Globex"  # the keyless board's answer, ranked as usual
 
 
-def test_jsearch_asked_for_by_name_still_raises(js, monkeypatch):
+def test_jsearch_asked_for_by_name_falls_back(js, monkeypatch):
     _mock(monkeypatch, _refusing(403, "You are not subscribed to this API."))
-    with pytest.raises(ValueError, match="isn't subscribed to JSearch"):
-        _search(js, "data engineer", api_key="KEY", provider="jsearch")
+    out = _search(js, "data engineer", api_key="KEY", provider="jsearch")
+    assert out.jobs and "isn't subscribed to JSearch" in out.fallback_reason
 
 
 def test_no_quota_headers_means_no_quota(js):
@@ -530,7 +530,10 @@ def _answer(monkeypatch, status: int, **response):
 
 def _refusal(js, provider: str) -> str:
     with pytest.raises(ValueError) as e:
-        _search(js, "data engineer", api_key="KEY", provider=provider)
+        if provider == "jsearch":
+            asyncio.run(js._get_jsearch("data engineer", "", False, "KEY"))
+        else:
+            asyncio.run(js._get_openwebninja("data engineer", "", False, "KEY"))
     return str(e.value)
 
 
@@ -693,7 +696,7 @@ def test_all_failed_sources_are_reported(js, monkeypatch):
     _answer(monkeypatch, 503, text="Unavailable")
     out = _search(js, "engineer", provider="jsearch,openwebninja", api_key="KEY")
     assert out.jobs == [] and out.providers == []
-    assert set(out.failures) == {"jsearch", "openwebninja"}
+    assert set(out.failures) == {"jsearch", "openwebninja", "himalayas"}
 
 
 def test_configured_list_reply_names_all_answers_and_records_quota(plugin, iso, monkeypatch):
@@ -816,3 +819,141 @@ def test_a_list_reply_discloses_keyless_filtering_and_ignored_location(plugin, i
     out = asyncio.run(tool.ainvoke({"query": "engineer", "location": "Austin"}))
     assert "posting(s) they returned are left after" in out
     assert "Himalayas ignores `location`" in out
+
+
+@pytest.mark.parametrize("provider", ["jsearch", "openwebninja"])
+@pytest.mark.parametrize("failure", [401, 403, 429, 503, "timeout", "connection"])
+def test_keyed_failure_falls_back_every_time(js, monkeypatch, provider, failure):
+    wl = importlib.import_module(js.__package__ + ".watchlist")
+    calls = []
+
+    def handler(request):
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY))
+        calls.append(request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("timed out")
+        if failure == "connection":
+            raise httpx.ConnectError("connection lost")
+        return httpx.Response(failure, json={"message": "refused"})
+
+    _mock(monkeypatch, handler)
+    for _ in range(2):
+        out = _search(js, "data engineer", provider=provider, api_key="KEY")
+        assert out.jobs[0]["company"] == "Globex"
+        assert out.provider == "himalayas" and out.keyless_fallback
+        assert ("OpenWeb Ninja" if provider == "openwebninja" else "RapidAPI") in out.fallback_reason
+        if failure == 429:
+            assert "rate limit" in out.fallback_reason or "cooling down until" in out.fallback_reason
+        else:
+            assert not wl.source_cooldown(provider)
+    assert len(calls) == (1 if failure == 429 else 2)
+
+
+@pytest.mark.parametrize("provider", ["jsearch", "openwebninja"])
+@pytest.mark.parametrize(
+    "header,seconds",
+    [(None, 3600), ("120", 120), ("999999", 86400), ("junk", 3600), ("Wed, 18 Nov 2026 12:02:00 GMT", 120)],
+)
+def test_cooldown_expiry_and_successful_retry(js, monkeypatch, provider, header, seconds):
+    from datetime import UTC, datetime, timedelta
+
+    wl = importlib.import_module(js.__package__ + ".watchlist")
+    now = datetime(2026, 11, 18, 12, tzinfo=UTC)
+    monkeypatch.setattr(wl, "_quota_now", lambda value: value or now)
+    calls = []
+
+    def handler(request):
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY))
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={} if header is None else {"Retry-After": header})
+        return httpx.Response(200, json={"data": []})
+
+    _mock(monkeypatch, handler)
+    first = _search(js, "data engineer", provider=provider, api_key="KEY")
+    assert "rate limit" in first.fallback_reason
+    until = (now + timedelta(seconds=seconds)).isoformat()
+    assert wl.source_cooldown(provider) == until
+    assert not wl.source_cooldown("openwebninja" if provider == "jsearch" else "jsearch")
+    second = _search(js, "data engineer", provider=provider, api_key="KEY")
+    assert "cooling down until " + until in second.fallback_reason
+    assert len(calls) == 1
+    now += timedelta(seconds=seconds)
+    third = _search(js, "data engineer", provider=provider, api_key="KEY")
+    assert third.provider == provider and not third.fallback_reason and len(calls) == 2
+    assert provider not in wl._load(wl.SOURCE_COOLDOWNS, {})
+
+
+@pytest.mark.parametrize("broken", ["read", "write", "corrupt", "invalid_expiry"])
+def test_cooldown_storage_failure_does_not_fail_search(js, monkeypatch, broken):
+    wl = importlib.import_module(js.__package__ + ".watchlist")
+    if broken in {"read", "write"}:
+
+        def fail(*args):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(wl, "_load" if broken == "read" else "_save", fail)
+    else:
+        wl._path(wl.SOURCE_COOLDOWNS).parent.mkdir(parents=True, exist_ok=True)
+        wl._path(wl.SOURCE_COOLDOWNS).write_text("not json" if broken == "corrupt" else '{"jsearch": "not a date"}')
+    _mock(monkeypatch, _refusing(429, "Too many requests"))
+    out = _search(js, "data engineer", provider="jsearch", api_key="KEY")
+    assert out.jobs and "rate limit" in out.fallback_reason
+
+
+def test_multi_source_fallback_uses_selected_keyless_members_once(js, monkeypatch):
+    hosts = []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        if request.url.host == "remotive.com":
+            return httpx.Response(200, json=_SAME_FOR_EVERY_QUERY)
+        assert request.url.host in {"jsearch.p.rapidapi.com", "api.openwebninja.com"}
+        return httpx.Response(429)
+
+    _mock(monkeypatch, handler)
+    out = _search(js, "data engineer", provider="jsearch,remotive,openwebninja", api_key="KEY")
+    assert out.providers == ["remotive"] and out.jobs
+    assert all(j["source"] == "remotive" for j in out.jobs)
+    assert set(out.failures) == {"jsearch", "openwebninja"}
+    assert hosts.count("remotive.com") == 1
+
+
+def test_multi_source_fallback_uses_a_keyless_feed_member(js, monkeypatch):
+    """A feed (search/feeds.py) is a keyless member like any other: when the list holds one, a
+    failed keyed source is answered by it and Himalayas is not added."""
+    hosts = []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        assert request.url.host == "api.openwebninja.com"
+        return httpx.Response(429)
+
+    async def feed(name, now=None):
+        return js.parse_remotive(_SAME_FOR_EVERY_QUERY)
+
+    _mock(monkeypatch, handler)
+    monkeypatch.setattr(js.feeds, "fetch", feed)
+    out = _search(js, "data engineer", provider="openwebninja,jobicy", api_key="KEY")
+    assert out.providers == ["jobicy"] and out.jobs[0]["company"] == "Globex"
+    assert all(j["source"] == "jobicy" for j in out.jobs)
+    assert "OpenWeb Ninja" in out.fallback_reason and "rate limit" in out.fallback_reason
+    again = _search(js, "data engineer", provider="openwebninja,jobicy", api_key="KEY")
+    assert "cooling down until" in again.fallback_reason and again.providers == ["jobicy"]
+    assert hosts == ["api.openwebninja.com"]  # the cooldown skipped the second call; Himalayas never asked
+
+
+def test_tool_reports_cooldown_until(plugin, iso, monkeypatch):
+    from _plugin_testkit import FakeRegistry
+
+    reg = FakeRegistry({"extended_tools": True, "jobs_provider": "jsearch", "jobs_api_key": "KEY"})
+    plugin.register(reg)
+    _mock(monkeypatch, _refusing(429, "Too many requests"))
+    tool = {t.name: t for t in reg.tools}["careercoach_search_jobs"]
+    asyncio.run(tool.ainvoke({"query": "data engineer"}))
+    reply = asyncio.run(tool.ainvoke({"query": "data engineer"}))
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    assert "cooling down until " + wl.source_cooldown("jsearch") in reply
+    assert "Globex" in reply

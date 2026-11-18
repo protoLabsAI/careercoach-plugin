@@ -604,7 +604,7 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                 src += f" ({result.quota['remaining']} of {result.quota['limit']} requests left on the key's plan)"
         if result.fallback_reason:
             src += (
-                " — JSearch didn't answer, so this is the keyless board, remote roles only. "
+                " — A keyed source didn't answer; keyless sources provide fallback results. "
                 + result.fallback_reason.rstrip(".")
             )
         elif result.keyless_fallback:
@@ -3493,6 +3493,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 got = await jobsource.search_jobs(
                     role, remote=True, limit=25, api_key=api_key, provider=source,
                     country=cfg.get("search_country", "") or "", max_age_days=f["max_age_days"],
+                    _fallback=not any(p in jobsource.KEYLESS for p in sources),
                 )  # fmt: skip
             except Exception as e:  # noqa: BLE001
                 if source in jobsource.JSEARCH_VENDORS:
@@ -3505,6 +3506,14 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 else:
                     log.info("[careercoach] watch market source %s failed for %r: %s", source, role, e)
                 continue
+            if source in jobsource.JSEARCH_VENDORS and got.fallback_reason:
+                jsearch_ok = False
+                log.warning(
+                    "[careercoach] watch: JSearch isn't answering (%s); this pass uses the keyless board only.",
+                    got.fallback_reason,
+                )
+            if not got.provider:
+                continue
             answered = True
             if got.provider in jobsource.JSEARCH_VENDORS:
                 wl.note_jsearch_call(got.quota)
@@ -3512,7 +3521,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 if boards.passes(
                     j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
                 ):
-                    origin = source if "," in configured or configured == "all" else j["source"]
+                    origin = got.provider if "," in configured or configured == "all" else j["source"]
                     j["id"] = f"{origin}:{j['url']}"
                     j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
                     market.append({**j, "source": origin})
