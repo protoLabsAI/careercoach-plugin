@@ -650,13 +650,16 @@ def test_all_queries_keyless_and_selected_vendor(js, monkeypatch, key, vendor):
         return httpx.Response(200, json={"jobs": [], "data": [], "hits": []})
 
     _mock(monkeypatch, handler)
+    feeds = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".feeds")
+    feeds._CACHE.clear()  # a feed served from memory would contact no host
     selection = "all,openwebninja" if vendor == "openwebninja" else "all"
     out = _search(js, "engineer", provider=selection, api_key=key)
-    expected = ["himalayas.app", "hn.algolia.com"]
+    feeds._CACHE.clear()
+    expected = ["himalayas.app", "hn.algolia.com", *feeds.HOSTS]
     if vendor:
         expected.append("api.openwebninja.com" if vendor == "openwebninja" else "jsearch.p.rapidapi.com")
-    assert hosts == expected
-    assert out.providers == ["himalayas", "hn"] + ([vendor] if vendor else [])
+    assert list(dict.fromkeys(hosts)) == expected  # a feed reads several categories from one host
+    assert out.providers == ["himalayas", "hn", *feeds.FEEDS] + ([vendor] if vendor else [])
 
 
 def test_unknown_list_entry_is_validated_before_network(js, monkeypatch):
