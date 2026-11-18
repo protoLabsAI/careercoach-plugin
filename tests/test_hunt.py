@@ -944,3 +944,78 @@ def test_watch_list_dedupes_before_inbox_and_keeps_quota(watch_env, mods, monkey
     assert mods.watchlist.jsearch_allowance() is not None
     again = asyncio.run(plugin._watch_tick(reg, cfg, 0))
     assert not [j for j in again if j["company"] == "Googlejobs Co"]
+
+
+@pytest.mark.parametrize("selection", ["typo", "himalayas,typo"])
+def test_invalid_watch_market_selection_preserves_board_results(watch_env, mods, caplog, selection):
+    plugin, reg, cfg = watch_env
+    cfg["jobs_provider"] = selection
+    with caplog.at_level("INFO"):
+        got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert any(j["company"] == "Acme" for j in got)
+    assert mods.watchlist.inbox_for_view()
+    assert mods.watchlist.watch_last_run()
+    assert "unknown job source 'typo'" in caplog.text
+
+
+@pytest.mark.parametrize("selection", ["openwebninja,himalayas", "all,openwebninja"])
+@pytest.mark.parametrize("allowance", [0, 2, None])
+def test_watch_openwebninja_obeys_budget_counts_calls_and_spaces_requests(
+    watch_env, mods, monkeypatch, selection, allowance
+):
+    plugin, reg, cfg = watch_env
+    cfg.update(jobs_provider=selection, jobs_api_key="KEY")
+    calls, notes, sleeps = [], [], []
+
+    def handler(request):
+        if request.url.host == "api.openwebninja.com":
+            calls.append(request)
+            return httpx.Response(200, json=JSEARCH)
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=HIMALAYAS)
+        return _route(request)
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    js = importlib.import_module(plugin.__name__ + ".search.jobsource")
+
+    async def hn(query):
+        return []
+
+    monkeypatch.setattr(js, "_get_hn", hn)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(
+        mods.watchlist, "jsearch_allowance", lambda: None if allowance is None else allowance - len(notes)
+    )
+    monkeypatch.setattr(mods.watchlist, "note_jsearch_call", notes.append)
+    monkeypatch.setattr(plugin.asyncio, "sleep", sleep)
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    expected = 5 if allowance is None else allowance
+    assert len(calls) == expected
+    assert notes == [{}] * expected  # this vendor currently returns no quota headers
+    assert sleeps == [plugin.JSEARCH_SPACING_S] * max(0, expected - 1)
+    assert any(j["company"] == "Newco" for j in got)
+    assert mods.watchlist.watch_last_run()
+
+
+def test_watch_openwebninja_refusal_stops_keyed_requests_only(watch_env, mods, monkeypatch, caplog):
+    plugin, reg, cfg = watch_env
+    cfg.update(jobs_provider="openwebninja,himalayas", jobs_api_key="KEY")
+    calls = []
+
+    def handler(request):
+        if request.url.host == "api.openwebninja.com":
+            calls.append(request)
+            return httpx.Response(403, json={"message": "Invalid key"})
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=HIMALAYAS)
+        return _route(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw))
+    with caplog.at_level("WARNING"):
+        got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 1
+    assert any(j["company"] == "Newco" for j in got)
+    assert "OpenWeb Ninja" in caplog.text
+    assert mods.watchlist.watch_last_run()

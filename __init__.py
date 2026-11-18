@@ -3458,10 +3458,14 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     configured = (cfg.get("jobs_provider") or "auto").strip().lower()
     jsearch_ok = bool(api_key)
     jsearch_calls = 0
-    sources = ["jsearch", "himalayas"] if configured == "auto" else jobsource.choose_providers(configured, api_key)
+    try:
+        sources = ["jsearch", "himalayas"] if configured == "auto" else jobsource.choose_providers(configured, api_key)
+    except ValueError as e:
+        log.info("[careercoach] watch market selection failed: %s", e)
+        sources = []  # invalid market settings must not discard the watched boards' results
     for source in sources:
         for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-            if source == "jsearch":
+            if source in ("jsearch", "openwebninja"):
                 if not jsearch_ok:
                     continue
                 if wl.jsearch_allowance() == 0:
@@ -3477,7 +3481,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                     country=cfg.get("search_country", "") or "", max_age_days=f["max_age_days"],
                 )  # fmt: skip
             except Exception as e:  # noqa: BLE001
-                if source == "jsearch":
+                if source in ("jsearch", "openwebninja"):
                     # one refusal answers for the whole pass: don't spend four more requests on it
                     jsearch_ok = False
                     log.warning(
@@ -3488,7 +3492,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                     log.info("[careercoach] watch market source %s failed for %r: %s", source, role, e)
                 continue
             answered = True
-            if got.provider == "jsearch":
+            if got.provider in ("jsearch", "openwebninja"):
                 wl.note_jsearch_call(got.quota)
             for j in got.jobs:
                 if boards.passes(
