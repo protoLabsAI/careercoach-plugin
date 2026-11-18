@@ -591,10 +591,14 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         # Say who answered. A keyless board is one slice of the market, not a search of all of it —
         # the user must be able to tell the two apart.
         src = f"Source: {result.provider_label}"
-        if "jsearch" in (result.providers or [result.provider]):
+        if result.keyed_quotas:
             from .search import watchlist as _wl
 
-            _wl.note_jsearch_call(result.quota)
+            # One count per request a JSearch vendor answered (RapidAPI or OpenWeb Ninja, alone or
+            # in a list). A vendor that reports no allowance is noted first, so its empty answer
+            # doesn't erase the allowance another vendor reported in the same search.
+            for _quota in sorted(result.keyed_quotas, key=bool):
+                _wl.note_jsearch_call(_quota)
             if result.quota.get("limit"):
                 src += f" ({result.quota['remaining']} of {result.quota['limit']} requests left on the key's plan)"
         if result.fallback_reason:
@@ -611,6 +615,15 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
             src += f". {result.matched} of the {result.fetched} posting(s) it returned mention the query"
             if location:
                 src += f"; {result.provider_label.split(' (')[0]} ignores `location`"
+        elif keyless_answered := [p for p in result.providers if p in jobsource.KEYLESS]:
+            # A list or "all": the same disclosure, over everything the sources sent together.
+            src += (
+                f". {result.matched} of the {result.fetched} posting(s) they returned are left after keeping "
+                "the keyless boards' postings that mention the query and merging duplicates"
+            )
+            if location:
+                names = ", ".join(jobsource.PROVIDER_LABELS[p].split(" (")[0] for p in keyless_answered)
+                src += f"; {names} ignore{'s' if len(keyless_answered) == 1 else ''} `location`"
         src += "."
         for failed, reason in result.failures.items():
             src += f" {jobsource.PROVIDER_LABELS[failed]} failed: {reason}"
@@ -3465,7 +3478,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         sources = []  # invalid market settings must not discard the watched boards' results
     for source in sources:
         for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-            if source in ("jsearch", "openwebninja"):
+            if source in jobsource.JSEARCH_VENDORS:
                 if not jsearch_ok:
                     continue
                 if wl.jsearch_allowance() == 0:
@@ -3481,7 +3494,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                     country=cfg.get("search_country", "") or "", max_age_days=f["max_age_days"],
                 )  # fmt: skip
             except Exception as e:  # noqa: BLE001
-                if source in ("jsearch", "openwebninja"):
+                if source in jobsource.JSEARCH_VENDORS:
                     # one refusal answers for the whole pass: don't spend four more requests on it
                     jsearch_ok = False
                     log.warning(
@@ -3492,7 +3505,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                     log.info("[careercoach] watch market source %s failed for %r: %s", source, role, e)
                 continue
             answered = True
-            if got.provider in ("jsearch", "openwebninja"):
+            if got.provider in jobsource.JSEARCH_VENDORS:
                 wl.note_jsearch_call(got.quota)
             for j in got.jobs:
                 if boards.passes(

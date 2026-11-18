@@ -711,3 +711,105 @@ def test_configured_list_reply_names_all_answers_and_records_quota(plugin, iso, 
     assert "193 of 200 requests left" in out
     wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
     assert wl.jsearch_allowance() == 5
+
+
+_OPENWEBNINJA = {
+    "status": "OK",
+    "data": [{"job_title": "Staff Engineer", "employer_name": "Acme", "job_apply_link": "https://acme.example/1"}],
+}
+
+
+def _budget_tool(plugin, iso, monkeypatch, name: str, jobs_provider: str):
+    """The search tool on fake transports for every vendor, plus the quota each call recorded."""
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / name))
+    reg = FakeRegistry({"extended_tools": True, "jobs_api_key": "KEY", "jobs_provider": jobs_provider})
+    plugin.register(reg)
+
+    def handler(request):
+        if request.url.host == "api.openwebninja.com":
+            return httpx.Response(200, json=_OPENWEBNINJA)
+        if request.url.host == "jsearch.p.rapidapi.com":
+            return httpx.Response(200, json=_JSEARCH_V2, headers=_QUOTA_HEADERS)
+        return httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY))
+
+    _mock(monkeypatch, handler)
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    notes: list[dict] = []
+    real = wl.note_jsearch_call
+    monkeypatch.setattr(wl, "note_jsearch_call", lambda quota, *a: (notes.append(quota), real(quota, *a))[1])
+    return {t.name: t for t in reg.tools}["careercoach_search_jobs"], notes, wl
+
+
+@pytest.mark.parametrize(
+    "selection", ["openwebninja", "openwebninja,himalayas", "himalayas,openwebninja", "all,openwebninja"]
+)
+def test_an_openwebninja_search_counts_against_the_jsearch_budget(plugin, iso, monkeypatch, selection):
+    """OpenWeb Ninja sells the same JSearch requests: alone or in a list, each one it answers is
+    counted, the same as RapidAPI's — the gate is the vendor set, not the name "jsearch"."""
+    tool, notes, wl = _budget_tool(plugin, iso, monkeypatch, "own-budget", selection)
+    out = asyncio.run(tool.ainvoke({"query": "engineer"}))
+    assert "JSearch via OpenWeb Ninja" in out.split("Source:")[1]
+    assert notes == [{}]  # one request, and this vendor reports no allowance
+    assert wl._load(wl.JSEARCH_QUOTA, {})["used_today"] == 1
+
+
+def test_a_keyless_only_list_spends_no_jsearch_budget(plugin, iso, monkeypatch):
+    tool, notes, wl = _budget_tool(plugin, iso, monkeypatch, "keyless-budget", "himalayas,hn")
+    asyncio.run(tool.ainvoke({"query": "engineer"}))
+    assert notes == [] and wl._load(wl.JSEARCH_QUOTA, {}) == {}
+
+
+def test_both_vendors_in_one_list_are_each_counted_and_the_allowance_survives(plugin, iso, monkeypatch):
+    """Two keyed requests are two counts. OpenWeb Ninja's empty answer is noted first, so it does
+    not erase the allowance RapidAPI reported in the same search."""
+    tool, notes, wl = _budget_tool(plugin, iso, monkeypatch, "both-budget", "jsearch,openwebninja,himalayas")
+    out = asyncio.run(tool.ainvoke({"query": "engineer"}))
+    assert "193 of 200 requests left" in out
+    assert notes == [{}, {"limit": 200, "remaining": 193, "reset_s": 2591662}]
+    rec = wl._load(wl.JSEARCH_QUOTA, {})
+    assert rec["used_today"] == 2 and rec["remaining"] == 193
+    assert wl.jsearch_allowance() is not None
+
+
+def test_the_merge_carries_any_vendors_quota_not_only_one_named_jsearch(js, monkeypatch):
+    """Should OpenWeb Ninja start reporting an allowance, a combined result must keep it: the merge
+    takes the quota of whichever JSearch vendor answered, and one entry per keyed request."""
+    owned = {"limit": 500, "remaining": 499, "reset_s": 60}
+
+    async def fake_openwebninja(*a, **kw):
+        return [{"title": "Staff Engineer", "company": "Acme", "url": "https://acme.example/1", "source": "jsearch"}]
+
+    _mock(monkeypatch, lambda request: httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY)))
+    monkeypatch.setattr(js, "_get_openwebninja", fake_openwebninja)
+    plain = _search(js, "engineer", provider="openwebninja,himalayas", api_key="KEY")
+    assert plain.providers == ["openwebninja", "himalayas"]
+    assert plain.keyed_quotas == [{}] and plain.quota == {}
+
+    real = js.search_jobs
+
+    async def reporting(query, **kw):  # the single-source answer, now with an allowance on it
+        got = await real(query, **kw)
+        if kw.get("provider") == "openwebninja":
+            got.quota, got.keyed_quotas = owned, [owned]
+        return got
+
+    monkeypatch.setattr(js, "search_jobs", reporting)
+    out = asyncio.run(real("engineer", provider="openwebninja,himalayas", api_key="KEY"))
+    assert out.quota == owned and out.keyed_quotas == [owned]
+
+
+def test_single_source_results_say_whether_a_keyed_request_was_spent(js, monkeypatch):
+    _mock(monkeypatch, lambda request: httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY)))
+    assert _search(js, "engineer", provider="himalayas").keyed_quotas == []
+    _mock(monkeypatch, lambda request: httpx.Response(200, json=_JSEARCH_V2, headers=_QUOTA_HEADERS))
+    out = _search(js, "engineer", provider="jsearch", api_key="KEY")
+    assert out.keyed_quotas == [out.quota] and out.quota["remaining"] == 193
+
+
+def test_a_list_reply_discloses_keyless_filtering_and_ignored_location(plugin, iso, monkeypatch):
+    tool, _, _ = _budget_tool(plugin, iso, monkeypatch, "keyless-note", "openwebninja,himalayas")
+    out = asyncio.run(tool.ainvoke({"query": "engineer", "location": "Austin"}))
+    assert "posting(s) they returned are left after" in out
+    assert "Himalayas ignores `location`" in out

@@ -279,6 +279,10 @@ PROVIDER_LABELS = {
 }
 
 KEYLESS = ("himalayas", "hn", "remotive")
+# Both keyed vendors sell the same JSearch API, so both spend the one request budget
+# (``watchlist.note_jsearch_call`` / ``jsearch_allowance``). Test membership here, never the
+# literal name "jsearch": that is how OpenWeb Ninja requests went uncounted.
+JSEARCH_VENDORS = ("jsearch", "openwebninja")
 
 
 def choose_providers(provider: str, api_key: str) -> list[str]:
@@ -286,8 +290,10 @@ def choose_providers(provider: str, api_key: str) -> list[str]:
     names = [p.strip() for p in (provider or "auto").strip().lower().split(",")]
     for name in names:
         if name not in (*PROVIDER_LABELS, "auto", "all"):
-            raise ValueError(f"unknown job source {name!r} — use auto, all, jsearch, openwebninja, himalayas, hn or remotive")
-    vendors = [p for p in names if p in ("jsearch", "openwebninja")]
+            raise ValueError(
+                f"unknown job source {name!r} — use auto, all, jsearch, openwebninja, himalayas, hn or remotive"
+            )
+    vendors = [p for p in names if p in JSEARCH_VENDORS]
     expanded = []
     for name in names:
         if name == "all":
@@ -336,8 +342,11 @@ class JobSearch:
     key, or because JSearch failed: then ``fallback_reason`` says how), ``fetched`` is how many
     postings the provider sent, ``matched`` how many survived relevance filtering (before
     ``limit``). ``quota`` is JSearch's request allowance as of this call (``parse_jsearch_quota``),
-    empty when JSearch didn't answer or didn't say. Multi-source searches populate
-    ``providers`` with every answering source and ``failures`` with per-source reasons."""
+    empty when JSearch didn't answer or didn't say. ``keyed_quotas`` holds one entry per request a
+    JSearch vendor (``JSEARCH_VENDORS``) answered — that request's quota, ``{}`` when the vendor
+    reported none — so a caller can count every one against the shared request budget. Multi-source
+    searches populate ``providers`` with every answering source and ``failures`` with per-source
+    reasons."""
 
     jobs: list[dict] = field(default_factory=list)
     provider: str = ""
@@ -349,6 +358,7 @@ class JobSearch:
 
     providers: list[str] = field(default_factory=list)
     failures: dict[str, str] = field(default_factory=dict)
+    keyed_quotas: list[dict] = field(default_factory=list)
 
     @property
     def provider_label(self) -> str:
@@ -388,15 +398,25 @@ async def search_jobs(
         for selected in providers:
             try:
                 result = await search_jobs(
-                    query, location=location, remote=remote, limit=25, api_key=api_key,
-                    provider=selected, rank=rank, country=country, max_age_days=max_age_days,
+                    query,
+                    location=location,
+                    remote=remote,
+                    limit=25,
+                    api_key=api_key,
+                    provider=selected,
+                    rank=rank,
+                    country=country,
+                    max_age_days=max_age_days,
                 )
             except Exception as exc:  # noqa: BLE001 — partial results survive a source outage
                 combined.failures[selected] = _failure(exc)
                 continue
             combined.providers.append(result.provider)
             combined.fetched += result.fetched
-            if selected == "jsearch":
+            # Every answering JSearch vendor counts against the budget, whatever its name; the
+            # allowance shown is the first one a vendor actually reported.
+            combined.keyed_quotas.extend(result.keyed_quotas)
+            if result.quota and not combined.quota:
                 combined.quota = result.quota
             jobs.extend({**job, "source": selected} for job in result.jobs)
         merged = dedupe_jobs(jobs)
@@ -447,6 +467,7 @@ async def search_jobs(
         matched=len(jobs),
         fallback_reason=reason,
         quota=quota,
+        keyed_quotas=[quota] if prov in JSEARCH_VENDORS else [],
     )
 
 
