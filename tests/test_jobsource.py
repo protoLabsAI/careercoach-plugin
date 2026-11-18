@@ -430,6 +430,16 @@ def test_jsearch_v2_jobs_are_read_from_data_jobs(js):
     assert [j["company"] for j in js.parse_jsearch({"data": _JSEARCH_V2["data"]["jobs"]})] == ["Capsule", "Deloitte"]
 
 
+def test_jsearch_pay_is_never_read_as_dollars_when_it_isnt(js):
+    """JSearch sends bare numbers: 90,000–110,000 from a German posting is not a USD range."""
+    job = {"job_title": "AI Engineer", "employer_name": "Acme", "job_min_salary": 90000, "job_max_salary": 110000}
+    parse = lambda **kw: js.parse_jsearch({"data": [{**job, **kw}]})[0].get("comp")  # noqa: E731
+    assert parse() == "90,000–110,000"  # no country: the search itself is US by default
+    assert parse(job_country="US") == "90,000–110,000"
+    assert parse(job_country="DE") is None  # unknown currency: pay stays out of the score
+    assert parse(job_country="DE", job_salary_currency="eur") == "EUR 90,000–110,000"  # named: not compared
+
+
 def test_a_remote_jsearch_role_passes_the_remote_us_filter(js):
     boards = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".boards")
     remote, onsite = js.parse_jsearch(_JSEARCH_V2)
