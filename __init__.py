@@ -29,6 +29,7 @@ the core register anyway).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json as _json
 import logging
@@ -110,6 +111,7 @@ def _as_bool(value) -> bool:
 # ── agent tools: the application tracker ──────────────────────────────────────
 MARKET_ROLE_CAP = 6  # a market search over the target roles runs one search per role, this many at most
 INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
+JSEARCH_SPACING_S = 1.1  # between the watch's JSearch requests: five inside one second drew 429s
 
 
 def _promote_inbox_item(item: dict) -> dict:
@@ -588,7 +590,18 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         # Say who answered. A keyless board is one slice of the market, not a search of all of it —
         # the user must be able to tell the two apart.
         src = f"Source: {result.provider_label}"
-        if result.keyless_fallback:
+        if result.provider == "jsearch":
+            from .search import watchlist as _wl
+
+            _wl.note_jsearch_call(result.quota)
+            if result.quota.get("limit"):
+                src += f" ({result.quota['remaining']} of {result.quota['limit']} requests left on the key's plan)"
+        if result.fallback_reason:
+            src += (
+                " — JSearch didn't answer, so this is the keyless board, remote roles only. "
+                + result.fallback_reason.rstrip(".")
+            )
+        elif result.keyless_fallback:
             src += (
                 " — keyless (no Job-source API key set), remote roles only; add a JSearch key in "
                 "Settings → Career Coach for Google-for-Jobs coverage"
@@ -3433,25 +3446,54 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             found += [j for j in res.new if not j["tracked"]]
     except Exception as e:  # noqa: BLE001
         log.info("[careercoach] watch board scan failed: %s", e)
-    # 2) a keyless market sweep per target role, for companies not on the watchlist yet
+    # 2) a market sweep per target role, for companies not on the watchlist yet. Under `auto` the
+    # keyless board is swept every pass, and JSearch is swept as well while a key is set, it is
+    # answering, and today's share of its request allowance lasts: a rejected key or a spent plan
+    # costs the pass JSearch's roles, never the keyless ones.
     market: dict[str, dict] = {}
+    api_key = (cfg.get("jobs_api_key") or "").strip()
+    configured = (cfg.get("jobs_provider") or "auto").strip().lower()
+    jsearch_ok = bool(api_key)
+    jsearch_calls = 0
     for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-        try:
-            got = await jobsource.search_jobs(
-                role, remote=True, limit=25, api_key=cfg.get("jobs_api_key", ""),
-                provider=cfg.get("jobs_provider", "auto"), country=cfg.get("search_country", "") or "",
-            )  # fmt: skip
-        except Exception as e:  # noqa: BLE001
-            log.info("[careercoach] watch market search failed for %r: %s", role, e)
-            continue
-        answered = True
-        for j in got.jobs:
-            if boards.passes(
-                j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
-            ):
-                j["id"] = f"{j['source']}:{j['url']}"
-                j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
-                market[j["id"]] = j
+        sources = ["jsearch", "himalayas"] if configured == "auto" else [configured]
+        for source in sources:
+            if source == "jsearch":
+                if not jsearch_ok:
+                    continue
+                if wl.jsearch_allowance() == 0:
+                    log.info("[careercoach] watch: today's JSearch requests are spent; back tomorrow")
+                    jsearch_ok = False
+                    continue
+                if jsearch_calls:
+                    await asyncio.sleep(JSEARCH_SPACING_S)  # a burst trips RapidAPI's per-second limit
+                jsearch_calls += 1
+            try:
+                got = await jobsource.search_jobs(
+                    role, remote=True, limit=25, api_key=api_key, provider=source,
+                    country=cfg.get("search_country", "") or "", max_age_days=f["max_age_days"],
+                )  # fmt: skip
+            except Exception as e:  # noqa: BLE001
+                if source == "jsearch":
+                    # one refusal answers for the whole pass: don't spend four more requests on it
+                    jsearch_ok = False
+                    log.warning(
+                        "[careercoach] watch: JSearch isn't answering (%s); this pass uses the keyless board only.",
+                        jobsource._failure(e),
+                    )
+                else:
+                    log.info("[careercoach] watch market search failed for %r: %s", role, e)
+                continue
+            answered = True
+            if got.provider == "jsearch":
+                wl.note_jsearch_call(got.quota)
+            for j in got.jobs:
+                if boards.passes(
+                    j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
+                ):
+                    j["id"] = f"{j['source']}:{j['url']}"
+                    j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
+                    market[j["id"]] = j
     if answered:
         try:
             wl.record_watch_run()

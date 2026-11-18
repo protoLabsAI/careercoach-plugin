@@ -82,7 +82,9 @@ key** for Google-for-Jobs coverage, which includes LinkedIn and Indeed listings 
 key, search uses the keyless Himalayas remote board (set **Search country** to narrow it) or Hacker News
 "Who is hiring?". If you bought JSearch from
 [OpenWeb Ninja](https://www.openwebninja.com/api/jsearch) instead of RapidAPI, paste that key in the same
-field and set **Job source** to `openwebninja`; the two vendors' keys aren't interchangeable. Keyless results are loose, so they're filtered and ranked against your query locally, and
+field and set **Job source** to `openwebninja`; the two vendors' keys aren't interchangeable. RapidAPI's
+free plan is 200 requests a month: the background watch spreads those over the month and keeps sweeping
+Himalayas alongside, and if JSearch rejects the key, searches fall back to Himalayas and say so. Keyless results are loose, so they're filtered and ranked against your query locally, and
 every result says which source it came from.
 
 ### Background job-watch

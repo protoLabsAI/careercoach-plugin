@@ -3,6 +3,22 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.1
+
+- **JSearch on RapidAPI works again.** RapidAPI removed the `/search` endpoint, so every search with a
+  RapidAPI key answered 404. Searches now call `/search-v2`. Remote-only searches use its
+  `work_from_home` filter: the old `remote_jobs_only` is ignored there and on-site roles came back.
+- **A key JSearch rejects no longer turns market search off.** Under Job source `auto`, when JSearch
+  refuses the key, runs out of requests or is down, the search is answered by Himalayas and the reply
+  says why JSearch didn't answer. Before, the failure was the whole answer, and the watch found no
+  market roles until the key was removed. Job source `jsearch` still reports the failure as is.
+- **The watch sweeps both.** With a key under `auto`, each pass asks Himalayas for every role and asks
+  JSearch as well, so a key adds roles and never replaces the free ones.
+- **The watch budgets JSearch requests.** RapidAPI's free plan is 200 requests a month, and the watch
+  would spend that in five days. It now reads how many requests the plan has left and when they refill,
+  and spends an even share each day (about 6 a day on the free plan). A bigger plan gets a bigger
+  share. A search you ask for in chat is not held back; its reply says how many requests are left.
+
 ## 0.17.0
 
 - **A JSearch key bought from OpenWeb Ninja works.** Set **Job source** to `openwebninja` and paste the
