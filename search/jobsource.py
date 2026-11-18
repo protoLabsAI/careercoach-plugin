@@ -101,13 +101,17 @@ def parse_jsearch(payload: dict) -> list[dict]:
         )
         if remote:
             job["remote"] = True
+            if j.get("job_country"):
+                # structured, so the filter never reads the text: "Remote (Berlin, DE)" would
+                # otherwise pass as Delaware
+                job["countries"] = [str(j["job_country"])]
         lo, hi = j.get("job_min_salary"), j.get("job_max_salary")
-        # JSearch sends pay as bare numbers. Name the currency when it says one; with none, take
-        # the numbers as dollars only for a US posting. Any other pay is left out, so it is never
-        # compared to the (USD) floor as if it were dollars.
+        # JSearch sends pay as bare numbers. They are dollars when it says USD, or says nothing
+        # for a US posting. Any other pay is left out, so it is never compared to the (USD) floor
+        # as if it were dollars.
         currency = str(j.get("job_salary_currency") or "").strip().upper()
         us = str(j.get("job_country") or "US").strip().upper() in ("US", "USA", "UNITED STATES")
-        if lo and hi and (currency or us):
+        if lo and hi and (currency == "USD" or (not currency and us)):
             job["comp"] = f"{currency} {int(lo):,}–{int(hi):,}".strip()
             period = (j.get("job_salary_period") or "").strip().lower()
             if period and period != "year":

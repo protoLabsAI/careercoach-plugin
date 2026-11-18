@@ -437,7 +437,9 @@ def test_jsearch_pay_is_never_read_as_dollars_when_it_isnt(js):
     assert parse() == "90,000–110,000"  # no country: the search itself is US by default
     assert parse(job_country="US") == "90,000–110,000"
     assert parse(job_country="DE") is None  # unknown currency: pay stays out of the score
-    assert parse(job_country="DE", job_salary_currency="eur") == "EUR 90,000–110,000"  # named: not compared
+    assert parse(job_country="DE", job_salary_currency="eur") is None  # any named non-dollar currency too
+    assert parse(job_country="AE", job_salary_currency="AED") is None
+    assert parse(job_country="DE", job_salary_currency="usd") == "USD 90,000–110,000"
 
 
 def test_a_remote_jsearch_role_passes_the_remote_us_filter(js):
@@ -445,6 +447,13 @@ def test_a_remote_jsearch_role_passes_the_remote_us_filter(js):
     remote, onsite = js.parse_jsearch(_JSEARCH_V2)
     assert boards.location_matches(remote, "remote, portland, or") is True
     assert boards.location_matches(onsite, "remote, portland, or") is False
+    # "Berlin, DE" must not read as Delaware, nor "Toronto, CA" as California
+    for city, country in (("Berlin", "DE"), ("Toronto", "CA"), ("Bengaluru", "IN")):
+        abroad = js.parse_jsearch(
+            {"data": [{"job_title": "AI Engineer", "job_is_remote": True, "job_city": city, "job_country": country}]}
+        )[0]
+        assert abroad["location"] == f"Remote ({city}, {country})"
+        assert boards.location_matches(abroad, "remote, portland, or") is False
 
 
 def test_jsearch_asks_for_remote_and_recent_the_v2_way(js, monkeypatch):
