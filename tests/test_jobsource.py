@@ -201,6 +201,154 @@ def test_jsearch_results_are_not_filtered(js, monkeypatch):
     assert [j["company"] for j in out.jobs] == ["Acme"]  # JSearch does real search; no client-side drop
 
 
+def test_openwebninja_calls_its_own_host_with_x_api_key(js, monkeypatch):
+    """A JSearch key bought from OpenWeb Ninja goes to api.openwebninja.com in ``x-api-key`` —
+    RapidAPI answers that key "not subscribed", so no X-RapidAPI-* header may ride along."""
+    payload = {
+        "status": "OK",
+        "request_id": "r1",
+        "parameters": {"query": "staff engineer in Austin"},
+        "data": [
+            {
+                "job_title": "Staff SWE",
+                "employer_name": "Acme",
+                "job_apply_link": "https://a/1",
+                "job_city": "Austin",
+                "job_state": "TX",
+                "job_country": "US",
+                "job_posted_at_datetime_utc": "2026-11-17T00:00:00.000Z",
+                "job_description": "Build the platform.",
+            },
+            {"job_title": "Pastry Chef", "employer_name": "Bakery Co", "job_apply_link": "https://a/2"},
+        ],
+    }
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=payload)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    out = _search(js, "staff engineer", location="Austin", remote=True, api_key="OWN-KEY", provider="openwebninja")
+
+    (request,) = seen
+    assert request.method == "GET"
+    assert request.url.host == "api.openwebninja.com" and request.url.path == "/jsearch/search"
+    assert request.headers["x-api-key"] == "OWN-KEY"
+    assert not [h for h in request.headers if h.lower().startswith("x-rapidapi")]
+    assert dict(request.url.params) == {
+        "query": "staff engineer in Austin",
+        "page": "1",
+        "num_pages": "1",
+        "remote_jobs_only": "true",
+    }
+    assert out.provider == "openwebninja" and out.keyless_fallback is False
+    assert out.provider_label == "JSearch via OpenWeb Ninja (Google-for-Jobs)"
+    assert [j["company"] for j in out.jobs] == ["Acme", "Bakery Co"]  # real search; no client-side drop
+    assert (out.fetched, out.matched) == (2, 2)
+    assert out.jobs[0]["location"] == "Austin, TX, US" and out.jobs[0]["url"] == "https://a/1"
+    assert out.jobs[0]["posted"] == "2026-11-17T00:00:00.000Z"
+
+
+def test_openwebninja_without_remote_omits_the_remote_param(js, monkeypatch):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": []})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    out = _search(js, "data engineer", api_key="OWN-KEY", provider="OpenWebNinja")
+    assert dict(seen[0].url.params) == {"query": "data engineer", "page": "1", "num_pages": "1"}
+    assert out.provider == "openwebninja" and out.jobs == []
+
+
+def test_openwebninja_needs_a_key(js, monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not be reached
+        raise AssertionError("no request without a key")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="Settings → Career Coach"):
+            _search(js, "x", api_key=blank, provider="openwebninja")
+
+
+def test_the_unknown_provider_error_lists_openwebninja(js):
+    with pytest.raises(ValueError, match="openwebninja"):
+        _search(js, "x", provider="monster")
+
+
+def test_auto_never_picks_openwebninja(js):
+    """Both vendors issue 50-character keys, so the key can't say whose it is: auto stays RapidAPI."""
+    assert js.choose_provider("auto", "k" * 50) == "jsearch"
+    assert js.choose_provider("auto", "") == "himalayas"
+    assert js.choose_provider("openwebninja", "") == "openwebninja"
+    assert "openwebninja" not in js.KEYLESS
+
+
+def test_parse_jsearch_reads_the_v2_shape(js):
+    payload = {
+        "status": "OK",
+        "data": {
+            "jobs": [
+                {
+                    "job_title": "ML Engineer",
+                    "employer_name": "Globex",
+                    "job_apply_link": "https://g/1",
+                    "job_is_remote": True,
+                    "job_posted_at_datetime_utc": None,
+                    "job_posted_at_timestamp": 1794960000,
+                    "job_description": "Train models.",
+                },
+                {
+                    "job_title": "Data Engineer",
+                    "employer_name": "Hooli",
+                    "job_apply_link": "https://h/1",
+                    "job_posted_at_datetime_utc": "2026-11-10T08:00:00.000Z",
+                    "job_posted_at_timestamp": 1794960000,
+                },
+                {"job_title": "Analyst", "employer_name": "Initech", "job_apply_link": "https://i/1"},
+            ],
+            "cursor": "abc",
+        },
+    }
+    jobs = js.parse_jsearch(payload)
+    assert [(j["title"], j["company"], j["url"]) for j in jobs] == [
+        ("ML Engineer", "Globex", "https://g/1"),
+        ("Data Engineer", "Hooli", "https://h/1"),
+        ("Analyst", "Initech", "https://i/1"),
+    ]
+    assert jobs[0]["location"] == "Remote" and jobs[0]["description"] == "Train models."
+    assert jobs[0]["posted"] == "2026-11-18T00:00:00+00:00"  # null datetime → the epoch timestamp, as UTC
+    assert jobs[1]["posted"] == "2026-11-10T08:00:00.000Z"  # a datetime that is set still wins
+    assert jobs[2]["posted"] == ""  # neither field
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"data": None}, {"data": {}}, {"data": {"jobs": None, "cursor": "c"}}])
+def test_parse_jsearch_tolerates_an_empty_payload(js, payload):
+    assert js.parse_jsearch(payload) == []
+
+
+def test_the_manifest_allows_the_openwebninja_host():
+    import pathlib
+    import tomllib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((root / "protoagent.plugin.yaml").read_text())
+    assert "api.openwebninja.com" in manifest["capabilities"]["network"]
+    assert "jsearch.p.rapidapi.com" in manifest["capabilities"]["network"]
+    settings = {s["key"]: s["description"] for s in manifest["settings"]}
+    assert "openwebninja" in settings["jobs_provider"]
+    assert "RapidAPI" in settings["jobs_api_key"] and "OpenWeb Ninja" in settings["jobs_api_key"]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+    assert manifest["version"] == pyproject == "0.17.0"
+
+
 def test_the_tool_reports_which_provider_answered(tools, remotive):
     tool = tools["careercoach_search_jobs"]
     out = asyncio.run(tool.ainvoke({"query": "data engineer"}))

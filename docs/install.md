@@ -80,7 +80,9 @@ company is looked up on Ashby, Greenhouse and Lever.
 Add a [RapidAPI JSearch](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) key under **Job-source API
 key** for Google-for-Jobs coverage, which includes LinkedIn and Indeed listings and local roles. Without a
 key, search uses the keyless Himalayas remote board (set **Search country** to narrow it) or Hacker News
-"Who is hiring?". Keyless results are loose, so they're filtered and ranked against your query locally, and
+"Who is hiring?". If you bought JSearch from
+[OpenWeb Ninja](https://www.openwebninja.com/api/jsearch) instead of RapidAPI, paste that key in the same
+field and set **Job source** to `openwebninja`; the two vendors' keys aren't interchangeable. Keyless results are loose, so they're filtered and ranked against your query locally, and
 every result says which source it came from.
 
 ### Background job-watch
