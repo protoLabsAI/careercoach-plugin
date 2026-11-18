@@ -133,7 +133,7 @@ def test_jobs_route_shape(plugin, client):
     st = importlib.import_module(plugin.__name__ + ".record.state")
     st.track_application(company="Acme", role="ML Engineer", status="applied")
     body = tc.get("/api/plugins/careercoach/jobs").json()
-    assert set(body) == {"inbox", "applications", "columns", "followup_days", "watch_last_run"}
+    assert set(body) == {"inbox", "applications", "columns", "followup_days", "watch_last_run", "watch_sources"}
     assert body["followup_days"] == 10
     assert body["columns"]["Saved"] == ["considering"]
     assert body["columns"]["Closed"] == ["rejected", "passed"]

@@ -97,7 +97,10 @@ def parse_jsearch(payload: dict) -> list[dict]:
             # "Remote (US)", not a bare "US": the location filter reads "remote" from this text
             loc = f"Remote ({loc})" if loc else "Remote"
         job = _job(
-            title=j.get("job_title") or "",
+            # an aggregator's page title: "AI-Augmented Software Engineer job at CGI in Knoxville"
+            title=re.sub(r"\s+job\s+at\s+.+$", "", j.get("job_title") or "", flags=re.I)
+            if j.get("employer_name")
+            else (j.get("job_title") or ""),
             company=j.get("employer_name") or "",
             location=loc,
             url=j.get("job_apply_link") or j.get("job_google_link") or "",

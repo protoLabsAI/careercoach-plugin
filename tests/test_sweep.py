@@ -238,3 +238,38 @@ def test_one_source_failing_never_costs_the_others(mods, monkeypatch):
     jobs, answered = _run(mods, ["jobicy", "himalayas"])
     assert answered and {j["source"] for j in jobs} == {"himalayas"} and asked["himalayas.app"]
     assert _run(mods, ["himalayas"], roles="") == ([], False)
+
+
+# ── which sources answered ────────────────────────────────────────────────────
+def test_the_pass_reports_each_source_and_why_one_did_not_answer(mods, monkeypatch):
+    def down(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    _net(monkeypatch, down)
+    health: dict = {}
+    asyncio.run(mods.sweep.market_sweep({}, ROLES, ["himalayas", "jobicy", "jsearch"], "KEY", 30, health))
+    assert health["himalayas"] == {"ok": True, "jobs": 5, "note": ""}
+    assert health["jobicy"]["ok"] and health["jobicy"]["jobs"] == 1
+    assert health["jsearch"] == {"ok": False, "jobs": 0, "note": "timed out"}
+    mods.watchlist.record_watch_run(health)
+    assert mods.watchlist.watch_sources()["jsearch"]["note"] == "timed out"
+    assert mods.watchlist.unanswered_sources() == ["JSearch: timed out"]
+    assert mods.watchlist.watch_last_run()
+
+
+def test_a_spent_allowance_and_a_missing_key_are_not_failures_to_report(mods, monkeypatch):
+    _net(monkeypatch)
+    health: dict = {}
+    asyncio.run(mods.sweep.market_sweep({}, ROLES, ["jsearch", "himalayas"], "", 30, health))
+    assert "jsearch" not in health  # no key: the normal keyless setup, nothing to say
+    monkeypatch.setattr(mods.watchlist, "jsearch_allowance", lambda: 0)
+    health = {}
+    asyncio.run(mods.sweep.market_sweep({}, ROLES, ["jsearch", "himalayas"], "KEY", 30, health))
+    mods.watchlist.record_watch_run(health)
+    assert mods.watchlist.unanswered_sources() == [
+        "JSearch: today's share of the plan's requests is used; it resumes tomorrow"
+    ]
+    mods.watchlist.record_watch_run({"himalayas": {"ok": True, "jobs": 3, "note": ""}})
+    assert mods.watchlist.unanswered_sources() == []
+    mods.watchlist.record_watch_run()  # an older caller: no report, nothing claimed
+    assert mods.watchlist.watch_sources() == {} and mods.watchlist.unanswered_sources() == []

@@ -442,6 +442,13 @@ def test_jsearch_pay_is_never_read_as_dollars_when_it_isnt(js):
     assert parse(job_country="DE", job_salary_currency="usd") == "USD 90,000–110,000"
 
 
+def test_an_aggregators_page_title_is_trimmed_to_the_role(js):
+    raw = {"job_title": "AI-Augmented Software Engineer job at CGI in Knoxville", "employer_name": "CGI"}
+    assert js.parse_jsearch({"data": [raw]})[0]["title"] == "AI-Augmented Software Engineer"
+    kept = {"job_title": "Engineer, Job Matching at Scale", "employer_name": "Acme"}
+    assert js.parse_jsearch({"data": [kept]})[0]["title"] == "Engineer, Job Matching at Scale"
+
+
 def test_a_remote_jsearch_role_passes_the_remote_us_filter(js):
     boards = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".boards")
     remote, onsite = js.parse_jsearch(_JSEARCH_V2)
