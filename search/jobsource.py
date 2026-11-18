@@ -281,6 +281,44 @@ PROVIDER_LABELS = {
 KEYLESS = ("himalayas", "hn", "remotive")
 
 
+def choose_providers(provider: str, api_key: str) -> list[str]:
+    """Expand and validate a selection before network calls. Keys cannot identify their vendor."""
+    names = [p.strip() for p in (provider or "auto").strip().lower().split(",")]
+    for name in names:
+        if name not in (*PROVIDER_LABELS, "auto", "all"):
+            raise ValueError(f"unknown job source {name!r} — use auto, all, jsearch, openwebninja, himalayas, hn or remotive")
+    vendors = [p for p in names if p in ("jsearch", "openwebninja")]
+    expanded = []
+    for name in names:
+        if name == "all":
+            expanded.extend(p for p in KEYLESS if p != "remotive")
+            if (api_key or "").strip():
+                expanded.extend(vendors or ["jsearch"])
+        else:
+            expanded.append(choose_provider(name, api_key))
+    return list(dict.fromkeys(expanded))
+
+
+def dedupe_jobs(jobs: list[dict]) -> list[dict]:
+    """Keep first-seen postings with combined provenance, without modifying inputs."""
+    from urllib.parse import urlsplit
+
+    merged = {}
+    for job in jobs:
+        company = " ".join((job.get("company") or "").casefold().split())
+        company = re.sub(r"(?:[\s,]+(?:incorporated|inc|llc|ltd|limited|corp|corporation)\.?)+$", "", company).strip()
+        title = re.sub(r"[\W_]+", " ", (job.get("title") or "").casefold()).strip()
+        url = (job.get("url") or "").strip()
+        parts = urlsplit(url if "://" in url else "//" + url)
+        key = (company, title, parts.netloc.casefold() + parts.path.rstrip("/"))
+        sources = job.get("sources") or [job.get("source", "")]
+        if key not in merged:
+            merged[key] = {**job, "sources": list(sources)}
+        else:
+            merged[key]["sources"] = list(dict.fromkeys([*merged[key]["sources"], *sources]))
+    return list(merged.values())
+
+
 def rank_by_query(jobs: list[dict], query: str) -> list[dict]:
     """Keep only the jobs that mention the query (``prescore`` > 0), best first; ties keep the
     provider's order. A query with no scoreable word (all terms under 3 characters, e.g. "ML")
@@ -298,7 +336,8 @@ class JobSearch:
     key, or because JSearch failed: then ``fallback_reason`` says how), ``fetched`` is how many
     postings the provider sent, ``matched`` how many survived relevance filtering (before
     ``limit``). ``quota`` is JSearch's request allowance as of this call (``parse_jsearch_quota``),
-    empty when JSearch didn't answer or didn't say."""
+    empty when JSearch didn't answer or didn't say. Multi-source searches populate
+    ``providers`` with every answering source and ``failures`` with per-source reasons."""
 
     jobs: list[dict] = field(default_factory=list)
     provider: str = ""
@@ -308,9 +347,14 @@ class JobSearch:
     fallback_reason: str = ""
     quota: dict = field(default_factory=dict)
 
+    providers: list[str] = field(default_factory=list)
+    failures: dict[str, str] = field(default_factory=dict)
+
     @property
     def provider_label(self) -> str:
-        return PROVIDER_LABELS.get(self.provider, self.provider or "unknown")
+        if self.providers:
+            return ", ".join(PROVIDER_LABELS[p] for p in self.providers)
+        return PROVIDER_LABELS.get(self.provider, self.provider or "none")
 
 
 # ── network (httpx — a host dependency; kept lazy) ────────────────────────────
@@ -334,8 +378,32 @@ async def search_jobs(
     no older than that. Raises ``ValueError`` if jsearch or openwebninja is selected without a
     key, for an unknown provider, or when either keyed vendor answers with an error (the message
     says why — see ``_raise_for_job_api``). Under ``auto`` a JSearch failure doesn't raise: the
-    search falls back to Himalayas and ``fallback_reason`` carries that message."""
+    search falls back to Himalayas and ``fallback_reason`` carries that message. Lists and
+    ``all`` merge deduped results in source order and retain individual failures."""
     limit = max(1, min(int(limit), 25))
+    providers = choose_providers(provider, api_key)
+    if "," in (provider or "") or (provider or "").strip().lower() == "all":
+        combined = JobSearch()
+        jobs = []
+        for selected in providers:
+            try:
+                result = await search_jobs(
+                    query, location=location, remote=remote, limit=25, api_key=api_key,
+                    provider=selected, rank=rank, country=country, max_age_days=max_age_days,
+                )
+            except Exception as exc:  # noqa: BLE001 — partial results survive a source outage
+                combined.failures[selected] = _failure(exc)
+                continue
+            combined.providers.append(result.provider)
+            combined.fetched += result.fetched
+            if selected == "jsearch":
+                combined.quota = result.quota
+            jobs.extend({**job, "source": selected} for job in result.jobs)
+        merged = dedupe_jobs(jobs)
+        combined.jobs = merged[:limit]
+        combined.matched = len(merged)
+        combined.provider = ",".join(combined.providers)
+        return combined
     prov = choose_provider(provider, api_key)
     auto = (provider or "auto").strip().lower() == "auto"
     keyless = auto and prov in KEYLESS

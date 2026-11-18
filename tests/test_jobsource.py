@@ -602,3 +602,112 @@ def test_the_tool_explains_a_not_subscribed_key(plugin, iso, monkeypatch):
     assert "RapidAPI accepted the key, but its account isn't subscribed to JSearch." in out
     assert "set Job source to 'openwebninja' in Settings → Career Coach" in out
     assert "openwebninja" in (tool.description or "")
+
+
+@pytest.mark.parametrize("selection", ["openwebninja,himalayas", "himalayas,openwebninja"])
+def test_multi_source_merges_and_dedupes(js, monkeypatch, selection):
+    def handler(request):
+        if request.url.host == "api.openwebninja.com":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "job_title": "Data-Engineer",
+                            "employer_name": " Acme Inc.",
+                            "job_apply_link": "https://jobs.example/1/?ref=a",
+                        },
+                    ]
+                },
+            )
+        assert request.url.host == "himalayas.app"
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {"title": "data engineer", "companyName": "ACME LLC", "applicationLink": "http://jobs.example/1"},
+                    {"title": "data engineer", "companyName": "ACME", "applicationLink": "https://jobs.example/2"},
+                ]
+            },
+        )
+
+    _mock(monkeypatch, handler)
+    out = _search(js, "engineer", provider=selection, api_key="KEY")
+    assert len(out.jobs) == 2
+    assert out.jobs[0]["source"] == selection.split(",")[0]
+    assert out.jobs[0]["sources"] == selection.split(",")
+    assert out.jobs[1]["source"] == "himalayas"
+    assert out.providers == selection.split(",")
+    assert "Himalayas" in out.provider_label and "OpenWeb Ninja" in out.provider_label
+
+
+@pytest.mark.parametrize("key,vendor", [("", ""), ("KEY", "jsearch"), ("KEY", "openwebninja")])
+def test_all_queries_keyless_and_selected_vendor(js, monkeypatch, key, vendor):
+    hosts = []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        return httpx.Response(200, json={"jobs": [], "data": [], "hits": []})
+
+    _mock(monkeypatch, handler)
+    selection = "all,openwebninja" if vendor == "openwebninja" else "all"
+    out = _search(js, "engineer", provider=selection, api_key=key)
+    expected = ["himalayas.app", "hn.algolia.com"]
+    if vendor:
+        expected.append("api.openwebninja.com" if vendor == "openwebninja" else "jsearch.p.rapidapi.com")
+    assert hosts == expected
+    assert out.providers == ["himalayas", "hn"] + ([vendor] if vendor else [])
+
+
+def test_unknown_list_entry_is_validated_before_network(js, monkeypatch):
+    def unexpected(request):
+        pytest.fail("validation must precede network")
+
+    _mock(monkeypatch, unexpected)
+    with pytest.raises(ValueError, match="unknown job source 'oops'"):
+        _search(js, "engineer", provider="himalayas,oops")
+
+
+@pytest.mark.parametrize(
+    "tool_name,arg", [("careercoach_search_jobs", "source"), ("careercoach_find_roles", "provider")]
+)
+def test_multi_source_reply_keeps_results_and_failure(plugin, iso, monkeypatch, tool_name, arg):
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "multi"))
+    reg = FakeRegistry({"extended_tools": True, "jobs_api_key": "KEY"})
+    plugin.register(reg)
+    _mock(monkeypatch, _refusing(403, "Plan disabled"))
+    kwargs = {"query": "data engineer", arg: "jsearch,himalayas"}
+    if tool_name == "careercoach_find_roles":
+        kwargs["source"] = "market"
+    out = asyncio.run({t.name: t for t in reg.tools}[tool_name].ainvoke(kwargs))
+    assert "Globex" in out and "Source: Himalayas" in out
+    assert "RapidAPI (JSearch) denied access: Plan disabled" in out
+
+
+def test_all_failed_sources_are_reported(js, monkeypatch):
+    _answer(monkeypatch, 503, text="Unavailable")
+    out = _search(js, "engineer", provider="jsearch,openwebninja", api_key="KEY")
+    assert out.jobs == [] and out.providers == []
+    assert set(out.failures) == {"jsearch", "openwebninja"}
+
+
+def test_configured_list_reply_names_all_answers_and_records_quota(plugin, iso, monkeypatch):
+    from _plugin_testkit import FakeRegistry
+
+    monkeypatch.setenv("CAREERCOACH_DIR", str(iso / "multi-quota"))
+    reg = FakeRegistry({"extended_tools": True, "jobs_api_key": "KEY", "jobs_provider": "jsearch,himalayas"})
+    plugin.register(reg)
+
+    def handler(request):
+        if request.url.host == "jsearch.p.rapidapi.com":
+            return httpx.Response(200, json=_JSEARCH_V2, headers=_QUOTA_HEADERS)
+        return httpx.Response(200, json=_as_himalayas(_SAME_FOR_EVERY_QUERY))
+
+    _mock(monkeypatch, handler)
+    out = asyncio.run({t.name: t for t in reg.tools}["careercoach_search_jobs"].ainvoke({"query": "engineer"}))
+    assert "Source: JSearch (Google-for-Jobs), Himalayas" in out
+    assert "193 of 200 requests left" in out
+    wl = importlib.import_module(plugin.__name__ + ".search.watchlist")
+    assert wl.jsearch_allowance() == 5

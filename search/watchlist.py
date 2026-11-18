@@ -273,6 +273,7 @@ def add_to_inbox(jobs: list[dict]) -> int:
         "posted",
         "comp",
         "source",
+        "sources",
         "first_seen",
         "ghost",
         "reason",

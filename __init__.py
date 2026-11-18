@@ -571,7 +571,8 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         query: str, location: str = "", remote: bool = False, limit: int = 10, source: str = ""
     ) -> str:
         """Search live job postings for `query` (title, skill or role), optionally by `location` or `remote`-only.
-        `source` (default: Settings): "himalayas" (keyless remote board), "hn" (this month's HN 'Who is hiring?'),
+        `source` accepts comma-separated names or "all" (keyless plus RapidAPI if keyed;
+        "all,openwebninja" selects that vendor). Single sources (default: Settings): "himalayas" (keyless remote board), "hn" (this month's HN 'Who is hiring?'),
         "jsearch" (Google for Jobs via RapidAPI; needs a RapidAPI key), "openwebninja" (JSearch via OpenWeb Ninja; needs its key). For watched companies, careercoach_scan_boards is fresher."""
         from .search import jobsource
 
@@ -590,7 +591,7 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         # Say who answered. A keyless board is one slice of the market, not a search of all of it —
         # the user must be able to tell the two apart.
         src = f"Source: {result.provider_label}"
-        if result.provider == "jsearch":
+        if "jsearch" in (result.providers or [result.provider]):
             from .search import watchlist as _wl
 
             _wl.note_jsearch_call(result.quota)
@@ -611,6 +612,8 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
             if location:
                 src += f"; {result.provider_label.split(' (')[0]} ignores `location`"
         src += "."
+        for failed, reason in result.failures.items():
+            src += f" {jobsource.PROVIDER_LABELS[failed]} failed: {reason}"
         from .search import boards, scan, watchlist
         from .record import state
 
@@ -685,7 +688,7 @@ def _register_find_roles_tool(registry, scan_boards, search_jobs) -> None:
         already shown so the digest does not repeat them. `roles`/`query` are the titles or keywords to match (both
         accepted); `locations` where (places, or "remote"); `max_age_days` 0 = any age; `only_new`
         (watched) shows only roles no earlier scan returned; `remote` (market) remote-only; `limit` caps
-        results. `provider` (market) overrides Settings, e.g. "himalayas" or "hn" for keyless search.
+        results. `provider` (market) overrides Settings, accepting a single name, comma-separated names, or "all".
         Choose which companies are watched with careercoach_watchlist."""
         src = (source or "watched").strip().lower()
         if src == "market":
@@ -3450,14 +3453,14 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     # keyless board is swept every pass, and JSearch is swept as well while a key is set, it is
     # answering, and today's share of its request allowance lasts: a rejected key or a spent plan
     # costs the pass JSearch's roles, never the keyless ones.
-    market: dict[str, dict] = {}
+    market: list[dict] = []
     api_key = (cfg.get("jobs_api_key") or "").strip()
     configured = (cfg.get("jobs_provider") or "auto").strip().lower()
     jsearch_ok = bool(api_key)
     jsearch_calls = 0
-    for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
-        sources = ["jsearch", "himalayas"] if configured == "auto" else [configured]
-        for source in sources:
+    sources = ["jsearch", "himalayas"] if configured == "auto" else jobsource.choose_providers(configured, api_key)
+    for source in sources:
+        for role in [r.strip() for r in roles.split(",") if r.strip()][:5]:
             if source == "jsearch":
                 if not jsearch_ok:
                     continue
@@ -3482,7 +3485,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                         jobsource._failure(e),
                     )
                 else:
-                    log.info("[careercoach] watch market search failed for %r: %s", role, e)
+                    log.info("[careercoach] watch market source %s failed for %r: %s", source, role, e)
                 continue
             answered = True
             if got.provider == "jsearch":
@@ -3491,9 +3494,10 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
                 if boards.passes(
                     j, roles=roles, exclude=f["exclude"], locations=f["locations"], max_age_days=f["max_age_days"]
                 ):
-                    j["id"] = f"{j['source']}:{j['url']}"
+                    origin = source if "," in configured or configured == "all" else j["source"]
+                    j["id"] = f"{origin}:{j['url']}"
                     j["hash"] = boards.content_hash(j["title"], j.get("snippet", ""), j.get("location", ""))
-                    market[j["id"]] = j
+                    market.append({**j, "source": origin})
     if answered:
         try:
             wl.record_watch_run()
@@ -3502,7 +3506,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     try:
         if market:
             index = scan.tracked_index(rows)
-            fresh = wl.unseen(list(market.values()), wl.WATCH_SEEN)
+            fresh = wl.unseen(jobsource.dedupe_jobs(market), wl.WATCH_SEEN)
             found += [j for j in (scan.annotate(j, index) for j in fresh) if not j["tracked"]]
         if not found:
             return []

@@ -920,3 +920,27 @@ def test_the_plural_fold_spares_one_word_brands_and_keeps_possessives(mods):
     assert hk("Moody's") == hk("Moodys") and hk("McDonald’s") == hk("McDonalds")
     assert hk("Wells Fargo") == "wellsfargo"  # only the last word of a name folds
     assert "atla" not in mods.boards.slug_candidates("Atlas")
+
+
+def test_watch_list_dedupes_before_inbox_and_keeps_quota(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls = _with_jsearch(
+        watch_env, monkeypatch, lambda r: httpx.Response(200, json=JSEARCH, headers=_quota(1000))
+    )
+    cfg["jobs_provider"] = "jsearch,himalayas"
+    js = importlib.import_module(plugin.__name__ + ".search.jobsource")
+
+    async def duplicate(query, country=""):
+        job = js.parse_jsearch(JSEARCH)[0]
+        return [{**job, "company": "Googlejobs Co Inc.", "url": job["url"] + "/?ref=other", "source": "himalayas"}]
+
+    monkeypatch.setattr(js, "_get_himalayas", duplicate)
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    matches = [j for j in got if j["company"] == "Googlejobs Co"]
+    assert len(matches) == 1
+    assert matches[0]["sources"] == ["jsearch", "himalayas"]
+    saved = [j for j in mods.watchlist.inbox_for_view() if j["company"] == "Googlejobs Co"]
+    assert len(saved) == 1 and saved[0]["sources"] == ["jsearch", "himalayas"]
+    assert len(calls) == 5
+    assert mods.watchlist.jsearch_allowance() is not None
+    again = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert not [j for j in again if j["company"] == "Googlejobs Co"]
