@@ -69,6 +69,7 @@ def test_get_shows_manifest_defaults_for_unset_keys(plugin, iso):
     assert "max_age_days: 30" in out
     assert "watch_interval_min: 180" in out
     assert "watch_min_score: 65" in out
+    assert "jobs_api_monthly_limit: 200" in out
     assert "followup_days: 10" in out
     assert "min_salary: 0" in out
     assert "watch_enabled: false" in out
@@ -178,6 +179,17 @@ def test_number_key_rejects_out_of_range_value(plugin, iso):
     assert "at least 5" in invoke(tool, {"action": "set", "key": "watch_interval_min", "value": "2"})
     assert "0 or more" in invoke(tool, {"action": "set", "key": "max_age_days", "value": "-3"})
     assert "watch_min_score" not in reg.config  # nothing was stored
+
+
+def test_the_keyed_source_monthly_limit_is_settable_and_zero_means_no_limit(plugin, iso):
+    reg, tool = _settings_tool(plugin, {})
+    assert invoke(tool, {"action": "get", "key": "jobs_api_monthly_limit"}).startswith("jobs_api_monthly_limit: 200")
+    assert "Set jobs_api_monthly_limit: 200 → 0" in invoke(
+        tool, {"action": "set", "key": "jobs_api_monthly_limit", "value": "0"}
+    )
+    assert reg.config["jobs_api_monthly_limit"] == 0
+    assert "0 or more" in invoke(tool, {"action": "set", "key": "jobs_api_monthly_limit", "value": "-1"})
+    assert reg.config["jobs_api_monthly_limit"] == 0
 
 
 # ── misc: unknown action and a set with no key both report cleanly ───────────────────────────────
