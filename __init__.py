@@ -574,7 +574,9 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         "jobicy" / "weworkremotely" / "remoteok" (keyless feeds of recent remote roles),
         "jsearch" (Google for Jobs via RapidAPI; needs a RapidAPI key), "openwebninja" (JSearch via OpenWeb Ninja; needs its key). For watched companies, careercoach_scan_boards is fresher."""
         from .search import jobsource
+        from .search import watchlist as _wl
 
+        _month_limit = _wl.monthly_limit(cfg)
         try:
             result = await jobsource.search_jobs(
                 query,
@@ -584,6 +586,7 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                 api_key=cfg.get("jobs_api_key", ""),
                 provider=(source or cfg.get("jobs_provider", "auto")),
                 country=cfg.get("search_country", "") or "",
+                monthly_limit=_month_limit,
             )
         except Exception as e:  # noqa: BLE001 — surface the reason to the user, don't crash the turn
             return f"Job search failed: {e}"
@@ -591,8 +594,6 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         # the user must be able to tell the two apart.
         src = f"Source: {result.provider_label}"
         if result.keyed_quotas:
-            from .search import watchlist as _wl
-
             # One count per request a JSearch vendor answered (RapidAPI or OpenWeb Ninja, alone or
             # in a list). A vendor that reports no allowance is noted first, so its empty answer
             # doesn't erase the allowance another vendor reported in the same search.
@@ -600,6 +601,19 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
                 _wl.note_jsearch_call(_quota)
             if result.quota.get("limit"):
                 src += f" ({result.quota['remaining']} of {result.quota['limit']} requests left on the key's plan)"
+        # Every keyed source that answered: what is left of its month (search_jobs counted the call).
+        for _keyed in [p for p in (result.providers or [result.provider]) if p in jobsource.JSEARCH_VENDORS]:
+            if _keyed == "jsearch" and result.quota.get("limit"):
+                continue  # RapidAPI reported its own allowance: said above
+            _month = _wl.month_usage(_keyed, _month_limit)
+            _name = jobsource._JOB_API_LABELS[_keyed]
+            if _month["limit"]:
+                src += (
+                    f" ({_name}: {_month['left']} of {_month['limit']} requests left this month, "
+                    f"refills {_month['refill']})"
+                )
+            else:
+                src += f" ({_name}: {_month['used']} request(s) sent this month, no monthly limit set)"
         if result.fallback_reason:
             src += (
                 " — A keyed source didn't answer; keyless sources provide fallback results. "
@@ -768,6 +782,7 @@ _SETTINGS_INT_KEYS = (
     "watch_interval_min",
     "watch_min_score",
     "watch_market_queries",
+    "jobs_api_monthly_limit",
     "followup_days",
     "min_salary",
 )
@@ -784,6 +799,7 @@ _SETTINGS_DEFAULTS = {
     "watch_interval_min": 180,
     "watch_min_score": 65,
     "watch_market_queries": 3,
+    "jobs_api_monthly_limit": 200,
     "followup_days": 10,
     "min_salary": 0,
     "watch_enabled": False,
@@ -796,6 +812,7 @@ _SETTINGS_INT_BOUNDS = {
     "watch_interval_min": (5, None, "at least 5 (minutes)"),
     "watch_min_score": (0, 100, "between 0 and 100"),
     "watch_market_queries": (1, 10, "between 1 and 10 (keyed requests per pass)"),
+    "jobs_api_monthly_limit": (0, None, "0 or more (requests a month per keyed source, 0 = no limit)"),
     "followup_days": (1, None, "at least 1 (days)"),
     "min_salary": (0, None, "0 or more (annual, 0 = no pay floor)"),
 }

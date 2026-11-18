@@ -391,6 +391,7 @@ async def search_jobs(
     rank: bool = True,
     country: str = "",
     max_age_days: float = 0,
+    monthly_limit: int = 200,
     _fallback: bool = True,
 ) -> JobSearch:
     """Search live postings. Picks the provider per ``choose_provider``; returns a ``JobSearch``
@@ -400,8 +401,12 @@ async def search_jobs(
     narrows Himalayas to roles open to that country; ``max_age_days`` asks JSearch for postings
     no older than that. Raises ``ValueError`` if jsearch or openwebninja is selected without a
     key or for an unknown provider. A keyed failure falls back to keyless sources and
-    ``fallback_reason`` carries the vendor message, including any active cooldown. Lists and
-    ``all`` merge deduped results in source order and retain individual failures."""
+    ``fallback_reason`` carries the vendor message, including any active cooldown. Every request
+    sent to a keyed source is counted against its month (``watchlist.note_month_call``); once the
+    count reaches ``monthly_limit`` (the ``jobs_api_monthly_limit`` setting, 0 = no limit; a
+    vendor-reported limit wins) the source is skipped without a request, like any other keyed
+    failure. Lists and ``all`` merge deduped results in source order and retain individual
+    failures."""
     limit = max(1, min(int(limit), 25))
     providers = choose_providers(provider, api_key)
     if "," in (provider or "") or (provider or "").strip().lower() == "all":
@@ -419,6 +424,7 @@ async def search_jobs(
                     rank=rank,
                     country=country,
                     max_age_days=max_age_days,
+                    monthly_limit=monthly_limit,
                     _fallback=False,
                 )
             except Exception as exc:  # noqa: BLE001 — partial results survive a source outage
@@ -462,7 +468,13 @@ async def search_jobs(
                 "or set jobs_provider to 'himalayas' (keyless)."
             )
         until = watchlist.source_cooldown(prov)
+        month = watchlist.month_usage(prov, monthly_limit)
         try:
+            if month["spent"]:
+                raise ValueError(
+                    f"{_JOB_API_LABELS[prov]}: this month's {month['limit']} requests are used up; "
+                    f"they refill on {month['refill']} (UTC)"
+                )
             if until:
                 raise ValueError(f"{_JOB_API_LABELS[prov]} is cooling down until {until}")
             if prov == "jsearch":
@@ -470,11 +482,14 @@ async def search_jobs(
             else:
                 jobs = await _get_openwebninja(query, location, remote, api_key)
             fetched = len(jobs)
+            watchlist.note_month_call(prov, quota)
             watchlist.clear_source_cooldown(prov)
         except Exception as e:  # noqa: BLE001 — a keyed outage must not cost the search
             import httpx
 
             transient = isinstance(e, httpx.TransportError)  # a timeout or a dropped connection
+            if transient:
+                watchlist.note_month_call(prov)  # the request was sent: the vendor may have counted it
             reason = _failure(e)
             if not any(label in reason for label in ("RapidAPI", "OpenWeb Ninja")):
                 reason = f"{_JOB_API_LABELS[prov]}: {reason}"

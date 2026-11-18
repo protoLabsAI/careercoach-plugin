@@ -1042,3 +1042,240 @@ def test_watch_refusal_stops_pass_and_cooldown_survives_next_pass(watch_env, mod
     assert any(j["company"] == "Newco" and j["source"] == "himalayas" for j in first)
     asyncio.run(plugin._watch_tick(reg, cfg, 0))
     assert len(calls) == (1 if status == 429 else 2)
+
+
+# ── a keyed source's month: every request counted, the last fifth kept from the watch ─────────────
+_KEYED_HOSTS = {"jsearch": "jsearch.p.rapidapi.com", "openwebninja": "api.openwebninja.com"}
+_CHAT = {"query": "Forward Deployed Engineer"}
+
+
+def _keyed_month(watch_env, monkeypatch, source: str, respond=None, **settings):
+    """The watch env with ``source`` as the keyed job source (no allowance headers, like OpenWeb
+    Ninja) beside Himalayas. Returns ``(plugin, reg, cfg, calls, chat)``: ``calls`` logs the keyed
+    requests, ``chat`` is the chat search tool on the same config."""
+    plugin, reg, cfg = watch_env
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == _KEYED_HOSTS[source]:
+            calls.append(request)
+            return respond(request) if respond else httpx.Response(200, json=JSEARCH)
+        if request.url.host == "himalayas.app":
+            return httpx.Response(200, json=HIMALAYAS)
+        return _route(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw))
+    _no_spacing(monkeypatch, plugin)
+    cfg.update(jobs_api_key="KEY", jobs_provider=f"{source},himalayas", extended_tools=True, **settings)
+    plugin.register(reg)
+    return plugin, reg, cfg, calls, {t.name: t for t in reg.tools}["careercoach_search_jobs"]
+
+
+def _counted(mods, source: str, used: int) -> None:
+    """Put ``used`` requests on this month's count for ``source``."""
+    wl = mods.watchlist
+    wl._save(wl.SOURCE_MONTHS, {source: {"month": wl._quota_now(None).strftime("%Y-%m"), "used": used}})
+
+
+def _clock(mods, monkeypatch, when: datetime) -> None:
+    monkeypatch.setattr(mods.watchlist, "_quota_now", lambda now=None: now or when)
+
+
+@pytest.mark.parametrize("source", ["jsearch", "openwebninja"])
+def test_every_keyed_request_counts_against_the_month_from_the_watch_and_from_chat(
+    watch_env, mods, monkeypatch, source
+):
+    plugin, reg, cfg, calls, chat = _keyed_month(watch_env, monkeypatch, source)
+    assert mods.watchlist.month_usage(source)["used"] == 0
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 3 and mods.watchlist.month_usage(source)["used"] == 3  # the watch's three
+    out = _run(chat, _CHAT)
+    assert len(calls) == 4 and mods.watchlist.month_usage(source)["used"] == 4  # and the chat search's one
+    assert "196 of 200 requests left this month" in out
+    other = next(s for s in _KEYED_HOSTS if s != source)
+    assert mods.watchlist.month_usage(other)["used"] == 0  # one count per source
+
+
+def test_a_keyed_request_that_times_out_still_counts(watch_env, mods, monkeypatch):
+    def timeout(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    _plugin, _reg, _cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja", respond=timeout)
+    out = _run(chat, _CHAT)
+    assert len(calls) == 1 and mods.watchlist.month_usage("openwebninja")["used"] == 1
+    assert "Newco" in out  # answered by the keyless board
+
+
+def test_a_refused_keyed_request_is_not_counted(watch_env, mods, monkeypatch):
+    """A rejected key is asked once a pass, forever: counting it would end the month on a typo."""
+    _plugin, _reg, _cfg, calls, chat = _keyed_month(
+        watch_env, monkeypatch, "openwebninja", respond=lambda r: httpx.Response(401, json={"message": "bad key"})
+    )
+    _run(chat, _CHAT)
+    assert len(calls) == 1 and mods.watchlist.month_usage("openwebninja")["used"] == 0
+
+
+def test_at_80_percent_the_watch_leaves_the_keyed_source_for_the_daily_report(watch_env, mods, monkeypatch, caplog):
+    plugin, reg, cfg, calls, _chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    _counted(mods, "openwebninja", 160)
+    with caplog.at_level("INFO"):
+        got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert calls == []  # 160 of 200: the watch's share is used
+    assert any(j["company"] == "Newco" and j["source"] == "himalayas" for j in got)  # keyless still swept
+    assert "OpenWeb Ninja (JSearch) has used 160 of this month's 200 requests" in caplog.text
+    assert "reserved for the daily report" in caplog.text
+    assert mods.watchlist.month_usage("openwebninja")["used"] == 160
+    assert mods.watchlist.watch_last_run()
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert calls == [] and "reserved for the daily report" not in caplog.text  # said once, not every pass
+
+
+def test_the_watch_stops_mid_pass_when_it_reaches_80_percent(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls, _chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    _counted(mods, "openwebninja", 158)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 2 and mods.watchlist.month_usage("openwebninja")["used"] == 160
+
+
+def test_a_keyed_source_alone_at_80_percent_still_gets_a_keyless_sweep(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls, _chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    cfg["jobs_provider"] = "openwebninja"
+    _counted(mods, "openwebninja", 160)
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert calls == [] and any(j["company"] == "Newco" for j in got)  # Himalayas stands in
+
+
+def test_at_80_percent_a_chat_search_still_uses_the_keyed_source(watch_env, mods, monkeypatch):
+    _plugin, _reg, _cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    _counted(mods, "openwebninja", 160)
+    out = _run(chat, _CHAT)
+    assert len(calls) == 1 and "Googlejobs Co" in out
+    assert "39 of 200 requests left this month" in out
+    assert "used up" not in out
+
+
+@pytest.mark.parametrize("selection", ["openwebninja", "openwebninja,himalayas"])
+def test_at_100_percent_a_chat_search_skips_the_keyed_source_and_says_when_it_refills(
+    watch_env, mods, monkeypatch, selection
+):
+    _plugin, _reg, cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    cfg["jobs_provider"] = selection
+    _clock(mods, monkeypatch, datetime(2026, 11, 18, 9, tzinfo=UTC))
+    _counted(mods, "openwebninja", 200)
+    out = _run(chat, _CHAT)
+    assert calls == []  # no request is spent finding out
+    assert "Newco" in out and "Himalayas" in out  # answered by the keyless board
+    assert "this month's 200 requests are used up; they refill on 2026-12-01 (UTC)" in out
+    assert mods.watchlist.month_usage("openwebninja")["used"] == 200
+    assert mods.watchlist.source_cooldown("openwebninja") == ""  # a spent month is not a 429 cooldown
+
+
+def test_a_new_month_starts_the_count_at_zero_and_the_watch_returns(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls, _chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    _clock(mods, monkeypatch, datetime(2026, 11, 30, 23, 59, tzinfo=UTC))
+    _counted(mods, "openwebninja", 200)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert calls == [] and mods.watchlist.month_usage("openwebninja")["refill"] == "2026-12-01"
+    _clock(mods, monkeypatch, datetime(2026, 12, 1, 0, 1, tzinfo=UTC))
+    assert mods.watchlist.month_usage("openwebninja")["used"] == 0
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    usage = mods.watchlist.month_usage("openwebninja")
+    assert len(calls) == 3 and usage["used"] == 3 and usage["refill"] == "2027-01-01"
+    assert not usage["reserved"]
+    # and the once-a-month line is due again when December's share is used
+    assert mods.watchlist.note_watch_reserved("openwebninja") is True
+
+
+def test_a_monthly_limit_of_zero_disables_the_cap(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja", jobs_api_monthly_limit=0)
+    _counted(mods, "openwebninja", 500)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 3  # no reserve
+    out = _run(chat, _CHAT)
+    assert len(calls) == 4 and "used up" not in out  # no stop
+    assert "504 request(s) sent this month, no monthly limit set" in out  # still counted
+    usage = mods.watchlist.month_usage("openwebninja", 0)
+    assert usage["left"] is None and not usage["reserved"] and not usage["spent"]
+
+
+def test_the_monthly_limit_setting_moves_the_reserve(watch_env, mods, monkeypatch):
+    plugin, reg, cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja", jobs_api_monthly_limit="10")
+    _counted(mods, "openwebninja", 8)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert calls == []  # 8 of 10 is the watch's share
+    assert "1 of 10 requests left this month" in _run(chat, _CHAT)
+    _run(chat, _CHAT)
+    assert "this month's 10 requests are used up" in _run(chat, _CHAT) and len(calls) == 2
+    assert mods.watchlist.monthly_limit({"jobs_api_monthly_limit": "junk"}) == 200
+    assert mods.watchlist.monthly_limit({}) == 200 and mods.watchlist.monthly_limit({"jobs_api_monthly_limit": -5}) == 0
+
+
+@pytest.mark.parametrize("garbage", ["{not json", "[1, 2]", '{"openwebninja": "x", "jsearch": {"used": "many"}}'])
+def test_an_unreadable_quota_file_never_fails_a_search_or_a_watch_tick(watch_env, mods, monkeypatch, iso, garbage):
+    plugin, reg, cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    wl = mods.watchlist
+    for name in (wl.SOURCE_MONTHS, wl.JSEARCH_QUOTA):
+        wl._path(name).write_text(garbage, encoding="utf-8")
+    assert wl.month_usage("openwebninja")["used"] == 0  # reads as nothing used
+    out = _run(chat, _CHAT)
+    assert "Googlejobs Co" in out and "Job search failed" not in out
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert any(j["company"] == "Newco" for j in got)
+    assert len(calls) == 4 and wl.month_usage("openwebninja")["used"] == 4  # the count starts over
+
+
+def test_an_unwritable_month_count_never_fails_a_search(watch_env, mods, monkeypatch):
+    _plugin, _reg, _cfg, calls, chat = _keyed_month(watch_env, monkeypatch, "openwebninja")
+    real = mods.watchlist._save
+
+    def save(name, data):
+        if name == mods.watchlist.SOURCE_MONTHS:
+            raise OSError("disk full")
+        real(name, data)
+
+    monkeypatch.setattr(mods.watchlist, "_save", save)
+    assert "Googlejobs Co" in _run(chat, _CHAT) and len(calls) == 1
+    assert mods.watchlist.note_watch_reserved("openwebninja") is True
+
+
+def test_a_vendor_reported_limit_and_reset_win_over_the_setting_and_the_calendar(mods):
+    wl = mods.watchlist
+    now = datetime(2026, 11, 25, 12, tzinfo=UTC)
+    wl.note_month_call("jsearch", {}, now)
+    assert wl.month_usage("jsearch", 200, now)["used"] == 1
+    # RapidAPI says 1000 a period, 150 left, refilling in ten days (5 December)
+    wl.note_month_call("jsearch", {"limit": 1000, "remaining": 150, "reset_s": 10 * 86400}, now)
+    usage = wl.month_usage("jsearch", 200, now)
+    assert (usage["used"], usage["limit"], usage["left"], usage["refill"]) == (850, 1000, 150, "2026-12-05")
+    assert usage["reserved"] and not usage["spent"]
+    wl.note_month_call("jsearch", {}, now)  # an answer with no headers keeps the vendor's numbers
+    assert wl.month_usage("jsearch", 200, now)["used"] == 851
+    december = datetime(2026, 12, 2, tzinfo=UTC)  # a new calendar month, but the vendor's period runs on
+    assert wl.month_usage("jsearch", 200, december)["used"] == 851
+    refilled = wl.month_usage("jsearch", 200, datetime(2026, 12, 5, 12, 1, tzinfo=UTC))
+    assert (refilled["used"], refilled["limit"], refilled["refill"]) == (0, 1000, "2027-01-01")
+    assert wl.month_usage("jsearch", 0, now)["limit"] == 0  # 0 turns the cap off whatever the vendor says
+    assert wl.month_usage("openwebninja", 200, now)["used"] == 0
+
+
+def test_the_reserve_sits_on_top_of_rapidapis_daily_spread(watch_env, mods, monkeypatch):
+    """#133's daily allowance still spreads the plan; the 80% reserve is a second cap, not a swap."""
+    left = [60]
+
+    def respond(request):
+        left[0] -= 1
+        return httpx.Response(200, json=JSEARCH, headers=_quota(left[0]))
+
+    plugin, reg, cfg, calls = _with_jsearch(watch_env, monkeypatch, respond)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 2  # 59 left over 30 days: the daily spread allows two (#133)
+    assert mods.watchlist.jsearch_allowance() == 0
+    assert mods.watchlist.month_usage("jsearch")["used"] == 142
+    left[0] = 41  # other clients of the key spent more: the next answer reports 40 left
+    monkeypatch.setattr(mods.watchlist, "jsearch_allowance", lambda: 5)  # a new day's share
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 3 and mods.watchlist.month_usage("jsearch")["used"] == 160
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 3  # 160 of 200: reserved, though the daily share allows more

@@ -60,6 +60,7 @@ config:
   watch_enabled: false      # background job-watch: periodically surface new matching roles
   watch_interval_min: 180   # how often the watch scans (minutes; floored at 5)
   watch_market_queries: 3   # keyed-source (JSearch) requests per watch pass; the pass picks up where the last one stopped
+  jobs_api_monthly_limit: 200  # requests a month per keyed source (JSearch, OpenWeb Ninja); the watch stops at 80%, every caller at 100%. 0 = no limit
   watch_min_score: 65       # only surface roles whose quick fit score (stack, seniority, title, pay) is >= this
   min_salary: 0             # annual pay floor for the quick fit score (0 = off); a posted range wholly under it caps the score
   followup_days: 10         # an applied role with no movement for this many days is flagged to follow up
@@ -81,6 +82,7 @@ settings:
   - { key: watch_enabled, label: "Background job-watch", type: bool, group: "Career Coach", description: "When on, every Watch interval it scans your watched companies' job boards and the job source for your target roles, and queues postings it hasn't seen before for the daily digest (and lights the rail icon). It never adds roles to your pipeline by itself. Off by default." }
   - { key: watch_interval_min, label: "Watch interval (min)", type: number, group: "Career Coach", description: "How often the background watch scans, in minutes (minimum 5)." }
   - { key: watch_market_queries, label: "Keyed searches per watch pass", type: number, group: "Career Coach", description: "How many of your target roles the watch asks a keyed source (JSearch) about each pass, from 1 to 10. Each pass continues where the last stopped, so every role is covered in turn. Free sources are asked about every role every pass." }
+  - { key: jobs_api_monthly_limit, label: "Keyed source monthly limit", type: number, group: "Career Coach", description: "How many requests a month your keyed job source's plan allows (JSearch on RapidAPI or OpenWeb Ninja; free plans allow 200). The coach counts every request it sends. At 80% the background watch stops using the source so the rest is kept for your chat searches and daily report; at 100% every search uses the free sources until the month resets. A limit the source reports itself wins over this number. 0 = no limit." }
   - { key: watch_min_score, label: "Watch match threshold", type: number, group: "Career Coach", description: "Only surface postings whose quick fit score is at least this (0-100). The score reads the posting itself: how much of its stack your profile names, the seniority in the title, the title match, and pay against your floor. The coach still runs the full fit evaluation before recommending a role." }
   - { key: min_salary, label: "Minimum salary", type: number, group: "Career Coach", description: "Your annual pay floor, e.g. 120000. A posted range entirely under it scores low; a role that doesn't post pay isn't penalised. 0 = no floor." }
   - { key: followup_days, label: "Follow-up after (days)", type: number, group: "Career Coach", description: "An applied role with no status change for this many days is flagged on the pipeline board as due a follow-up." }

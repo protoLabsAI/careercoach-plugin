@@ -133,6 +133,153 @@ def jsearch_allowance(now: datetime | None = None) -> int | None:
     return max(0, min(remaining, per_day - used))
 
 
+# ── the month's requests, per keyed source ───────────────────────────────────
+# A keyed source's free plan is a hard monthly limit (OpenWeb Ninja JSearch: 200 requests), and
+# OpenWeb Ninja reports no allowance headers, so the daily spread above never applies to it. This
+# is a local count of every request sent to each keyed source, whoever sent it (watch, chat
+# search). The background watch stops at 80% of the limit (``month_usage()["reserved"]``), so the
+# last fifth is left for the operator's own searches; at 100% every caller skips the source.
+# The count restarts with the calendar month (UTC), or at the vendor's own reset when its headers
+# name one. A vendor-reported limit wins over the setting. It sits beside the daily allowance
+# above and never replaces it.
+SOURCE_MONTHS = "job-source-months.json"
+MONTHLY_LIMIT_DEFAULT = 200  # setting: jobs_api_monthly_limit (0 = no limit)
+WATCH_SHARE = 0.8  # the watch's share of a month's requests; the rest is reserved
+
+
+def monthly_limit(cfg: dict | None) -> int:
+    """The ``jobs_api_monthly_limit`` setting: requests a month per keyed source, 0 = no limit.
+    A missing or unreadable value is the default."""
+    raw = (cfg or {}).get("jobs_api_monthly_limit")
+    if raw is None or str(raw).strip() == "":
+        return MONTHLY_LIMIT_DEFAULT
+    try:
+        return max(0, int(str(raw).strip()))
+    except (TypeError, ValueError):
+        return MONTHLY_LIMIT_DEFAULT
+
+
+def _next_month(now: datetime) -> datetime:
+    return datetime(now.year + (now.month == 12), now.month % 12 + 1, 1, tzinfo=UTC)
+
+
+def _month_state(rec, now: datetime) -> dict:
+    """One source's stored record as of ``now``: ``{"used", "limit", "reset_at", "noted"}``.
+    ``limit``/``reset_at`` are the vendor's, 0/"" when it reported none. A record from an earlier
+    period (the vendor's reset has passed, or with no vendor reset the calendar month changed)
+    reads as an empty one; so does anything that isn't a record."""
+    fresh = {"used": 0, "limit": 0, "reset_at": "", "noted": False}
+    if not isinstance(rec, dict):
+        return fresh
+    try:
+        used = max(0, int(rec.get("used") or 0))
+        limit = max(0, int(rec.get("limit") or 0))
+    except (TypeError, ValueError):
+        return fresh
+    reset_at = ""
+    try:
+        reset = datetime.fromisoformat(str(rec.get("reset_at") or ""))
+        if reset.tzinfo is None:
+            reset = reset.replace(tzinfo=UTC)
+        if reset <= now:
+            return {**fresh, "limit": limit}  # the plan refilled; its size is still the best guess
+        reset_at = reset.isoformat(timespec="seconds")
+    except ValueError:
+        if rec.get("month") != now.strftime("%Y-%m"):
+            return {**fresh, "limit": limit}
+    return {"used": used, "limit": limit, "reset_at": reset_at, "noted": bool(rec.get("watch_noted"))}
+
+
+def _update_month(source: str, now: datetime, change) -> None:
+    """Read-modify-write one source's month record. Never raises: the count is bookkeeping. An
+    unreadable file is started over, since leaving it would lift the cap for good."""
+    try:
+        with _store._locked("job-source-months"):
+            try:
+                records = _load(SOURCE_MONTHS, {})
+            except StoreUnreadable:
+                records = {}
+            state_now = _month_state(records.get(source), now)
+            change(state_now)
+            out = {"month": now.strftime("%Y-%m"), "used": state_now["used"]}
+            if state_now["limit"]:
+                out["limit"] = state_now["limit"]
+            if state_now["reset_at"]:
+                out["reset_at"] = state_now["reset_at"]
+            if state_now["noted"]:
+                out["watch_noted"] = True
+            records[source] = out
+            _save(SOURCE_MONTHS, records)
+    except (StoreUnreadable, OSError, ValueError, TypeError):
+        pass
+
+
+def note_month_call(source: str, quota: dict | None = None, now: datetime | None = None) -> None:
+    """Count one request sent to a keyed source this month. When the answer carried the vendor's
+    allowance (``jobsource.parse_jsearch_quota``), the vendor's numbers replace the local count:
+    it also sees requests made with the same key elsewhere."""
+    now = _quota_now(now)
+
+    def change(rec: dict) -> None:
+        rec["used"] += 1
+        try:
+            limit = int((quota or {}).get("limit") or 0)
+            remaining = int((quota or {}).get("remaining") or 0)
+            reset_s = int((quota or {}).get("reset_s") or 0)
+        except (TypeError, ValueError):
+            return
+        if limit > 0:
+            rec["limit"] = limit
+            rec["used"] = max(0, limit - max(0, remaining))
+            if reset_s > 0:
+                rec["reset_at"] = (now + timedelta(seconds=reset_s)).isoformat(timespec="seconds")
+
+    _update_month(source, now, change)
+
+
+def month_usage(source: str, limit: int = MONTHLY_LIMIT_DEFAULT, now: datetime | None = None) -> dict:
+    """Where a keyed source stands this month: ``{"used", "limit", "left", "refill", "reserved",
+    "spent"}``. ``limit`` is the setting; a vendor-reported limit wins over it, and a setting of 0
+    means no cap at all (``limit`` 0, ``left`` None, never reserved or spent). ``refill`` is the
+    ISO date (UTC) the count restarts. ``reserved``: the background watch's share is used.
+    ``spent``: no caller may send another request. Never raises: an unreadable record reads as
+    nothing used, so it never costs a search."""
+    now = _quota_now(now)
+    try:
+        rec = _month_state(_load(SOURCE_MONTHS, {}).get(source), now)
+    except (StoreUnreadable, OSError, ValueError, TypeError):
+        rec = _month_state(None, now)
+    try:
+        limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        limit = MONTHLY_LIMIT_DEFAULT
+    if limit:
+        limit = rec["limit"] or limit
+    used = rec["used"]
+    return {
+        "used": used,
+        "limit": limit,
+        "left": max(0, limit - used) if limit else None,
+        "refill": (rec["reset_at"] or _next_month(now).isoformat())[:10],
+        "reserved": bool(limit) and used >= limit * WATCH_SHARE,
+        "spent": bool(limit) and used >= limit,
+    }
+
+
+def note_watch_reserved(source: str, now: datetime | None = None) -> bool:
+    """Record that the watch has said it is leaving this source alone for the rest of the period.
+    True the first time in a period (the caller logs then), False afterwards."""
+    first = []
+
+    def change(rec: dict) -> None:
+        if not rec["noted"]:
+            first.append(True)
+            rec["noted"] = True
+
+    _update_month(source, _quota_now(now), change)
+    return bool(first)
+
+
 # Per-vendor backoff is separate from RapidAPI's request allowance.
 SOURCE_COOLDOWNS = "job-source-cooldowns.json"
 

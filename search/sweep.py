@@ -14,6 +14,10 @@ keyed source five requests a pass. This module covers all of them:
   ``watch_market_queries`` groups and remembers where it stopped (``watch-cursor.json``), so the
   whole list is covered over a few passes instead of the same five roles forever.
 
+A keyed source also has a monthly limit (``jobs_api_monthly_limit``). Once 80% of it is used the
+watch leaves the source alone until the month resets (``watchlist.month_usage``): the rest is
+reserved for the operator's chat searches and daily report.
+
 A keyed source that REFUSES (a rejected key, a spent quota, a cooldown) is done for the pass. One
 that merely times out costs that one query: JSearch is slow, not broken, and one slow answer must
 not cost the pass the rest.
@@ -110,7 +114,19 @@ async def _keyed(
     answered = refused = False
     start = _cursor(source) % len(queries)
     asked = timeouts = 0
+    limit = wl.monthly_limit(cfg)
     for step in range(min(keyed_queries(cfg), len(queries))):
+        month = wl.month_usage(source, limit)
+        if month["reserved"]:
+            # the last fifth of the month's requests is the operator's: chat searches and the
+            # daily report keep the source, the watch sweeps the keyless ones. Said once a month.
+            if wl.note_watch_reserved(source):
+                log.warning(
+                    "[careercoach] watch: %s has used %d of this month's %d requests; the rest are reserved "
+                    "for the daily report and chat searches. The watch uses the other sources until %s.",
+                    jobsource._JOB_API_LABELS.get(source, source), month["used"], month["limit"], month["refill"],
+                )  # fmt: skip
+            break
         if wl.jsearch_allowance() == 0:
             log.info("[careercoach] watch: today's JSearch requests are spent; back tomorrow")
             break
@@ -120,7 +136,8 @@ async def _keyed(
         try:
             got = await jobsource.search_jobs(
                 query, remote=True, limit=25, api_key=api_key, provider=source,
-                country=cfg.get("search_country", "") or "", max_age_days=max_age_days, _fallback=False,
+                country=cfg.get("search_country", "") or "", max_age_days=max_age_days,
+                monthly_limit=limit, _fallback=False,
             )  # fmt: skip
         except Exception as e:  # noqa: BLE001 — a setup error: nothing to retry this pass
             log.warning("[careercoach] watch: JSearch can't be asked (%s)", jobsource._failure(e))
