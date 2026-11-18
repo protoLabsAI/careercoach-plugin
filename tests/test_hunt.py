@@ -578,6 +578,15 @@ JSEARCH = {
 }  # fmt: skip
 
 
+def _sweep(plugin):
+    return importlib.import_module(plugin.__name__ + ".search.sweep")
+
+
+def _no_spacing(monkeypatch, plugin):
+    monkeypatch.setattr(_sweep(plugin), "KEYED_SPACING_S", 0)
+    monkeypatch.setattr(_sweep(plugin), "KEYLESS_SPACING_S", 0)
+
+
 def _with_jsearch(watch_env, monkeypatch, respond):
     """The watch env plus a mock JSearch. ``respond(request)`` answers each JSearch call; returns
     the list those calls are logged to."""
@@ -594,7 +603,7 @@ def _with_jsearch(watch_env, monkeypatch, respond):
 
     # watch_env already swapped httpx.AsyncClient for its own mock: replace that one, don't wrap it
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw))
-    monkeypatch.setattr(plugin, "JSEARCH_SPACING_S", 0)
+    _no_spacing(monkeypatch, plugin)
     cfg["jobs_api_key"] = "KEY"
     return plugin, reg, cfg, calls
 
@@ -618,6 +627,7 @@ def test_a_rejected_jsearch_key_costs_the_watch_nothing_from_the_keyless_board(w
     assert ("Newco", "Forward Deployed Engineer") in {(m["company"], m["title"]) for m in got}  # Himalayas
     assert len(calls) == 1  # one refusal answers for the pass: no burst of four more
     assert "JSearch isn't answering (RapidAPI accepted the key, but its account isn't subscribed" in caplog.text
+    assert "this pass uses the other sources only" in caplog.text
     assert mods.watchlist.watch_last_run()
 
 
@@ -628,7 +638,7 @@ def test_the_watch_sweeps_jsearch_and_the_keyless_board_together(watch_env, mods
     got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
     companies = {m["company"] for m in got}
     assert {"Googlejobs Co", "Newco"} <= companies  # JSearch's role and Himalayas' role, one pass
-    assert len(calls) == 5 and all(c.url.path == "/search-v2" for c in calls)
+    assert len(calls) == 3 and all(c.url.path == "/search-v2" for c in calls)  # watch_market_queries a pass
 
 
 def test_the_watch_spreads_a_small_jsearch_plan_over_the_month(watch_env, mods, monkeypatch):
@@ -656,8 +666,8 @@ def test_the_jsearch_allowance_is_whats_left_spread_over_the_days_left(mods):
     assert wl.jsearch_allowance(now + timedelta(days=31)) is None  # the plan refilled
     wl.note_jsearch_call({"limit": 200, "remaining": 0, "reset_s": 86400}, now)
     assert wl.jsearch_allowance(now) == 0  # spent
-    wl.note_jsearch_call({}, now)  # a vendor that reports no allowance
-    assert wl.jsearch_allowance(now) is None
+    wl.note_jsearch_call({}, now)  # an answer with no allowance (a timeout) keeps the last one known
+    assert wl.jsearch_allowance(now) == 0
     wl.note_jsearch_call({"limit": 100000, "remaining": 99000, "reset_s": 30 * 86400}, now)
     assert wl.jsearch_allowance(now) > 3000  # a paid plan is never the limit on a watch
 
@@ -940,7 +950,7 @@ def test_watch_list_dedupes_before_inbox_and_keeps_quota(watch_env, mods, monkey
     assert matches[0]["sources"] == ["jsearch", "himalayas"]
     saved = [j for j in mods.watchlist.inbox_for_view() if j["company"] == "Googlejobs Co"]
     assert len(saved) == 1 and saved[0]["sources"] == ["jsearch", "himalayas"]
-    assert len(calls) == 5
+    assert len(calls) == 3
     assert mods.watchlist.jsearch_allowance() is not None
     again = asyncio.run(plugin._watch_tick(reg, cfg, 0))
     assert not [j for j in again if j["company"] == "Googlejobs Co"]
@@ -989,12 +999,13 @@ def test_watch_openwebninja_obeys_budget_counts_calls_and_spaces_requests(
         mods.watchlist, "jsearch_allowance", lambda: None if allowance is None else allowance - len(notes)
     )
     monkeypatch.setattr(mods.watchlist, "note_jsearch_call", notes.append)
-    monkeypatch.setattr(plugin.asyncio, "sleep", sleep)
+    sweep = _sweep(plugin)
+    monkeypatch.setattr(sweep.asyncio, "sleep", sleep)
     got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
-    expected = 5 if allowance is None else allowance
+    expected = sweep.KEYED_QUERIES_DEFAULT if allowance is None else allowance
     assert len(calls) == expected
     assert notes == [{}] * expected  # this vendor currently returns no quota headers
-    assert sleeps == [plugin.JSEARCH_SPACING_S] * max(0, expected - 1)
+    assert [s for s in sleeps if s == sweep.KEYED_SPACING_S] == [sweep.KEYED_SPACING_S] * max(0, expected - 1)
     assert any(j["company"] == "Newco" for j in got)
     assert mods.watchlist.watch_last_run()
 

@@ -23,6 +23,7 @@ careercoach-plugin/
 │  ├─ feeds.py              keyless feeds: Jobicy, We Work Remotely, Remote OK
 │  ├─ resolve.py            the company's own posting for a role a board or aggregator listed
 │  ├─ watchlist.py          the watchlist, the first-seen log, ghost-job flags
+│  ├─ sweep.py              the watch's market sweep: every role, every source, keyed sources in turn
 │  ├─ scan.py               one watchlist scan, shared by the tool, the digest and the watch
 │  ├─ contacts.py           LinkedIn Connections import, referrals, follow-ups
 │  └─ hunt.py               the job-hunt tools
