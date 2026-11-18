@@ -66,6 +66,16 @@ def test_the_same_role_from_another_source_is_one_card(mods):
     wl.add_to_inbox([job("a", company="Elvoro", title="AI Creative Engineer", source="himalayas", hash="h1"),
                      job("b", company="Elvoro", title="AI Creative Engineer", source="weworkremotely", hash="h2")])  # fmt: skip
     assert [c["id"] for c in wl.inbox_for_view() if c["company"] == "Elvoro"] == ["a"]
+    # the other source's copy arrives again on every later search: still one card
+    for _ in range(2):
+        wl.add_to_inbox([again])
+        wl.add_to_inbox([job("b", company="Elvoro", title="AI Creative Engineer", source="weworkremotely", hash="h2")])
+    cards = wl.inbox_for_view()
+    assert len([c for c in cards if c["company"] in ("Samsara", "Elvoro")]) == 3
+    assert next(c for c in cards if c["id"] == "gh")["sources"] == ["greenhouse", "himalayas"]
+    # two postings of one title from ONE source are two openings (two locations)
+    wl.add_to_inbox([job("gh3", company="Samsara", title="Staff Frontend Engineer", source="greenhouse", hash="x9")])
+    assert {c["id"] for c in wl.inbox_for_view() if c["title"] == "Staff Frontend Engineer"} == {"gh2", "gh3"}
 
 
 def test_dismissal_survives_eviction_and_blocks_id_or_hash(mods, monkeypatch):

@@ -502,8 +502,10 @@ def add_to_inbox(jobs: list[dict]) -> int:
             if j.get("id") in have or _dismissed(j, dismissed):
                 continue
             twin = by_role.get(_role(j)) if all(_role(j)) else None
-            listed = set(twin.get("sources") or [twin.get("source")]) if twin else set()
-            if twin is not None and j.get("source") and listed - {None} and j["source"] not in listed:
+            # the card's own source is the first it was seen from; a posting from any OTHER source
+            # is the same opening, on this batch and on every later one that carries it again
+            first = (twin.get("sources") or [twin.get("source")])[0] if twin else None
+            if twin is not None and first and j.get("source") and j["source"] != first:
                 # note where else it is listed; the card the operator already has stays as it is
                 seen = [*(twin.get("sources") or [twin.get("source")]), *(j.get("sources") or [j.get("source")])]
                 twin["sources"] = list(dict.fromkeys(s for s in seen if s))

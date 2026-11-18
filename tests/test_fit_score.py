@@ -82,6 +82,22 @@ def test_another_disciplines_engineer_is_an_off_domain_title(fs, title):
 
 
 @pytest.mark.parametrize(
+    "title",
+    [
+        "Neural Network Engineer",
+        "AI Engineer, Sales Tools",
+        "Senior Software Engineer, Marketing Platform",
+        "Full Stack Engineer - Clinical Workflows",
+        "Product Engineer, Networking Team",
+    ],
+)
+def test_a_product_area_in_the_title_is_not_another_discipline(fs, title):
+    desc = "Python, TypeScript, React, LLM agents and evals. " * 20
+    _, why = fs.score(_job(title, desc), "AI Engineer, Product Engineer, Full Stack Engineer", PROFILE)
+    assert "off-domain" not in why
+
+
+@pytest.mark.parametrize(
     "company", ["Recruiting from Scratch", "Jobgether", "remote quest jobs", "Acme Staffing", "Confidential"]
 )
 def test_a_recruiter_or_reposter_listing_cannot_top_the_inbox(fs, company):

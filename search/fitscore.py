@@ -132,9 +132,12 @@ _OFF_TITLE = re.compile(
     r"performance\s+modeling|simulation|ios|android|salesforce|sap|blockchain|"
     # another discipline's engineer: every word of "Design Engineer" or "Automation Engineer" is in
     # "Utility Infra Design Engineer" and "Pharmacy Process & Automation Engineer" too
-    r"marketing|sales|network(?:ing)?|ethernet|telecom|wireless|rf|optical|pharmacy|clinical|utility|"
+    # (a word that also names a product area is matched only as the discipline: "Network Engineer",
+    # never "Neural Network Engineer" or "Software Engineer, Marketing Platform")
+    r"product\s+marketing|(?:marketing|sales|clinical|wireless|telecom|optical)\s+engineer|"
+    r"(?<!neural\s)network(?:ing)?\s+(?:engineer|architect|administrator)|ethernet|rf|pharmacy|utility|"
     r"utilities|civil|structural|mechanical|electrical|hvac|piping|plant|manufacturing|chemical|"
-    r"geotechnical|nuclear|substation|automotive|avionics|pega|servicenow|workday|mulesoft)\b",
+    r"geotechnical|nuclear|substation|automotive|avionics|pega|servicenow|mulesoft)\b",
     re.I,
 )
 # Names a posting carries when a recruiter or a reposting site listed it and the employer isn't
