@@ -13,6 +13,9 @@ Providers:
   Keyless, searches by query, newest first, with a posting date and salary. The zero-setup default.
 - ``hn``         — this month's Hacker News "Ask HN: Who is hiring?" thread, searched through the
   Algolia HN API. Keyless; startups and remote roles, posted on the first weekday of each month.
+- ``jobicy``, ``weworkremotely``, ``remoteok`` — keyless feeds of recent remote postings
+  (``feeds.py``). A feed can't be searched: its list is downloaded once an hour and ranked against
+  the query here.
 - ``remotive``   — the Remotive board. Kept only for an explicit ``jobs_provider: remotive``: since
   2026-10 its API returns one fixed 14-posting feed whatever the query, so ``auto`` never picks it.
 
@@ -34,6 +37,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+
+from . import feeds
 
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
 JSEARCH_PATH = "/search-v2"  # RapidAPI removed /search (404 "Endpoint '/search' does not exist")
@@ -279,6 +284,10 @@ PROVIDER_LABELS = {
 }
 
 KEYLESS = ("himalayas", "hn", "remotive")
+# The keyless feeds (search/feeds.py): boards that publish their recent postings whole.
+PROVIDER_LABELS.update(feeds.LABELS)
+KEYLESS = (*KEYLESS, *feeds.FEEDS)
+
 # Both keyed vendors sell the same JSearch API, so both spend the one request budget
 # (``watchlist.note_jsearch_call`` / ``jsearch_allowance``). Test membership here, never the
 # literal name "jsearch": that is how OpenWeb Ninja requests went uncounted.
@@ -290,9 +299,7 @@ def choose_providers(provider: str, api_key: str) -> list[str]:
     names = [p.strip() for p in (provider or "auto").strip().lower().split(",")]
     for name in names:
         if name not in (*PROVIDER_LABELS, "auto", "all"):
-            raise ValueError(
-                f"unknown job source {name!r} — use auto, all, jsearch, openwebninja, himalayas, hn or remotive"
-            )
+            raise ValueError(f"unknown job source {name!r} — use auto, all, or any of: {', '.join(PROVIDER_LABELS)}")
     vendors = [p for p in names if p in JSEARCH_VENDORS]
     expanded = []
     for name in names:
@@ -430,7 +437,7 @@ async def search_jobs(
     reason = ""
     quota: dict = {}
     if prov not in PROVIDER_LABELS:
-        raise ValueError(f"unknown job source {prov!r} — use auto, jsearch, openwebninja, himalayas, hn or remotive")
+        raise ValueError(f"unknown job source {prov!r} — use auto, all, or any of: {', '.join(PROVIDER_LABELS)}")
     if prov == "jsearch":
         if not (api_key or "").strip():
             raise ValueError(
@@ -455,6 +462,8 @@ async def search_jobs(
             raw = await _get_himalayas(query, country)
         elif prov == "hn":
             raw = await _get_hn(query)
+        elif prov in feeds.FEEDS:
+            raw = await feeds.fetch(prov)  # the whole feed (cached); ranked against the query below
         else:
             raw = await _get_remotive(query)
         fetched = len(raw)

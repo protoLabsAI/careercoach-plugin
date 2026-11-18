@@ -20,6 +20,8 @@ careercoach-plugin/
 ├─ search/                  finding roles
 │  ├─ boards.py             company job boards: Ashby, Greenhouse, Lever
 │  ├─ jobsource.py          market search: Himalayas, Hacker News, JSearch, Remotive
+│  ├─ feeds.py              keyless feeds: Jobicy, We Work Remotely, Remote OK
+│  ├─ resolve.py            the company's own posting for a role a board or aggregator listed
 │  ├─ watchlist.py          the watchlist, the first-seen log, ghost-job flags
 │  ├─ scan.py               one watchlist scan, shared by the tool, the digest and the watch
 │  ├─ contacts.py           LinkedIn Connections import, referrals, follow-ups

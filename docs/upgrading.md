@@ -3,6 +3,13 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.2
+
+- **Three more free job sources.** Job source accepts `jobicy` (remote roles open to the US, with pay),
+  `weworkremotely` (the programming and design feeds) and `remoteok`. They need no key. Each is a feed
+  of recent postings, downloaded at most once an hour and matched against your search locally. Every
+  role links back to the board it came from.
+
 ## 0.17.1
 
 - **JSearch on RapidAPI works again.** RapidAPI removed the `/search` endpoint, so every search with a

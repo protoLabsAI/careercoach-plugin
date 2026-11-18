@@ -1,6 +1,6 @@
 id: careercoach
 name: Career Coach
-version: 0.17.1
+version: 0.17.2
 description: >-
   A career coach for your job search. It finds fresh roles, keeps your pipeline on a board,
   builds apply kits (a tailored résumé, a cover letter and form answers) that you file
@@ -26,6 +26,9 @@ capabilities:
     - "himalayas.app"
     - "hn.algolia.com"
     - "remotive.com"
+    - "jobicy.com"
+    - "weworkremotely.com"
+    - "remoteok.com"
     - "boards-api.greenhouse.io"
     - "api.ashbyhq.com"
     - "api.lever.co"
@@ -49,7 +52,7 @@ config:
   render_format: "html"     # how CVs / cover letters are produced: html (artifact → PDF) | docx (real Word file → save_file_artifact) | latex
   packet_root: ""           # workspace for the gated role-packet flow (Companies/<Co>/Roles/…); blank → this agent's own folder inside its data directory
   jobs_api_key: ""
-  jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else himalayas) | jsearch | openwebninja | himalayas | hn | remotive
+  jobs_provider: "auto"     # job source: auto (jsearch when a key is set, else himalayas) | jsearch | openwebninja | himalayas | hn | jobicy | weworkremotely | remoteok | remotive; a comma list; or all
   search_country: ""        # narrow keyless remote-board results to roles open in this country (e.g. "United States")
   locations: ""             # where a role may be: comma list of places + "remote" (= remote, open to the US); blank = anywhere
   title_exclude: "intern, internship, new grad"   # words that drop a title from scans
@@ -69,7 +72,7 @@ settings:
   - { key: render_format, label: "Document format", type: string, group: "Career Coach", description: "How CVs / cover letters are produced: 'html' renders via the artifact plugin (HTML to PDF, no LaTeX toolchain); 'docx' produces a real editable Word file via the cowork docx skill and saves it as a versioned download-artifact (needs cowork + the execute_code plugin, which runs code, + a protoAgent v0.108.0+ host — on the desktop app 0.108.0 is the floor because that is where execute_code gained its managed Python runtime, provisioned on first use; falls back to html otherwise); 'latex' for the classic moderncv .tex export." }
   - { key: packet_root, label: "Role-packet workspace", type: string, group: "Career Coach", description: "Folder where the gated role-packet flow files a folder per role (Companies/<Company>/Roles/<Role - Req>/) plus an Experience.md you can write your history into (the coach imports it into your profile) and your story bank. Blank uses this agent's own folder (inside its data directory), so agents on one machine never share files. Point it at wherever you keep your job hunt so you can open and edit the artifacts directly." }
   - { key: jobs_api_key, label: "Job-source API key", type: secret, group: "Career Coach", description: "Optional. A key for JSearch (Google-for-Jobs, which includes LinkedIn and Indeed listings): a RapidAPI key (Job source 'auto' or 'jsearch') or an OpenWeb Ninja key (Job source 'openwebninja'). With it, live job search uses JSearch and the watch adds JSearch to its sweep (within the plan's request allowance); without it, or when JSearch rejects the key, they use the keyless Himalayas remote-jobs board. Stored in secrets.yaml." }
-  - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job APIs market searches use: comma-separated names (e.g. openwebninja,himalayas,hn), all (Himalayas + HN + RapidAPI if keyed; all,openwebninja selects that vendor; excludes Remotive), or a single source: 'auto' (JSearch on RapidAPI when a key is set, else Himalayas), 'jsearch' (a RapidAPI key), 'openwebninja' (JSearch with a key bought from OpenWeb Ninja), 'himalayas', 'hn' (this month's Hacker News Who-is-hiring thread), or 'remotive' (not recommended: its API now returns a fixed feed). Watched companies' own job boards are scanned regardless." }
+  - { key: jobs_provider, label: "Job source", type: string, group: "Career Coach", description: "Which job APIs market searches use: comma-separated names (e.g. openwebninja,himalayas,hn), all (Himalayas + HN + Jobicy + We Work Remotely + Remote OK + RapidAPI if keyed; all,openwebninja selects that vendor; excludes Remotive), or a single source: 'auto' (JSearch on RapidAPI when a key is set, else Himalayas), 'jsearch' (a RapidAPI key), 'openwebninja' (JSearch with a key bought from OpenWeb Ninja), 'himalayas', 'hn' (this month's Hacker News Who-is-hiring thread), 'jobicy', 'weworkremotely' or 'remoteok' (keyless feeds of recent remote roles), or 'remotive' (not recommended: its API now returns a fixed feed). Watched companies' own job boards are scanned regardless." }
   - { key: search_country, label: "Search country", type: string, group: "Career Coach", description: "Optional. Narrow keyless remote-board results to roles open to candidates in this country, e.g. 'United States'." }
   - { key: locations, label: "Locations", type: string, group: "Career Coach", description: "Where a role may be, for board scans and the digest: a comma-separated list of places (matched against the posting's location) plus 'remote' for remote roles open to the US. E.g. 'remote, portland'. Blank matches anywhere." }
   - { key: title_exclude, label: "Exclude titles with", type: string, group: "Career Coach", description: "Comma-separated words or phrases that drop a title from scans, e.g. 'intern, manager, director'." }
