@@ -490,10 +490,31 @@ def add_to_inbox(jobs: list[dict]) -> int:
         box = _load(INBOX, [])
         dismissed = _load(DISMISSED, {})
         have = {j.get("id") for j in box}
+
+        def _role(j: dict) -> tuple[str, str]:
+            return (company_key(j.get("company", "")), role_key(j.get("title", "")))
+
+        # One card per role per company ACROSS sources: the same opening arrives from the
+        # company's board, Himalayas and a feed, each under its own id and link. Two postings
+        # from one source stay two cards: a company does list one title twice (two locations).
+        by_role = {_role(j): j for j in reversed(box) if all(_role(j))}
         for j in jobs:
-            if j.get("id") not in have and not _dismissed(j, dismissed):
-                box.append({**{k: j.get(k) for k in keep}, "score": int(j.get("score") or 0)})
-                have.add(j.get("id"))
+            if j.get("id") in have or _dismissed(j, dismissed):
+                continue
+            twin = by_role.get(_role(j)) if all(_role(j)) else None
+            # the card's own source is the first it was seen from; a posting from any OTHER source
+            # is the same opening, on this batch and on every later one that carries it again
+            first = (twin.get("sources") or [twin.get("source")])[0] if twin else None
+            if twin is not None and first and j.get("source") and j["source"] != first:
+                # note where else it is listed; the card the operator already has stays as it is
+                seen = [*(twin.get("sources") or [twin.get("source")]), *(j.get("sources") or [j.get("source")])]
+                twin["sources"] = list(dict.fromkeys(s for s in seen if s))
+                continue
+            card = {**{k: j.get(k) for k in keep}, "score": int(j.get("score") or 0)}
+            box.append(card)
+            have.add(j.get("id"))
+            if all(_role(j)):
+                by_role[_role(j)] = card
         # Evict handled rows first, oldest within each group; preserve insertion order.
         excess = max(0, len(box) - INBOX_CAP)
         priority = sorted(range(len(box)), key=lambda i: not (box[i].get("digested") or box[i].get("kept")))

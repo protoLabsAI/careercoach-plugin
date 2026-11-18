@@ -129,9 +129,27 @@ OFF_DOMAIN = frozenset(
 BASELINE = frozenset({"git", "rest", "sql", "html", "css", "testing", "ci/cd", "linux", "docker"})
 _OFF_TITLE = re.compile(
     r"\b(?:compiler|kernel|gpu|silicon|chip|asic|fpga|firmware|embedded|robotics|hardware|"
-    r"performance\s+modeling|simulation|ios|android|salesforce|sap|blockchain)\b",
+    r"performance\s+modeling|simulation|ios|android|salesforce|sap|blockchain|"
+    # another discipline's engineer: every word of "Design Engineer" or "Automation Engineer" is in
+    # "Utility Infra Design Engineer" and "Pharmacy Process & Automation Engineer" too
+    # (a word that also names a product area is matched only as the discipline: "Network Engineer",
+    # never "Neural Network Engineer" or "Software Engineer, Marketing Platform")
+    r"product\s+marketing|(?:marketing|sales|clinical|wireless|telecom|optical)\s+engineer|"
+    r"(?<!neural\s)network(?:ing)?\s+(?:engineer|architect|administrator)|ethernet|rf|pharmacy|utility|"
+    r"utilities|civil|structural|mechanical|electrical|hvac|piping|plant|manufacturing|chemical|"
+    r"geotechnical|nuclear|substation|automotive|avionics|pega|servicenow|mulesoft)\b",
     re.I,
 )
+# Names a posting carries when a recruiter or a reposting site listed it and the employer isn't
+# named: Google for Jobs (JSearch) is full of them, and their text is written to match everything.
+_REPOSTER = re.compile(
+    r"\b(?:jobgether|recruiting\s+from\s+scratch|remote\s+quest|keyopenings|confidential|stealth|"
+    r"lensa|jobot|cybercoders|dice|crossing\s+hurdles|braintrust|toptal|turing|mercor|micro1|outlier|"
+    r"mindrift|alignerr|dataannotation|afterquery|jobbex|talentify|hire\s*feed|get\s*it\s+recruit\w*|"
+    r"recruit(?:ing|ment|ers?)|staffing|talent\s+(?:solutions|partners|group))\b",
+    re.I,
+)
+REPOSTER_CAP = 55  # under the default inbox bar: still in a search's results, never a top card
 _TECH_RE = {k: re.compile(rf"(?<![\w+#.])(?:{v})(?![\w+#])", re.I) for k, v in TECH.items()}
 
 _SENIORITY = (  # first matching band wins, so the most senior word in a title decides
@@ -278,6 +296,10 @@ def score(job: dict, roles: str, profile_text: str, min_salary: int = 0) -> tupl
         overall = min(overall, 45)
     elif len(off) >= 2:
         overall = min(overall, 55)
+    if _REPOSTER.search(job.get("company") or ""):
+        # the real employer is unknown, so the stack and pay can't be trusted to be one job's
+        why.append("listed by a recruiter or reposter, employer not named")
+        overall = min(overall, REPOSTER_CAP)
     return overall, " · ".join(why)
 
 

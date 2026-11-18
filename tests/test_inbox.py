@@ -49,6 +49,35 @@ def test_retains_evidence_and_digest_marks(mods):
     assert wl.peek_inbox() == []
 
 
+def test_the_same_role_from_another_source_is_one_card(mods):
+    """Samsara's role arrived from its Greenhouse board and from Himalayas as two cards."""
+    wl = mods.watchlist
+    first = job("gh", company="Samsara", title="Sr Software Engineer I/II, Operational AI", source="greenhouse")
+    again = job("hm", company="Samsara Inc.", title="Sr Software Engineer I/II, Operational AI", source="himalayas",
+                url="https://himalayas.app/x", hash="other")  # fmt: skip
+    other = job("gh2", company="Samsara", title="Staff Frontend Engineer", source="greenhouse", hash="third")
+    wl.add_to_inbox([first])
+    wl.add_to_inbox([again, other])
+    cards = wl.inbox_for_view()
+    assert [c["id"] for c in cards if c["company"].startswith("Samsara")] in (["gh", "gh2"], ["gh2", "gh"])
+    kept = next(c for c in cards if c["id"] == "gh")
+    assert kept["sources"] == ["greenhouse", "himalayas"] and kept["url"] == first["url"]
+    # two sources in one batch collapse too
+    wl.add_to_inbox([job("a", company="Elvoro", title="AI Creative Engineer", source="himalayas", hash="h1"),
+                     job("b", company="Elvoro", title="AI Creative Engineer", source="weworkremotely", hash="h2")])  # fmt: skip
+    assert [c["id"] for c in wl.inbox_for_view() if c["company"] == "Elvoro"] == ["a"]
+    # the other source's copy arrives again on every later search: still one card
+    for _ in range(2):
+        wl.add_to_inbox([again])
+        wl.add_to_inbox([job("b", company="Elvoro", title="AI Creative Engineer", source="weworkremotely", hash="h2")])
+    cards = wl.inbox_for_view()
+    assert len([c for c in cards if c["company"] in ("Samsara", "Elvoro")]) == 3
+    assert next(c for c in cards if c["id"] == "gh")["sources"] == ["greenhouse", "himalayas"]
+    # two postings of one title from ONE source are two openings (two locations)
+    wl.add_to_inbox([job("gh3", company="Samsara", title="Staff Frontend Engineer", source="greenhouse", hash="x9")])
+    assert {c["id"] for c in wl.inbox_for_view() if c["title"] == "Staff Frontend Engineer"} == {"gh2", "gh3"}
+
+
 def test_dismissal_survives_eviction_and_blocks_id_or_hash(mods, monkeypatch):
     wl = mods.watchlist
     wl.add_to_inbox([job(), job("alias", hash="hash-one"), job("hashless", hash="")])
