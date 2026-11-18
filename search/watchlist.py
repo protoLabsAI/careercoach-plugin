@@ -127,6 +127,56 @@ def jsearch_allowance(now: datetime | None = None) -> int | None:
     return max(0, min(remaining, per_day - used))
 
 
+# Per-vendor backoff is separate from RapidAPI's request allowance.
+SOURCE_COOLDOWNS = "job-source-cooldowns.json"
+
+
+def source_cooldown(source: str, now: datetime | None = None) -> str:
+    """Active expiry, or empty; missing, stale and unreadable notes never block a search."""
+    try:
+        until = _load(SOURCE_COOLDOWNS, {}).get(source)
+        expiry = datetime.fromisoformat(until)
+        return until if expiry > _quota_now(now) else ""
+    except (StoreUnreadable, OSError, ValueError, TypeError):
+        return ""
+
+
+def note_source_cooldown(source: str, retry_after: str = "", now: datetime | None = None) -> None:
+    """Remember a 429, honoring delta seconds or an HTTP date, capped at one day."""
+    from email.utils import parsedate_to_datetime
+
+    now = _quota_now(now)
+    try:
+        seconds = int(retry_after)
+    except (ValueError, TypeError):
+        try:
+            seconds = (parsedate_to_datetime(retry_after) - now).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            seconds = 3600
+    until = (now + timedelta(seconds=max(0, min(seconds, 86400)))).isoformat()
+    _update_source_cooldown(source, until)
+
+
+def clear_source_cooldown(source: str) -> None:
+    """Only a successful retry clears the persisted expiry."""
+    _update_source_cooldown(source, "")
+
+
+def _update_source_cooldown(source: str, until: str) -> None:
+    try:
+        with _store._locked("job-source-cooldowns"):
+            records = _load(SOURCE_COOLDOWNS, {})
+            if until:
+                records[source] = until
+            elif source in records:
+                del records[source]
+            else:
+                return
+            _save(SOURCE_COOLDOWNS, records)
+    except (StoreUnreadable, OSError, ValueError, TypeError):
+        pass  # bookkeeping must never cost the operator search results
+
+
 # ── watchlist ─────────────────────────────────────────────────────────────────
 def load_watchlist() -> list[dict]:
     return _load("watchlist.json", [])

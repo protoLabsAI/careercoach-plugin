@@ -1019,3 +1019,15 @@ def test_watch_openwebninja_refusal_stops_keyed_requests_only(watch_env, mods, m
     assert any(j["company"] == "Newco" for j in got)
     assert "OpenWeb Ninja" in caplog.text
     assert mods.watchlist.watch_last_run()
+
+
+@pytest.mark.parametrize("status", [403, 429])
+@pytest.mark.parametrize("selection", ["auto", "jsearch", "jsearch,himalayas"])
+def test_watch_refusal_stops_pass_and_cooldown_survives_next_pass(watch_env, mods, monkeypatch, status, selection):
+    plugin, reg, cfg, calls = _with_jsearch(watch_env, monkeypatch, lambda r: httpx.Response(status))
+    cfg["jobs_provider"] = selection
+    first = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == 1
+    assert any(j["company"] == "Newco" and j["source"] == "himalayas" for j in first)
+    asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert len(calls) == (1 if status == 429 else 2)
