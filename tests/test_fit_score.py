@@ -193,6 +193,20 @@ def test_resolve_finds_the_ats_posting_and_caches_the_lookup(resolve, mods, monk
     assert again["apply_url"] and len(calls) == probes + 1  # just the one board read
 
 
+def test_an_aggregator_link_is_swapped_for_the_companys_own_posting(resolve, mods, monkeypatch):
+    """JSearch links to whoever syndicated the role (JobLeads, Jobgether…), never to the company."""
+    calls: list[str] = []
+    _ats_net(monkeypatch, calls)
+    via_aggregator = {"title": "AI Engineer", "company": "Acme", "source": "jsearch", "url": "https://www.jobleads.com/us/job/ai-engineer"}  # fmt: skip
+    via_feed = {"title": "AI Engineer", "company": "Acme", "source": "jobicy", "url": "https://jobicy.com/jobs/1-ai-engineer"}  # fmt: skip
+    already_direct = {"title": "AI Engineer", "company": "Acme", "source": "jsearch", "url": "https://boards.greenhouse.io/acme/jobs/1"}  # fmt: skip
+    from_a_board_scan = {"title": "AI Engineer", "company": "Acme", "source": "ashby", "url": "https://jobs.ashbyhq.com/acme/a1"}  # fmt: skip
+    assert asyncio.run(resolve.resolve([via_aggregator, via_feed, already_direct, from_a_board_scan])) == 2
+    assert via_aggregator["apply_url"] == via_feed["apply_url"] == "https://jobs.ashbyhq.com/acme/a1"
+    assert via_aggregator["url"].startswith("https://www.jobleads.com")  # where it was listed is kept
+    assert "apply_url" not in already_direct and "apply_url" not in from_a_board_scan
+
+
 def test_resolve_remembers_a_miss_and_leaves_other_links_alone(resolve, mods, monkeypatch):
     calls: list[str] = []
     _ats_net(monkeypatch, calls)

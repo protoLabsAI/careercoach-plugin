@@ -87,6 +87,10 @@ free plan is 200 requests a month: the background watch spreads those over the m
 Himalayas alongside, and if JSearch rejects the key, searches fall back to Himalayas and say so. Keyless results are loose, so they're filtered and ranked against your query locally, and
 every result says which source it came from.
 
+Three more keyless sources can be named under **Job source**: `jobicy` (remote roles open to the US, with
+pay), `weworkremotely` (its programming and design feeds) and `remoteok`. Each publishes its recent
+postings as one feed, which is downloaded at most once an hour.
+
 ### Background job-watch
 
 Turn on **Background job-watch** and, every **Watch interval**, it queues new matching roles for your digest

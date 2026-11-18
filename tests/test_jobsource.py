@@ -653,13 +653,16 @@ def test_all_queries_keyless_and_selected_vendor(js, monkeypatch, key, vendor):
         return httpx.Response(200, json={"jobs": [], "data": [], "hits": []})
 
     _mock(monkeypatch, handler)
+    feeds = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".feeds")
+    feeds._CACHE.clear()  # a feed served from memory would contact no host
     selection = "all,openwebninja" if vendor == "openwebninja" else "all"
     out = _search(js, "engineer", provider=selection, api_key=key)
-    expected = ["himalayas.app", "hn.algolia.com"]
+    feeds._CACHE.clear()
+    expected = ["himalayas.app", "hn.algolia.com", *feeds.HOSTS]
     if vendor:
         expected.append("api.openwebninja.com" if vendor == "openwebninja" else "jsearch.p.rapidapi.com")
-    assert hosts == expected
-    assert out.providers == ["himalayas", "hn"] + ([vendor] if vendor else [])
+    assert list(dict.fromkeys(hosts)) == expected  # a feed reads several categories from one host
+    assert out.providers == ["himalayas", "hn", *feeds.FEEDS] + ([vendor] if vendor else [])
 
 
 def test_unknown_list_entry_is_validated_before_network(js, monkeypatch):
@@ -916,6 +919,30 @@ def test_multi_source_fallback_uses_selected_keyless_members_once(js, monkeypatc
     assert all(j["source"] == "remotive" for j in out.jobs)
     assert set(out.failures) == {"jsearch", "openwebninja"}
     assert hosts.count("remotive.com") == 1
+
+
+def test_multi_source_fallback_uses_a_keyless_feed_member(js, monkeypatch):
+    """A feed (search/feeds.py) is a keyless member like any other: when the list holds one, a
+    failed keyed source is answered by it and Himalayas is not added."""
+    hosts = []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        assert request.url.host == "api.openwebninja.com"
+        return httpx.Response(429)
+
+    async def feed(name, now=None):
+        return js.parse_remotive(_SAME_FOR_EVERY_QUERY)
+
+    _mock(monkeypatch, handler)
+    monkeypatch.setattr(js.feeds, "fetch", feed)
+    out = _search(js, "data engineer", provider="openwebninja,jobicy", api_key="KEY")
+    assert out.providers == ["jobicy"] and out.jobs[0]["company"] == "Globex"
+    assert all(j["source"] == "jobicy" for j in out.jobs)
+    assert "OpenWeb Ninja" in out.fallback_reason and "rate limit" in out.fallback_reason
+    again = _search(js, "data engineer", provider="openwebninja,jobicy", api_key="KEY")
+    assert "cooling down until" in again.fallback_reason and again.providers == ["jobicy"]
+    assert hosts == ["api.openwebninja.com"]  # the cooldown skipped the second call; Himalayas never asked
 
 
 def test_tool_reports_cooldown_until(plugin, iso, monkeypatch):
