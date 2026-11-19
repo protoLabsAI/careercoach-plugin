@@ -3604,8 +3604,11 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             and (not j.get("via_blocked") or j.get("ats_lookup") == "found")
         ]
         wl.add_to_inbox(matches)
-        # handled: inboxed, or below the bar (the settled ones without a lookup)
-        wl.record_sightings(batch + settled, log_name=wl.WATCH_SEEN)
+        # handled: inboxed, or below the bar (the settled ones without a lookup). A blocked site's
+        # lead whose company lookup didn't finish (a 429, a timeout: no ats_lookup) is NOT handled:
+        # it is looked up again next pass instead of being lost.
+        pending = {j["id"] for j in batch if j.get("via_blocked") and not j.get("ats_lookup")}
+        wl.record_sightings([j for j in batch if j["id"] not in pending] + settled, log_name=wl.WATCH_SEEN)
     except state.StoreUnreadable as e:
         log.warning("[careercoach] watch scan recorded nothing: %s", e)
         return []

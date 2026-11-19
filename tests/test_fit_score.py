@@ -361,7 +361,7 @@ def test_a_lead_from_a_blocked_site_gets_the_companys_title_link_and_place(resol
     monkeypatch.setattr(boards, "fetch_board", board)
     monkeypatch.setattr(boards, "probe", probe)
     lead = {"title": "Frontend Engineer - AI-Driven Web Apps (Remote)", "company": "Binance", "source": "jsearch",
-            "via_blocked": True, "remote": True, "location": "Remote", "comp": "90,000–150,000",
+            "via_blocked": True, "remote": True, "countries": ["US"], "location": "Remote", "comp": "90,000–150,000",
             "url": "https://www.google.com/search?q=Binance+Frontend", "snippet": _REWRITTEN}  # fmt: skip
     assert asyncio.run(resolve.resolve([lead])) == 1
     assert lead["apply_url"] == "https://gh/kyc" and lead["ats_lookup"] == "found"
@@ -369,6 +369,9 @@ def test_a_lead_from_a_blocked_site_gets_the_companys_title_link_and_place(resol
         "Frontend Engineer - AI-Driven"
     )
     assert lead["location"] == "Hong Kong; Singapore; Taiwan" and "comp" not in lead  # the reposter's pay is dropped
+    # and so is its "remote, US": the company's posting doesn't say remote, so nothing does
+    assert lead["remote"] is None and "countries" not in lead
+    assert boards.location_matches(lead, "remote, portland, or") is False
     # an ordinary board listing whose title doesn't match is NOT matched by text: only a blocked site's lead is
     plain = {"title": "Something Else Entirely", "company": "Binance", "source": "himalayas",
              "url": "https://himalayas.app/x", "snippet": _REWRITTEN}  # fmt: skip

@@ -504,6 +504,9 @@ async def search_jobs(
                 raise ValueError(f"{_JOB_API_LABELS[prov]} is cooling down until {until}")
             if prov == "jsearch":
                 jobs, quota = await _get_jsearch(query, location, remote, api_key, max_age_days)
+                # a blocked site's leads go last: a chat search never lists them, and they must
+                # not take the places of roles it can show when the limit is applied
+                jobs.sort(key=lambda j: bool(j.get("via_blocked")))
             else:
                 jobs = await _get_openwebninja(query, location, remote, api_key)
             fetched = len(jobs)

@@ -234,15 +234,24 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 j["apply_url"] = hit["url"]
                 if j.get("via_blocked"):
                     # nothing the reposter added is kept: its pay range is its own invention
-                    # (Binance's posting gave none; the listing said $90-150K)
+                    # (Binance's posting gave none; the listing said $90-150K), and so are its
+                    # "remote" and country when the company's posting names no place at all
                     j.pop("comp", None)
+                    if not (hit.get("location") or "").strip():
+                        j["remote"] = hit.get("remote")
+                        j.pop("countries", None)
                 if (hit.get("location") or "").strip():
                     # the company's own posting says where the job is; a board's "Remote (US)"
                     # for an on-site San Francisco role is the board's guess
                     if hit["location"].strip() != (j.get("location") or "").strip():
                         j["listed_location"] = j.get("location") or ""
                     j["location"] = hit["location"]
-                    if hit.get("remote") is not None:
+                    if j.get("via_blocked"):
+                        # a reposter's "remote, US" is its own claim: only the company's posting
+                        # counts, including when it says nothing about remote
+                        j["remote"] = hit.get("remote")
+                        j.pop("countries", None)
+                    elif hit.get("remote") is not None:
                         # only when the company SAYS remote or on site: an ATS that doesn't say
                         # (Greenhouse, unless the location text does) leaves the board's word standing
                         j["remote"] = hit["remote"]

@@ -728,6 +728,32 @@ def test_a_blocked_sites_lead_is_shown_only_with_the_companys_own_posting(watch_
     assert not [j for j in again if j["company"].startswith("Leadco")]  # the untraced lead doesn't come back
 
 
+def test_a_lead_whose_lookup_did_not_finish_is_tried_again_next_pass(watch_env, mods, monkeypatch):
+    """A 429 or a timeout during the company lookup must not lose the lead for good."""
+    lead = {"job_title": "Design Engineer", "employer_name": "Slowco", "job_is_remote": True, "job_country": "US",
+            "job_description": LONG, "job_id": "s1", "job_apply_link": "https://www.jobleads.com/us/job/s1",
+            "job_posted_at_datetime_utc": (NOW - timedelta(days=1)).isoformat()}  # fmt: skip
+    plugin, reg, cfg, calls = _with_jsearch(
+        watch_env, monkeypatch, lambda r: httpx.Response(200, json={"data": {"jobs": [lead]}})
+    )
+    resolve = importlib.import_module(plugin.__name__ + ".search.resolve")
+    tries = []
+
+    async def flaky(batch, **kw):
+        for j in batch:
+            if j["company"] == "Slowco":
+                tries.append(1)
+                if len(tries) > 1:  # the second pass gets an answer
+                    j.update(apply_url="https://jobs.ashbyhq.com/slowco/1", ats_lookup="found")
+        return 0
+
+    monkeypatch.setattr(resolve, "resolve", flaky)
+    first = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert not [j for j in first if j["company"] == "Slowco"]  # not shown without the company's posting
+    second = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert [j["apply_url"] for j in second if j["company"] == "Slowco"] == ["https://jobs.ashbyhq.com/slowco/1"]
+
+
 def test_the_pass_queues_the_best_new_roles_not_just_the_newest(watch_env, mods, plugin, monkeypatch):
     """Twenty new roles, fifteen lookups a pass: the strong ones must not wait behind newer weak ones."""
     _, reg, cfg = watch_env
