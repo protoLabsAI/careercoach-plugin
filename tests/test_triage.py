@@ -146,9 +146,11 @@ def test_the_report_says_what_to_change_only_when_the_numbers_are_there(mods):
     tr = mods.triage
     tips = tr.suggestions(tr.report(_log(tr)))
     text = "\n".join(tips)
-    assert "jsearch: you kept 1 of 16." in text and "himalayas" not in text  # 60% kept is fine
-    assert 'Target role "AI Engineer": you kept 1 of 12.' in text
-    assert "Roles scoring 65-79: you kept 1 of 16." in text
+    # low means under half of what THIS operator keeps overall (32% here), and it says the cost
+    assert "jsearch: you kept 1 of 16 (you keep 32% overall). Dropping it from Job source would lose those 1." in text
+    assert "himalayas" not in text  # 60% kept is fine
+    assert 'Target role "AI Engineer": you kept 1 of 12' in text
+    assert "Roles scoring 65-79: you kept 1 of 16." in text and "including the 1 you kept" in text
     assert "Recruiter or reposted listing was the reason 11 times." in text and "Jobgether" in text
     assert "Location doesn't work was the reason 6 times. Check the Locations setting" in text
     assert tr.suggestions(tr.report(_log(tr)[:6])) == []  # six decisions say nothing yet
@@ -156,6 +158,27 @@ def test_the_report_says_what_to_change_only_when_the_numbers_are_there(mods):
     assert out.startswith("Triage over the last 30 days: 31 decisions, 10 kept, 21 dismissed (32% kept).")
     assert "nothing has been changed" in out and "- jsearch: 1 of 16 (6%)" in out
     assert "No triage decisions are logged yet" in tr.format_report(tr.report([]))
+
+
+def test_a_picky_operator_is_not_told_every_source_is_failing(mods):
+    """The first real log: 11% kept overall. Himalayas at 8% is this operator's normal, not a source to drop."""
+    tr = mods.triage
+    rows = []
+
+    def add(n, action, source, score=85):
+        for i in range(n):
+            c = card(f"{source}-{action}-{i}", source=source, score=score, reason='title ~ "AI Engineer"')
+            rows.append(tr._entry(action, c, "", "", "", "2026-11-18T10:00:00+00:00"))
+
+    add(17, "keep", "himalayas")
+    add(209, "dismiss", "himalayas")
+    add(8, "keep", "jobicy")
+    add(8, "dismiss", "jobicy")
+    add(14, "dismiss", "greenhouse")
+    text = "\n".join(tr.suggestions(tr.report(rows)))
+    assert "himalayas" not in text and "jobicy" not in text
+    assert "Watched companies on greenhouse: you kept 0 of 14" in text and "watchlist" in text
+    assert "Job source" not in text  # a company board is tuned through the watchlist
 
 
 # ── the routes and the tool ───────────────────────────────────────────────────
@@ -169,7 +192,9 @@ def test_the_dismiss_route_takes_a_reason_and_refuses_an_unknown_one(plugin, cli
     assert [c["id"] for c in wl.inbox_for_view()] and tr.entries() == []  # nothing dismissed
     assert tc.post("/api/plugins/careercoach/inbox/dismiss", json={"id": "a", "reason": "pay"}).json() == {"ok": True}
     assert tc.post("/api/plugins/careercoach/inbox/dismiss", json={"id": "b"}).status_code == 200  # reason optional
-    later = tc.post("/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": ["b"], "reason": "Wrong level"})
+    later = tc.post(
+        "/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": ["b"], "reason": "Too junior or too senior"}
+    )
     assert later.json() == {"ok": True, "updated": 1}
     assert (
         tc.post("/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": [], "reason": "pay"}).status_code == 400

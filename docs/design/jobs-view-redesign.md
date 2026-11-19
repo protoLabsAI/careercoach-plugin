@@ -260,3 +260,136 @@ The line and the Today row never show a raw `note`. They always use the fixed co
 The view finds the kind by matching words in `note`, because that is all PR #141 sends. That works for the notes we know. If the server later adds `"kind": "resting" | "key" | "subscription" | "retry"` to each entry, the view uses it and stops matching words. That change is small and optional; this spec works without it.
 
 Approved by the owner on 2026-11-18. §13.9 is settled: the server sends `kind` on each entry (v0.17.7), and the view reads the note's words only when `kind` is absent.
+
+## 14. Dismiss reasons
+
+When Josh dismisses a role, the toast that already carries Undo also offers a short row of reasons. One tap or one number key adds a reason. If he ignores it, the dismissal goes through exactly as it does today and is logged with no reason. Nothing new stays on the page: the reasons live only in the toast, for the toast's 6 seconds.
+
+The log is for periodic sweeps ("what am I dismissing, and why?") that tune the watch and its sources. The view only writes reasons. It never shows them back, counts them or asks about them.
+
+### 14.1 Principles
+
+1. **Never slower than today.** D, D, D at full speed still works. A reason is never asked for, never required and never blocks the next dismissal.
+2. **One move.** Choosing a reason is one tap or one key. No menu to open first.
+3. **Stable keys.** Each reason keeps its number forever. The order never changes based on use, so the keys become muscle memory.
+4. **No nagging.** Skipping a reason shows nothing, says nothing, and is never counted against him.
+
+### 14.2 The reasons
+
+I cut the draft list from ten to nine, so every reason fits on one number key (1–9). `recruiter` folds into `stale`, because both mean "this listing isn't a fresh, direct opening", and a sweep acts on them the same way (tune or drop the source). The view never sends `recruiter`. The server can keep accepting it.
+
+| Key | Code | Chip | Toast after choosing ("Noted: …") | Full label, for the log and sweeps |
+|---|---|---|---|---|
+| 1 | `wrong_role` | Wrong role | wrong role | Not the kind of role I want |
+| 2 | `level` | Wrong level | wrong level | Too junior or too senior |
+| 3 | `stack` | Wrong stack | wrong stack | Wrong tech stack |
+| 4 | `location` | Location | location doesn't work | Location doesn't work |
+| 5 | `pay` | Pay too low | pay too low | Pay too low |
+| 6 | `company` | Company | not this company | Not this company |
+| 7 | `stale` | Old or reposted | old or reposted | Old, reposted, or a recruiter's listing |
+| 8 | `duplicate` | Already seen | already seen | Already seen or applied |
+| 9 | `other` | Other | something else | Something else (optional note) |
+
+Chip text stays short so all nine fit in the toast at 420px. The full label is the chip's `title` (a pointer nicety only; the chip text is the accessible name).
+
+### 14.3 Where it shows
+
+In the existing dismiss toast (`#toast`, §7), under the toast text. It is the same toast for every dismiss path: the **D** key, a row's hover **Dismiss**, the inbox drawer's **Dismiss**, and the multi-select toolbar's **Dismiss**.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ Dismissed Staff Platform Engineer.                            [Undo] │
+│ Why? Optional.  [1 Wrong role] [2 Wrong level] [3 Wrong stack]       │
+│ [4 Location] [5 Pay too low] [6 Company] [7 Old or reposted]         │
+│ [8 Already seen] [9 Other]                                           │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- Each reason is a `pl-chip` button with its number in a `pl-kbd` at the start. The row of chips is a `role="group"` labelled "Why did you dismiss it? Optional."
+- After a reason is chosen, the chips go away and the toast text changes to the "Noted" line (§14.6). Undo stays.
+- **Other** swaps the chips for one `pl-input` ("What was it? Optional.") and a **Save** `pl-btn--sm`. Focus moves into the field. Enter or Save keeps the note. Esc keeps "something else" with no note. Either way focus goes back to the Inbox list.
+- Undo stays the last control in the toast, at the end of the first line.
+
+### 14.4 Timing
+
+The dismiss write is still held until the Undo window closes (§7). This adds three rules.
+
+1. **The window is still 6 seconds from the dismiss.** Choosing a reason does not restart it.
+2. **A late choice gets 2 seconds.** If a reason is chosen with less than 2 seconds left, the window stretches to 2 seconds after the choice, so the "Noted" line can be read and Undo still works.
+3. **The window pauses while the pointer is over the toast or focus is inside it** (WCAG 2.2.1, 1.4.13). It resumes when both leave. The write simply waits.
+
+The next dismissal replaces the toast, as it does today. The earlier dismissal keeps its own timer and is written when its window closes, with whatever reason it had (often none). Reason keys always apply to the dismissal in the current toast.
+
+### 14.5 Keyboard
+
+The scheme adds number keys and one letter. None of them clash with K, D, O, X, Space, Enter or the arrows.
+
+| Key | Where | Does |
+|---|---|---|
+| **1–9** | focus on an Inbox row, while a dismiss toast shows | Sets that reason on the current toast's dismissal. Pressing another number changes it, while the toast shows. Number-pad digits work too. |
+| **R** | focus on an Inbox row, while a dismiss toast shows | Moves focus to the first reason chip (for screen reader users and anyone who wants to read the list). Tab moves through the chips and Undo. |
+| **Esc** | focus in the toast | Back to the Inbox row that had focus. Nothing is chosen. |
+
+- With no dismiss toast showing, 1–9 and R do nothing.
+- Like K and D, they never fire inside a text field (§10).
+- After any choice (key, tap or Save), focus is on the Inbox row it was on before: the row after the dismissed one, as D leaves it today. A pointer tap on a chip also returns focus there, so a focused chip never holds the window open.
+- The shortcut hint under the toolbar gains one item: `1–9 reason`. Below 600px the hint stays hidden, as today.
+
+### 14.6 Exact copy
+
+`{title}` is the role title as today's toast uses it. `{n}` is the number of roles. `{noted}` is the "Noted" phrase from §14.2.
+
+| State | Toast text | Under it |
+|---|---|---|
+| **Single dismiss** | `Dismissed {title}.` | `Why? Optional.` then the nine chips. **Undo**. |
+| **Bulk dismiss** | `Dismissed {n} roles.` | `Why? One reason for all {n}. Optional.` then the nine chips. **Undo**. |
+| **Reason chosen, single** | `Dismissed {title}. Noted: {noted}.` | nothing (chips gone). **Undo**. |
+| **Reason chosen, bulk** | `Dismissed {n} roles. Noted for all {n}: {noted}.` | nothing. **Undo**. |
+| **Other chosen** | `Dismissed {title}.` (bulk: `Dismissed {n} roles.`) | field labelled `What was it? Optional.` with placeholder `For example: contract only`, and **Save**. **Undo**. |
+| **Other, note saved** | `Dismissed {title}. Noted: “{note}”.` (bulk: `Noted for all {n}: “{note}”.`) | nothing. **Undo**. |
+| **Other, no note** (Esc or empty Save) | `Dismissed {title}. Noted: something else.` | nothing. **Undo**. |
+| **Reason skipped** | The toast fades when the window closes, exactly as today. | Nothing else. No reminder, no "no reason" text, ever. |
+| **Undo** (with or without a reason) | The toast closes, the role or roles come back, and the reason is dropped. | Announced: `Dismiss undone.` (today's copy). |
+| **Reason couldn't be saved** (only the after-the-fact write, §14.7) | A plain `pl-toast`, not the error variant: `That reason didn't save. The role is still dismissed.` | none |
+| **Dismiss itself fails** | Unchanged from §7: `Couldn’t move that role. It’s back where it was.` The reason goes with it. | none |
+
+Screen reader announcements (the existing `#live` region, not the toast):
+- On dismiss: `Dismissed {title}. Press 1 to 9 to add a reason, or keep going.` Bulk: `Dismissed {n} roles. Press 1 to 9 to add one reason for all, or keep going.`
+- On a choice: `Noted: {noted}.`
+
+Copy rules for this section: no "required", "missing", "skipped", "error" or "failed". A note is shown in full in the toast, wrapping; the field takes up to 140 characters.
+
+### 14.7 What the view sends
+
+1. **Reason chosen before the window closes** (the usual case): it rides on the held write. `POST /inbox/dismiss {id, reason, note?}` once per role, as today. No second request.
+2. **Reason skipped:** `POST /inbox/dismiss {id}`, as today. The server logs it with no reason.
+3. **Reason chosen after that role's write already went** (a key press that lands as the window closes, or a note saved while a write was in flight): `POST /inbox/dismiss-reason {ids, reason, note?}` with every id from that toast. For a bulk dismissal this is one request, not one per role.
+4. **Undo:** nothing is sent, as today (the write was never made).
+
+The view retries a failed `dismiss-reason` once, silently, then shows the "didn't save" toast from §14.6.
+
+### 14.8 Widths
+
+- **Wide and 720px split:** the toast is up to 640px wide. The nine chips wrap to two lines.
+- **Below 600px (420px rail):** the toast spans the view's width minus `--pl-space-4` on each side, and the chips wrap to three or four lines. The `pl-kbd` numbers inside the chips hide (the rail is mostly pointer use); the keys still work. The toast sits above the bottom drawer if the drawer is open.
+- The toast never scrolls sideways. Long titles wrap.
+
+### 14.9 Accessibility
+
+- The chips are real `<button>`s, reachable with R then Tab, or by number. Each is at least 24×24px (2.5.8).
+- The toast's live text is announced through `#live`, so the buttons in the toast aren't re-read on each change.
+- The pause rule in §14.4 means the window never runs out while someone is reading or typing in the toast (2.2.1).
+- Nothing relies on colour; a chosen reason is stated in text ("Noted: …"). Tokens only, light and dark. No countdown bar, so nothing moves under `prefers-reduced-motion`.
+
+### 14.10 Not in this section
+
+- Showing, counting or editing past reasons in the view. The sweep reads the server log.
+- Asking for reasons on the 362 past dismissals.
+- A reason for Keep, or for closing a role from the Pipeline (§3 already asks Rejected or Passed there).
+
+### 14.11 Decisions for Josh
+
+1. **Nine reasons, recruiter folded into "Old or reposted".** If you want agency listings tracked on their own, the fix is to drop `duplicate` or `company` instead, so it still fits on 1–9. More than nine would need a second key press for some reasons, which I'd avoid.
+2. **Chosen reasons don't restart the 6-second window.** They only stretch it to 2 seconds when the choice is late. The alternative (a fresh 6 seconds after any choice) gives longer Undo, but slows the D-D-D rhythm when he tags as he goes.
+
+Approved by the owner on 2026-11-18, with both §14.11 decisions as proposed. As built (v0.17.12): the toast closes when its dismissal is written, so a reason is never chosen after the write and §14.7 rule 3 does not arise in the view; the server route for it exists. The server also accepts `recruiter` as a reason from chat.

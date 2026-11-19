@@ -1,0 +1,306 @@
+<!-- Career Coach Jobs view · dismiss reasons (spec §14) — preview fragment. Needs /_ds/plugin-kit.css around it.
+     Invented data. Proposal only: nothing here is built. Nothing is sent anywhere; the "Would send" log shows the requests. -->
+<style>
+  .pv { display: grid; gap: var(--pl-space-3); font-family: var(--pl-font-sans); }
+  .pv-bar { display: flex; flex-wrap: wrap; gap: var(--pl-space-3); align-items: center; font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); }
+  .pv-bar label { display: flex; gap: var(--pl-space-2); align-items: center; }
+  .pv-note { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); margin: 0; }
+  .cc { container: cc / inline-size; position: relative; overflow: hidden; height: 600px; margin: 0 auto; width: 100%;
+        border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); background: var(--pl-color-bg);
+        display: flex; flex-direction: column; color: var(--pl-color-fg); }
+  .cc.mid { width: 720px; max-width: 100%; }
+  .cc.rail { width: 420px; max-width: 100%; }
+  .hd { display: flex; align-items: flex-start; gap: var(--pl-space-3); padding: var(--pl-space-4) var(--pl-space-4) var(--pl-space-2); }
+  .hd .t { font-size: var(--pl-font-size-xl); font-weight: var(--pl-font-weight-semibold); margin: 0; }
+  .hd .s { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); margin: 2px 0 0; }
+  .hd .sp { flex: 1; }
+  .tabs { display: flex; gap: var(--pl-space-1); padding: 0 var(--pl-space-4); border-bottom: 1px solid var(--pl-color-border); }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted); font: inherit; font-size: var(--pl-font-size-sm);
+         padding: var(--pl-space-2) var(--pl-space-3); display: flex; gap: 6px; align-items: center; }
+  .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
+  .cnt { font-size: var(--pl-font-size-2xs); padding: 0 6px; border-radius: var(--pl-radius-pill); background: var(--pl-color-bg-subtle); color: var(--pl-color-fg-muted); }
+  .body { flex: 1; min-height: 0; overflow: auto; padding: var(--pl-space-3) var(--pl-space-4) var(--pl-space-12); }
+  .body::after { content: ''; display: block; height: var(--pl-space-12); }
+  .muted { color: var(--pl-color-fg-muted); }
+  .sm { font-size: var(--pl-font-size-xs); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: var(--pl-space-2); align-items: center; font-size: var(--pl-font-size-xs); min-height: 32px; margin-bottom: var(--pl-space-3); }
+  .kbd-hint { margin-left: auto; color: var(--pl-color-fg-muted); }
+  .grp { border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); margin-bottom: var(--pl-space-2); background: var(--pl-color-bg-raised); }
+  .grp > .gh { display: flex; gap: var(--pl-space-2); align-items: center; padding: var(--pl-space-2) var(--pl-space-3); font-size: var(--pl-font-size-sm); font-weight: var(--pl-font-weight-semibold); }
+  .row { display: flex; gap: var(--pl-space-2); align-items: flex-start; padding: var(--pl-space-2) var(--pl-space-3); border-top: 1px solid var(--pl-color-border); outline: none; }
+  .row:focus-visible { box-shadow: inset 0 0 0 2px var(--pl-color-accent); }
+  .row[aria-selected="true"] { background: var(--pl-color-bg-subtle); }
+  .row .main { flex: 1; min-width: 0; }
+  .row .ti { font-size: var(--pl-font-size-sm); font-weight: var(--pl-font-weight-semibold); }
+  .row .meta { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); }
+  .row .acts { display: none; gap: var(--pl-space-1); }
+  .row:hover .acts, .row:focus-visible .acts, .row[aria-selected="true"] .acts { display: flex; }
+  .row .ck { visibility: hidden; margin-top: var(--pl-space-0_5); }
+  .row:hover .ck, .row:focus-visible .ck, .row[aria-selected="true"] .ck { visibility: visible; }
+
+  /* The new piece: reasons inside the existing dismiss toast. */
+  .rtoast { position: absolute; left: 50%; bottom: var(--pl-space-4); transform: translateX(-50%); z-index: 5;
+            width: min(640px, calc(100% - 2 * var(--pl-space-4))); box-sizing: border-box;
+            display: grid; gap: var(--pl-space-2); padding: var(--pl-space-3) var(--pl-space-4);
+            background: var(--pl-color-bg-raised); border: 1px solid var(--pl-color-border-strong); border-radius: var(--pl-radius);
+            color: var(--pl-color-fg); font-size: var(--pl-font-size-sm); box-shadow: var(--pl-shadow-popover); }
+  .rtoast[hidden] { display: none; }
+  .rtoast .l1 { display: flex; gap: var(--pl-space-3); align-items: flex-start; }
+  .rtoast .l1 .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .rtoast .why { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); margin: 0; }
+  .rtoast .chips { display: flex; flex-wrap: wrap; gap: var(--pl-space-1); }
+  .rtoast .rk { margin-right: var(--pl-space-1); }
+  .rtoast .other { display: flex; gap: var(--pl-space-2); align-items: center; flex-wrap: wrap; }
+  .rtoast .other label { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); flex-basis: 100%; }
+  .rtoast .other .fld { flex: 1; min-width: 10em; display: flex; }
+  @container cc (max-width: 599px) {
+    .kbd-hint { display: none; } .hd .s { display: none; }
+    .rtoast .rk { display: none; }
+  }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .log { font-family: var(--pl-font-mono); font-size: var(--pl-font-size-2xs); color: var(--pl-color-fg-muted);
+         border: 1px dashed var(--pl-color-border); border-radius: var(--pl-radius); padding: var(--pl-space-2) var(--pl-space-3);
+         max-height: 140px; overflow: auto; margin: 0; white-space: pre-wrap; }
+</style>
+
+<div class="pv">
+  <div class="pv-bar" role="group" aria-label="Preview controls">
+    <label>Width <select id="pv-w" class="pl-select">
+      <option value="">Wide</option>
+      <option value="mid">720px (split)</option>
+      <option value="rail">420px (rail)</option>
+    </select></label>
+    <label>Theme <select id="pv-th" class="pl-select">
+      <option value="">Console</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select></label>
+    <button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" id="pv-reset">Reset rows</button>
+  </div>
+  <p class="pv-note">Proposal for spec §14. Try it: click a row, press D, then 1–9 (or ignore it). Select rows with X or the checkbox, then Dismiss for one reason on all. R reaches the chips; 9 opens the note. Hover or focus the toast to pause its 6s window. Only the toast's reason row is new.</p>
+
+  <div class="cc" id="cc">
+    <div class="hd">
+      <div>
+        <div class="pl-eyebrow">Career Coach</div>
+        <h1 class="t">Jobs</h1>
+        <p class="s">Targeting: Staff Engineer, Platform Engineer</p>
+      </div>
+      <span class="sp"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" type="button">About you</button>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Jobs">
+      <button class="tab" role="tab" aria-selected="false" type="button">Pipeline <span class="cnt">18</span></button>
+      <button class="tab" role="tab" aria-selected="true" type="button" id="ibx-tab">Inbox <span class="cnt" id="ibx-cnt">49</span></button>
+      <button class="tab" role="tab" aria-selected="false" type="button">Closed <span class="cnt">86</span></button>
+    </div>
+    <div class="body" id="body" role="tabpanel" aria-labelledby="ibx-tab"></div>
+
+    <div class="rtoast" id="rt" hidden>
+      <div class="l1"><span class="txt" id="rt-txt"></span>
+        <button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" id="rt-undo">Undo</button></div>
+      <div id="rt-more"></div>
+    </div>
+    <div class="sr" id="live" role="status" aria-live="polite"></div>
+  </div>
+
+  <pre class="log" id="log" aria-label="Would send (preview only)">Would send (preview only):</pre>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  // §14.2 — fixed order, fixed keys.
+  var R = [
+    ['wrong_role', 'Wrong role', 'wrong role', 'Not the kind of role I want'],
+    ['level', 'Wrong level', 'wrong level', 'Too junior or too senior'],
+    ['stack', 'Wrong stack', 'wrong stack', 'Wrong tech stack'],
+    ['location', 'Location', "location doesn't work", "Location doesn't work"],
+    ['pay', 'Pay too low', 'pay too low', 'Pay too low'],
+    ['company', 'Company', 'not this company', 'Not this company'],
+    ['stale', 'Old or reposted', 'old or reposted', "Old, reposted, or a recruiter's listing"],
+    ['duplicate', 'Already seen', 'already seen', 'Already seen or applied'],
+    ['other', 'Other', 'something else', 'Something else (optional note)']
+  ];
+  var SEED = [
+    ['Today', [['a1', 'Staff Platform Engineer', 'Northwind', '2h ago', 'Title matches <i>Platform Engineer</i>'],
+               ['a2', 'Staff Engineer, Developer Tools', 'Lumen Labs', '5h ago', 'Title matches <i>Staff Engineer</i>'],
+               ['a3', 'Principal Engineer, Payments', 'Tessera', '7h ago', 'Title partly matches <i>Staff Engineer</i>']]],
+    ['This week', [['b1', 'Senior Software Engineer, Infra', 'Corvid', '3d ago', 'Title partly matches <i>Platform Engineer</i>'],
+                   ['b2', 'Staff Engineer (Contract)', 'Brightline Talent', '4d ago', 'Title matches <i>Staff Engineer</i>'],
+                   ['b3', 'Platform Engineer II', 'Halcyon', '5d ago', 'Title matches <i>Platform Engineer</i>'],
+                   ['b4', 'Staff Backend Engineer', 'Orbit Health', '6d ago', 'Title partly matches <i>Staff Engineer</i>']]],
+    ['Title didn\u2019t match', [['c1', 'Engineering Manager, Data', 'Northwind', '2d ago', 'Title doesn\u2019t match your targets'],
+                                 ['c2', 'Solutions Architect', 'Lumen Labs', '3d ago', 'Title doesn\u2019t match your targets']]]
+  ];
+  var HIDDEN = {}, SEL = {}, FOCUS = null, cur = null, pending = [];
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function find(id) { var f = null; SEED.forEach(function (g) { g[1].forEach(function (r) { if (r[0] === id) f = r; }); }); return f; }
+  function log(s) { $('log').textContent += '\n' + s; $('log').scrollTop = 1e6; }
+  function announce(m) { var l = $('live'); l.textContent = ''; setTimeout(function () { l.textContent = m; }, 30); }
+  function nSel() { return Object.keys(SEL).length; }
+
+  function render() {
+    var vis = 0, h = '';
+    SEED.forEach(function (g) {
+      var rows = g[1].filter(function (r) { return !HIDDEN[r[0]]; }); vis += rows.length;
+      if (!rows.length) return;
+      h += '<div class="grp"><div class="gh">' + esc(g[0]) + ' <span class="cnt">' + rows.length + '</span></div>' +
+        rows.map(function (r) {
+          return '<div class="row" role="option" tabindex="-1" data-id="' + r[0] + '" aria-selected="' + (SEL[r[0]] ? 'true' : 'false') + '">' +
+            '<input type="checkbox" class="pl-checkbox ck" tabindex="-1" aria-label="Select ' + esc(r[1]) + '"' + (SEL[r[0]] ? ' checked' : '') + '>' +
+            '<div class="main"><div class="ti">' + esc(r[1]) + '</div><div class="meta">' + esc(r[2]) + ' · ' + r[3] + ' · ' + r[4] + '</div></div>' +
+            '<div class="acts"><button class="pl-btn pl-btn--xs" type="button" tabindex="-1" data-a="keep">Keep</button>' +
+            '<button class="pl-btn pl-btn--xs" type="button" tabindex="-1" data-a="dismiss">Dismiss</button></div></div>';
+        }).join('') + '</div>';
+    });
+    var tb = nSel()
+      ? '<div class="toolbar"><strong>' + nSel() + ' selected</strong>' +
+        '<button class="pl-btn pl-btn--sm" type="button" id="b-keep">Keep</button>' +
+        '<button class="pl-btn pl-btn--sm" type="button" id="b-dis">Dismiss</button>' +
+        '<button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" id="b-clr">Clear</button></div>'
+      : '<div class="toolbar"><label class="muted" for="pv-sort">Sort</label><select id="pv-sort" class="pl-select"><option>Newest</option><option>Oldest</option></select>' +
+        '<span class="kbd-hint sm"><span class="pl-kbd">↑↓</span> move <span class="pl-kbd">K</span> keep <span class="pl-kbd">D</span> dismiss ' +
+        '<span class="pl-kbd">1–9</span> reason <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span></div>';
+    $('body').innerHTML = tb + '<div role="listbox" aria-multiselectable="true" aria-label="Inbox">' + h + '</div>';
+    $('ibx-cnt').textContent = 49 - (13 - vis);
+    wire();
+    if (FOCUS) { var f = $('body').querySelector('[data-id="' + FOCUS + '"]'); if (f) f.focus(); }
+  }
+
+  function wire() {
+    var rows = [].slice.call($('body').querySelectorAll('.row'));
+    if (rows.length && !rows.some(function (r) { return r.tabIndex === 0; })) rows[0].tabIndex = 0;
+    rows.forEach(function (row, i) {
+      var id = row.getAttribute('data-id');
+      function next() { var n = rows[i + 1] || rows[i - 1]; return n ? n.getAttribute('data-id') : null; }
+      row.onfocus = function () { rows.forEach(function (r) { r.tabIndex = -1; }); row.tabIndex = 0; FOCUS = id; };
+      row.onclick = function (e) {
+        if (e.target.closest('.ck')) { toggle(id); return; }
+        var a = e.target.closest('[data-a]');
+        if (a) { e.stopPropagation(); FOCUS = next(); a.getAttribute('data-a') === 'dismiss' ? dismiss([id]) : keep([id]); return; }
+        row.focus();
+      };
+      row.onkeydown = function (e) {
+        if (e.target !== row) return;
+        var k = (e.key || '').toLowerCase();
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); var n = rows[i + (e.key === 'ArrowDown' ? 1 : -1)]; if (n) n.focus(); }
+        else if (k === 'd') { e.preventDefault(); FOCUS = next(); dismiss(nSel() && SEL[id] ? Object.keys(SEL) : [id]); }
+        else if (k === 'k') { e.preventDefault(); FOCUS = next(); keep([id]); }
+        else if (k === 'x' || e.key === ' ') { e.preventDefault(); toggle(id); }
+        else if (/^[1-9]$/.test(e.key) && cur && !cur.done) { e.preventDefault(); choose(+e.key - 1, 'key'); }
+        else if (k === 'r' && cur && !cur.done) { e.preventDefault(); var c = $('rt').querySelector('.pl-chip'); if (c) c.focus(); }
+      };
+    });
+    var bd = $('b-dis'); if (bd) bd.onclick = function () { FOCUS = null; dismiss(Object.keys(SEL)); };
+    var bk = $('b-keep'); if (bk) bk.onclick = function () { keep(Object.keys(SEL)); };
+    var bc = $('b-clr'); if (bc) bc.onclick = function () { SEL = {}; render(); };
+  }
+  function toggle(id) { if (SEL[id]) delete SEL[id]; else SEL[id] = 1; FOCUS = id; render(); }
+  function keep(ids) { ids.forEach(function (id) { HIDDEN[id] = 1; }); SEL = {}; render(); hideToast(); log('POST /applications (keep) ' + ids.join(', ')); }
+
+  // ── The dismiss toast with reasons (§14.3–14.7) ──
+  function dismiss(ids) {
+    if (!ids.length) return;
+    ids.forEach(function (id) { HIDDEN[id] = 1; }); SEL = {}; render();
+    var t = { ids: ids.slice(), reason: null, note: '', done: false, sent: false, left: 6000, last: Date.now(), paused: false };
+    cur = t; pending.push(t);
+    t.title = ids.length === 1 ? find(ids[0])[1] : null;
+    t.tick = setInterval(function () {
+      var now = Date.now();
+      if (!t.paused) t.left -= now - t.last;
+      t.last = now;
+      if (t.left <= 0) send(t);
+    }, 100);
+    drawToast();
+    announce(ids.length === 1
+      ? 'Dismissed ' + t.title + '. Press 1 to 9 to add a reason, or keep going.'
+      : 'Dismissed ' + ids.length + ' roles. Press 1 to 9 to add one reason for all, or keep going.');
+  }
+  function base(t) { return t.ids.length === 1 ? 'Dismissed ' + t.title + '.' : 'Dismissed ' + t.ids.length + ' roles.'; }
+  function noted(t) {
+    var p = t.reason === 'other' && t.note ? '\u201c' + t.note + '\u201d' : R.filter(function (r) { return r[0] === t.reason; })[0][2];
+    return t.ids.length === 1 ? ' Noted: ' + p + '.' : ' Noted for all ' + t.ids.length + ': ' + p + '.';
+  }
+  function drawToast() {
+    var t = cur, rt = $('rt'), more = $('rt-more');
+    if (!t) { rt.hidden = true; return; }
+    rt.hidden = false;
+    $('rt-txt').textContent = base(t) + (t.done ? noted(t) : '');
+    if (t.done) more.innerHTML = '';
+    else if (t.reason === 'other') {
+      more.innerHTML = '<div class="other"><label for="rt-note">What was it? Optional.</label>' +
+        '<span class="fld"><input class="pl-input" id="rt-note" maxlength="140" placeholder="For example: contract only"></span>' +
+        '<button class="pl-btn pl-btn--sm" type="button" id="rt-save">Save</button></div>';
+      var inp = $('rt-note');
+      $('rt-save').onclick = function () { finishOther(inp.value); };
+      inp.onkeydown = function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); finishOther(inp.value); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishOther(''); }
+      };
+      inp.focus();
+    } else {
+      more.innerHTML = '<p class="why" id="rt-why">' + (t.ids.length === 1 ? 'Why? Optional.' : 'Why? One reason for all ' + t.ids.length + '. Optional.') + '</p>' +
+        '<div class="chips" role="group" aria-labelledby="rt-why">' + R.map(function (r, i) {
+          return '<button class="pl-chip pl-chip--no-icon" type="button" data-r="' + i + '" title="' + esc(r[3]) + '"><span class="rk" aria-hidden="true"><span class="pl-kbd">' + (i + 1) + '</span></span>' + esc(r[1]) + '</button>';
+        }).join('') + '</div>';
+      [].forEach.call(more.querySelectorAll('[data-r]'), function (b) { b.onclick = function () { choose(+b.getAttribute('data-r'), 'tap'); }; });
+    }
+  }
+  function choose(i, how) {
+    var t = cur; if (!t) return;
+    t.reason = R[i][0];
+    if (t.left < 2000) t.left = 2000;            // §14.4 rule 2
+    if (t.reason === 'other') { drawToast(); return; }
+    t.done = true; drawToast(); backToList();
+    announce('Noted: ' + R[i][2] + '.');
+    if (t.sent) lateReason(t);                   // §14.7 rule 3
+  }
+  function finishOther(v) {
+    var t = cur; if (!t) return;
+    t.note = (v || '').trim(); t.done = true;
+    if (t.left < 2000) t.left = 2000;
+    drawToast(); backToList();
+    announce('Noted: ' + (t.note ? t.note : 'something else') + '.');
+    if (t.sent) lateReason(t);
+  }
+  function backToList() {
+    var f = FOCUS && $('body').querySelector('[data-id="' + FOCUS + '"]');
+    (f || $('body').querySelector('.row') || $('body')).focus();
+  }
+  function send(t) {
+    clearInterval(t.tick);
+    if (!t.sent) {
+      t.sent = true;
+      t.ids.forEach(function (id) {
+        var b = { id: id }; if (t.reason) b.reason = t.reason; if (t.note) b.note = t.note;
+        log('POST /inbox/dismiss ' + JSON.stringify(b) + (t.reason ? '' : '   ← logged with no reason'));
+      });
+    }
+    if (cur === t) hideToast();
+  }
+  function lateReason(t) {
+    var b = { ids: t.ids, reason: t.reason }; if (t.note) b.note = t.note;
+    log('POST /inbox/dismiss-reason ' + JSON.stringify(b));
+  }
+  function hideToast() { cur = null; drawToast(); }
+
+  $('rt-undo').onclick = function () {
+    var t = cur; if (!t) return;
+    clearInterval(t.tick); t.sent = true;
+    t.ids.forEach(function (id) { delete HIDDEN[id]; });
+    FOCUS = t.ids[0]; hideToast(); render();
+    announce('Dismiss undone.');
+    log('(Undo: nothing sent, reason dropped)');
+  };
+  // §14.4 rule 3: pause while hovered or focused.
+  function setPause() { if (cur) { cur.paused = $('rt').matches(':hover') || $('rt').contains(document.activeElement); cur.last = Date.now(); } }
+  ['mouseenter', 'mouseleave', 'focusin', 'focusout'].forEach(function (ev) { $('rt').addEventListener(ev, function () { setTimeout(setPause, 0); }); });
+  $('rt').addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); backToList(); } });
+
+  $('pv-w').onchange = function () { $('cc').className = 'cc' + (this.value ? ' ' + this.value : ''); };
+  $('pv-th').onchange = function () { var v = this.value, r = document.documentElement; if (v) r.setAttribute('data-theme', v); else r.removeAttribute('data-theme'); };
+  $('pv-reset').onclick = function () { HIDDEN = {}; SEL = {}; pending.forEach(function (t) { clearInterval(t.tick); }); pending = []; hideToast(); render(); $('log').textContent = 'Would send (preview only):'; };
+  render();
+})();
+</script>

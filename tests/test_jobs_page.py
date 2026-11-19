@@ -42,7 +42,8 @@ function __mkEl(id) {
     setAttribute: function (k, v) { this._a[k] = String(v); },
     getAttribute: function (k) { return (k in this._a) ? this._a[k] : null; },
     classList: { _s: {}, add: function (c) { this._s[c] = 1; }, remove: function (c) { delete this._s[c]; },
-                 contains: function (c) { return !!this._s[c]; } },
+                 contains: function (c) { return !!this._s[c]; },
+                 toggle: function (c, on) { if (on) this._s[c] = 1; else delete this._s[c]; } },
     contains: function () { return false; }, focus: function () {}, onclick: null, onkeydown: null,
     querySelectorAll: function () { return []; }, querySelector: function () { return null; },
     addEventListener: function () {} };
@@ -175,7 +176,7 @@ def test_page_targets_jobs_keep_dismiss_and_move(plugin):
     assert "api('/jobs')" in html  # the band + tabs data
     assert "api('/state')" in html  # the header subline + About-you drawer
     assert "write('/inbox/keep', { id: id })" in html  # URL-shaped inbox ids travel in the body
-    assert "write('/inbox/dismiss', { id: id })" in html
+    assert "write('/inbox/dismiss', body)" in html
     assert "'/inbox/' + encodeURIComponent(" not in html
     assert "headers: { 'Content-Type': 'application/json' }" in html
     assert "JSON.stringify(body)" in html
@@ -977,8 +978,8 @@ def test_inbox_keep_and_dismiss_roll_back_with_the_section7_error_toast(plugin):
     html = plugin._DASHBOARD_HTML
     assert html.count("Couldn’t move that role. It’s back where it was.") >= 2  # move + inbox keep/dismiss reuse
     assert "write('/inbox/keep', { id: id })" in html
-    assert "write('/inbox/dismiss', { id: id })" in html
-    assert "}, 6000);" in html  # the dismiss write is deferred to the end of the window
+    assert "write('/inbox/dismiss', body)" in html
+    assert "disSchedule(d, 6000);" in html  # the dismiss write is deferred to the end of the window
 
 
 def test_inbox_empty_states_watch_not_run_vs_all_caught_up(plugin):
@@ -1696,3 +1697,158 @@ def test_a_source_the_operator_can_fix_is_a_today_row_with_details(plugin):
     jobs["watch_sources"] = {"jsearch": _OK}
     ctx.eval("JOBS = " + json.dumps(jobs) + "; renderToday();")
     assert ctx.eval("document.getElementById('today').hidden") is True  # nothing needs the operator
+
+
+# ── §14 dismiss reasons ───────────────────────────────────────────────────────
+_REASON_STUBS = """
+  var __timers = [], __now = 1000;
+  Date.now = function () { return __now; };
+  function setTimeout(fn, ms) { __timers.push({ fn: fn, ms: ms }); return __timers.length; }
+  function clearTimeout(h) { if (h) __timers[h - 1] = null; }
+  function __fire() { var due = __timers.slice(); __timers = []; due.forEach(function (t) { if (t && t.fn) t.fn(); }); }
+  function __live() { return __timers.filter(function (t) { return t && t.ms >= 1000; }); }
+  var __writes = [], __said = [];
+  write = function (p, b) { __writes.push([p, b]); return { then: function () { return this; }, catch: function () { return this; } }; };
+  render = function () {};
+  load = function () {};
+  announce = function (m) { __said.push(m); };
+"""
+_TWO = [
+    {"id": "in1", "title": "Staff Eng", "company": "C", "score": 100},
+    {"id": "in2", "title": "Platform Eng", "company": "D", "score": 90},
+]
+
+
+def _reason_ctx(plugin, inbox=None):
+    ctx = _view_ctx(plugin)
+    ctx.eval(_REASON_STUBS)
+    jobs = {"inbox": inbox or _TWO, "applications": [], "columns": COLUMNS}
+    ctx.eval("JOBS = " + json.dumps(jobs) + "; INBOX_HIDDEN = {}; DISMISS_TIMERS = {}; INBOX_SEL = {};")
+    return ctx
+
+
+def _writes(ctx):
+    return json.loads(ctx.eval("JSON.stringify(__writes)"))
+
+
+def test_the_dismiss_toast_offers_nine_reasons_and_one_key_adds_one(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']);")
+    more = _inner(ctx, "toast-more")
+    assert ctx.eval("document.getElementById('toast-text').textContent") == "Dismissed Staff Eng."
+    assert "Why? Optional." in more and more.count('class="pl-chip"') == 9
+    for n, chip in enumerate(
+        ["Wrong role", "Wrong level", "Wrong stack", "Location", "Pay too low", "Company", "Old or reposted",
+         "Already seen", "Other"], 1,
+    ):  # fmt: skip
+        assert f'<span class="pl-kbd">{n}</span></span>{chip}</button>' in more  # fixed order, fixed keys
+    assert ctx.eval("__said[0]") == "Dismissed Staff Eng. Press 1 to 9 to add a reason, or keep going."
+    ctx.eval("chooseReason(2);")  # the 3 key
+    assert ctx.eval("document.getElementById('toast-text').textContent") == "Dismissed Staff Eng. Noted: wrong stack."
+    assert ctx.eval("document.getElementById('toast-more').hidden") is True  # chips gone, Undo stays
+    assert ctx.eval("__said[__said.length - 1]") == "Noted: wrong stack."
+    assert _writes(ctx) == []  # still held
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1", "reason": "stack"}]]  # rides on the held write
+
+
+def test_ignoring_the_reasons_dismisses_exactly_as_before(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']);")
+    assert [t["ms"] for t in json.loads(ctx.eval("JSON.stringify(__live())"))] == [6000]
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1"}]]
+    assert ctx.eval("DIS") is None and ctx.eval("document.getElementById('toast-more').hidden") is True
+    for word in ("required", "missing", "skipped"):
+        assert word not in _inner(ctx, "toast-more").lower()
+
+
+def test_a_bulk_dismiss_takes_one_reason_for_all(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1', 'in2']);")
+    assert ctx.eval("document.getElementById('toast-text').textContent") == "Dismissed 2 roles."
+    assert "Why? One reason for all 2. Optional." in _inner(ctx, "toast-more")
+    ctx.eval("chooseReason(4);")
+    assert ctx.eval("document.getElementById('toast-text').textContent") == (
+        "Dismissed 2 roles. Noted for all 2: pay too low."
+    )
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [
+        ["/inbox/dismiss", {"id": "in1", "reason": "pay"}],
+        ["/inbox/dismiss", {"id": "in2", "reason": "pay"}],
+    ]
+
+
+def test_a_choice_never_restarts_the_window_and_a_late_one_gets_two_seconds(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); __now += 1000; chooseReason(0);")
+    assert [t["ms"] for t in json.loads(ctx.eval("JSON.stringify(__live())"))] == [6000]  # early: untouched
+    ctx.eval("inboxDismiss(['in2']); __now += 5000; chooseReason(1);")  # one second left
+    assert [t["ms"] for t in json.loads(ctx.eval("JSON.stringify(__live())"))] == [6000, 2000]
+
+
+def test_other_takes_an_optional_note(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); chooseReason(8);")
+    more = _inner(ctx, "toast-more")
+    assert "What was it? Optional." in more and 'placeholder="For example: contract only"' in more
+    ctx.eval("finishOther('  contract only ');")
+    assert ctx.eval("document.getElementById('toast-text').textContent") == (
+        "Dismissed Staff Eng. Noted: \u201ccontract only\u201d."
+    )
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1", "reason": "other", "note": "contract only"}]]
+    ctx.eval("inboxDismiss(['in2']); chooseReason(8); finishOther('');")
+    assert ctx.eval("document.getElementById('toast-text').textContent") == (
+        "Dismissed Platform Eng. Noted: something else."
+    )
+
+
+def test_undo_writes_nothing_and_drops_the_reason(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); chooseReason(3); document.getElementById('toast-undo').onclick();")
+    assert ctx.eval("!!INBOX_HIDDEN['in1']") is False and ctx.eval("DIS") is None
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [] and ctx.eval("__said[__said.length - 1]") == "Dismiss undone."
+
+
+def test_the_next_dismiss_takes_the_toast_and_the_earlier_one_is_written_as_it_stood(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); inboxDismiss(['in2']); chooseReason(6);")  # the key applies to in2
+    ctx.eval("__fire();")
+    assert sorted(_writes(ctx), key=lambda w: w[1]["id"]) == [
+        ["/inbox/dismiss", {"id": "in1"}],
+        ["/inbox/dismiss", {"id": "in2", "reason": "stale"}],
+    ]
+
+
+def test_the_window_waits_while_the_toast_is_hovered_or_focused(plugin):
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); __now += 4000; disPause(true);")
+    assert json.loads(ctx.eval("JSON.stringify(__live())")) == []  # nothing can fire while paused
+    ctx.eval("__now += 60000; disPause(false);")
+    assert [t["ms"] for t in json.loads(ctx.eval("JSON.stringify(__live())"))] == [2000]  # what was left
+    ctx.eval("__fire();")
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1"}]]
+
+
+def test_a_paused_dismissal_is_still_written_when_another_toast_takes_over(plugin):
+    """Pointer resting on the toast, D on the next row: the first dismissal must not be lost."""
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); __now += 1000; disPause(true);")  # hovering: in1's window waits
+    ctx.eval("inboxDismiss(['in2']);")  # the next dismissal takes the toast
+    ctx.eval("disPause(false); __fire();")  # the pointer leaves; both windows close
+    assert sorted(w[1]["id"] for w in _writes(ctx)) == ["in1", "in2"]
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); disPause(true); toast('Kept — in Saved.'); __fire();")  # any other toast
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1"}]]
+
+
+def test_the_shortcut_hint_names_the_reason_keys(plugin):
+    ctx = _view_ctx(plugin)
+    assert '<span class="pl-kbd">1–9</span> reason' in _render_inbox(
+        ctx, [_inbox_item("a", 100, "2026-10-30T08:00:00Z")]
+    )
+    html = plugin._DASHBOARD_HTML
+    assert "/^[1-9]$/.test(e.key) && DIS && !DIS.done" in html  # only while a dismiss toast offers reasons
+    assert 'id="toast-more"' in html and "That reason" not in html

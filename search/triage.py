@@ -23,13 +23,13 @@ LOG_CAP = 5000  # entries kept, oldest dropped first
 #: Why a role was dismissed. Codes are stored; labels are shown.
 REASONS = {
     "wrong_role": "Not the kind of role I want",
-    "level": "Wrong level",
+    "level": "Too junior or too senior",
     "stack": "Wrong tech stack",
     "location": "Location doesn't work",
     "pay": "Pay too low",
     "company": "Not this company",
     "recruiter": "Recruiter or reposted listing",
-    "stale": "Old or probably filled",
+    "stale": "Old, reposted, or a recruiter's listing",  # the view's key 7 covers all three
     "duplicate": "Already seen or applied",
     "other": "Something else",
 }
@@ -202,29 +202,48 @@ def report(log: list[dict]) -> dict:
 
 
 MIN_DECISIONS = 10  # fewer than this on a source or role says nothing yet
-LOW_KEEP = 0.15
+#: Sources that are the watched companies' own boards: tuned through the watchlist, not Job source.
+BOARD_SOURCES = ("ashby", "greenhouse", "lever", "smartrecruiters")
+
+
+def _low(row: dict, overall: float) -> bool:
+    """Is this keep rate low FOR THIS OPERATOR? Someone who keeps one role in ten overall is not
+    told that every source at 10% is failing: low means under half their own overall rate (and
+    under 5% whatever that is)."""
+    return row["total"] >= MIN_DECISIONS and row["keep_rate"] < max(0.05, overall / 2)
 
 
 def suggestions(rep: dict) -> list[str]:
-    """What the numbers suggest changing, in plain sentences. Suggestions only: nothing is changed."""
+    """What the numbers suggest changing, in plain sentences, each with what it would cost.
+    Suggestions only: nothing is changed."""
     out: list[str] = []
+    overall = rep["keep_rate"]
+    pct = f"{round(overall * 100)}%"
     for name, row in rep["by_source"].items():
-        if row["total"] >= MIN_DECISIONS and row["keep_rate"] < LOW_KEEP:
+        if not _low(row, overall):
+            continue
+        if name in BOARD_SOURCES:
             out.append(
-                f"{name}: you kept {row['kept']} of {row['total']}. Consider dropping it from Job source, "
-                "or raising the inbox bar."
+                f"Watched companies on {name}: you kept {row['kept']} of {row['total']} (you keep {pct} overall). "
+                "Worth a look at which of those companies are still on your watchlist."
+            )
+        else:
+            out.append(
+                f"{name}: you kept {row['kept']} of {row['total']} (you keep {pct} overall). Dropping it from "
+                f"Job source would lose those {row['kept']}."
             )
     for name, row in rep["by_role"].items():
-        if row["total"] >= MIN_DECISIONS and row["keep_rate"] < LOW_KEEP:
+        if _low(row, overall):
             out.append(
-                f'Target role "{name}": you kept {row["kept"]} of {row["total"]}. Consider removing it from '
-                "your target roles, or adding the titles you keep dismissing to the excluded titles."
+                f'Target role "{name}": you kept {row["kept"]} of {row["total"]} (you keep {pct} overall). '
+                "Consider removing it from your target roles, or adding the titles you keep dismissing to the "
+                "excluded titles."
             )
     low = rep["by_score"].get("65-79")
-    if low and low["total"] >= MIN_DECISIONS and low["keep_rate"] < LOW_KEEP:
+    if low and _low(low, overall):
         out.append(
-            f"Roles scoring 65-79: you kept {low['kept']} of {low['total']}. Raising the watch match threshold "
-            "to 80 would take these out of the inbox."
+            f"Roles scoring 65-79: you kept {low['kept']} of {low['total']}. Raising the watch match threshold to "
+            f"80 would take {low['total']} such roles out of the inbox, including the {low['kept']} you kept."
         )
     reasoned = rep["with_reason"]
     hints = {
@@ -233,12 +252,15 @@ def suggestions(rep: dict) -> list[str]:
         "level": 'Add the levels you don\'t want ("staff", "principal", "junior") to the excluded titles.',
         "recruiter": "These companies can be added to the recruiter list so their listings stay under the bar",
         "stack": "Add the stacks you don't work in to your profile's do-not-claim list, so they count against a role.",
-        "stale": "Lower the maximum posting age.",
+        "stale": "Lower the maximum posting age, and see which sources these came from",
         "duplicate": "The same role is arriving more than once: worth a look at how sources are deduplicated.",
     }
     for code, row in rep["reasons"].items():
         if reasoned and row["count"] >= 5 and row["count"] / reasoned >= 0.2 and code in hints:
             line = f"{REASONS[code]} was the reason {row['count']} times. {hints[code]}"
+            if code == "stale" and row["sources"]:
+                top = sorted(row["sources"].items(), key=lambda kv: -kv[1])[:3]
+                line += ": " + ", ".join(f"{name} {n}" for name, n in top) + "."
             if code == "recruiter" and row["companies"]:
                 top = sorted(row["companies"].items(), key=lambda kv: -kv[1])[:5]
                 line += ": " + ", ".join(name for name, _ in top) + "."
