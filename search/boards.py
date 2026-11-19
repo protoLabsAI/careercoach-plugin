@@ -512,8 +512,9 @@ def blocked_site(url: str) -> bool:
 
 def passes(job: dict, *, roles: str = "", exclude: str = "", locations: str = "", max_age_days: float = 0,
            now: datetime | None = None) -> bool:  # fmt: skip
-    """The whole filter: title, location, and age (``max_age_days`` 0 = any age; a posting with
-    no date passes the age check rather than vanishing)."""
+    """The whole filter: not on a blocked job site (``BLOCKED_SITES``), then title, location, and
+    age (``max_age_days`` 0 = any age; a posting with no date passes the age check rather than
+    vanishing)."""
     if blocked_site(job.get("url", "")):
         return False
     if not title_matches(job.get("title", ""), roles, exclude):
