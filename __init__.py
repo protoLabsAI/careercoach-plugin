@@ -112,7 +112,7 @@ MARKET_ROLE_CAP = 6  # a market search over the target roles runs one search per
 INBOX_LIST_CAP = 30  # enough to triage in one turn; the view shows the rest
 
 
-def _promote_inbox_item(item: dict) -> dict:
+def _promote_inbox_item(item: dict, via: str = "") -> dict:
     """Keep an inbox card: a `considering` pipeline row carrying its reason and posting evidence. An
     existing application is left exactly as it is. The card's score is a quick triage score
     (``search/fitscore.py``), not the rubric, so `fit_score` stays 0 (unscored) until the role is
@@ -130,6 +130,9 @@ def _promote_inbox_item(item: dict) -> dict:
         insert_only=True,
     )
     wl.mark_kept(item["id"])
+    from .search import triage
+
+    triage.record("keep", [item], via=via)
     return row
 
 
@@ -267,6 +270,7 @@ def _register_tracker_tools(registry, extended: bool) -> None:
         source: str = "",
         app_id: str = "",
         inbox_id: str = "",
+        reason: str = "",
     ) -> str:
         """Manage your application pipeline and the new-roles inbox. action: "track" (record or update a
         role — company, role, 0-100 fit_score, status considering/preparing/applied/interviewing/offer/
@@ -276,7 +280,11 @@ def _register_tracker_tools(registry, extended: bool) -> None:
         first); "show" (one inbox card in full — the whole posting text and where to apply; use it
         instead of fetching a himalayas.app link, which blocks automated reads); "keep" (add
         an inbox card to the pipeline) and "dismiss" (drop a card for good) — name the card by `inbox_id`,
-        or by `company` + `role`. Defaults to "track"."""
+        or by `company` + `role`. When the operator says why they are dismissing a role, pass it as
+        `reason`: wrong_role, level, stack, location, pay, company, recruiter, stale, duplicate or other
+        (with `notes` for their words); it is logged so the search can be tuned. "triage_report" (what
+        was kept and dismissed, the reasons, keep rates by source and target role, and what that
+        suggests changing). Defaults to "track"."""
         act = (action or "track").strip().lower()
         if act == "inbox":
             try:
@@ -309,19 +317,38 @@ def _register_tracker_tools(registry, extended: bool) -> None:
                 named = inbox_id or " / ".join(x for x in (company, role) if x) or "nothing"
                 return f'No inbox card matches {named}. Use action="inbox" to see what is waiting.'
             return _show_card(card)
+        if act == "triage_report":
+            from .search import triage
+
+            month = triage.report(triage.entries(days=30))
+            everything = triage.report(triage.entries())
+            out = triage.format_report(month, days=30)
+            if everything["decisions"] > month["decisions"]:
+                rate = round(everything["keep_rate"] * 100)
+                out += f"\n\nAll time: {everything['decisions']} decisions, {everything['kept']} kept ({rate}%)."
+            return out
         if act in ("keep", "dismiss"):
             try:
+                if act == "dismiss" and reason:
+                    from .search import triage
+
+                    try:
+                        triage.normalize_reason(reason)
+                    except ValueError as e:
+                        return f"{e}. Nothing was dismissed."
                 card = _inbox_card(inbox_id, company, role)
                 if card is None:
                     named = inbox_id or " / ".join(x for x in (company, role) if x) or "nothing"
                     return f'No inbox card matches {named}. Use action="inbox" to see what is waiting.'
                 label = f"{card.get('title', '')} @ {card.get('company', '')}"
                 if act == "dismiss":
-                    wl.dismiss([card["id"]])
+                    wl.dismiss([card["id"]], reason=reason, note=notes if reason else "", via="chat")
                     event = ("inbox_changed", {"action": "dismiss", "id": card["id"]})
                     reply = f"Dismissed {label}. It won't come back."
+                    if reason:
+                        reply += " Reason logged."
                 else:
-                    row = _promote_inbox_item(card)
+                    row = _promote_inbox_item(card, via="chat")
                     event = (
                         "application_tracked",
                         {
@@ -374,7 +401,10 @@ def _register_tracker_tools(registry, extended: bool) -> None:
             except Exception:  # noqa: BLE001 — the event bus is best-effort chrome
                 pass
             return f"Moved {row.get('role', '')} @ {row.get('company', '')} to {row.get('status', '?')}."
-        return f'Unknown action {action!r} — use "track", "list", "move", "inbox", "keep" or "dismiss".'
+        return (
+            f'Unknown action {action!r} — use "track", "list", "move", "inbox", "show", "keep", "dismiss" '
+            'or "triage_report".'
+        )
 
     registry.register_tool(careercoach_track)
     if extended:  # legacy names, reachable behind extended_tools — same implementations
@@ -3297,16 +3327,23 @@ def _register_views(registry, cfg) -> None:
         if item is None:
             return JSONResponse({"error": f"no inbox item {item_id!r}"}, status_code=404)
         try:
-            row = _promote_inbox_item(item)
+            row = _promote_inbox_item(item, via="view")
         except (state.StoreUnreadable, wl.StoreUnreadable) as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         _emit_tracked(row.get("company", ""), row.get("role", ""), row.get("status", ""))
         return JSONResponse({"ok": True, "application": row})
 
-    def _dismiss_inbox_item(item_id: str):
-        """Drop a watch-inbox item and remember the decision so it doesn't come back."""
+    def _dismiss_inbox_item(item_id: str, reason: str = "", note: str = ""):
+        """Drop a watch-inbox item and remember the decision so it doesn't come back. ``reason``
+        (a ``triage.REASONS`` code or label) is optional; an unknown one is a 400 and nothing is dismissed."""
+        from .search import triage
+
         try:
-            wl.dismiss([item_id])
+            triage.normalize_reason(reason)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        try:
+            wl.dismiss([item_id], reason=reason, note=note, via="view")
         except wl.StoreUnreadable as e:
             return JSONResponse({"error": str(e)}, status_code=409)
         return JSONResponse({"ok": True})
@@ -3323,7 +3360,36 @@ def _register_views(registry, cfg) -> None:
         item_id = payload.get("id")
         if not isinstance(item_id, str) or not item_id:
             return JSONResponse({"error": "id must be a non-empty string"}, status_code=400)
-        return _dismiss_inbox_item(item_id)
+        return _dismiss_inbox_item(item_id, str(payload.get("reason") or ""), str(payload.get("note") or ""))
+
+    @data.post("/inbox/dismiss-reason")
+    async def _dismiss_reason(payload: dict = Body(default={})):  # noqa: B008 — FastAPI body declaration
+        """Say why roles were dismissed, after the fact (body: ``{"ids": [...], "reason": code,
+        "note"?: text}``; ``id`` works for one). The view dismisses first and asks second, so the
+        reason lands on the dismissal already logged."""
+        from .search import triage
+
+        ids = payload.get("ids") or ([payload["id"]] if payload.get("id") else [])
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+            return JSONResponse({"error": "ids must be a non-empty list of strings"}, status_code=400)
+        try:
+            changed = triage.set_reason(ids, str(payload.get("reason") or ""), str(payload.get("note") or ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except wl.StoreUnreadable as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        return JSONResponse({"ok": True, "updated": changed})
+
+    @data.get("/triage")
+    async def _triage(days: int = 30):
+        """The triage log added up (``triage.report``), with the reason codes and their labels."""
+        from .search import triage
+
+        log = triage.entries(days=max(0, days))
+        rep = triage.report(log)
+        return JSONResponse(
+            {"days": days, "reasons": triage.REASONS, "report": rep, "suggestions": triage.suggestions(rep)}
+        )
 
     @data.post("/inbox/{item_id:path}/keep")
     async def _keep(item_id: str):

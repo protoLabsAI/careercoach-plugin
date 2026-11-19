@@ -24,6 +24,7 @@ careercoach-plugin/
 │  ├─ resolve.py            the company's own posting for a role a board or aggregator listed
 │  ├─ watchlist.py          the watchlist, the first-seen log, ghost-job flags
 │  ├─ sweep.py              the watch's market sweep: every role, every source, keyed sources in turn
+│  ├─ triage.py             the triage log: what was kept and dismissed, and why; the report on it
 │  ├─ scan.py               one watchlist scan, shared by the tool, the digest and the watch
 │  ├─ contacts.py           LinkedIn Connections import, referrals, follow-ups
 │  └─ hunt.py               the job-hunt tools

@@ -612,17 +612,27 @@ def take_inbox() -> list[dict]:
         return result
 
 
-def dismiss(ids) -> None:
-    """Remember ids and known content fingerprints, even after inbox eviction."""
+def dismiss(ids, reason: str = "", note: str = "", via: str = "") -> None:
+    """Remember ids and known content fingerprints, even after inbox eviction, and log each
+    dismissal in the triage log with the card as it stood and the operator's ``reason`` if given
+    (``triage.REASONS``). An id already dismissed is not logged twice."""
+    from . import triage
+
     ids = set(ids)
+    cards: list[dict] = []
     with _store._locked("inbox"):
         dismissed = _load(DISMISSED, {})
+        fresh = {jid for jid in ids if jid not in dismissed}
         for jid in ids:
             dismissed.setdefault(jid, [])
         for j in _load(INBOX, []):
             if j.get("id") in ids and j.get("hash") and j["hash"] not in dismissed[j["id"]]:
                 dismissed[j["id"]].append(j["hash"])
+            if j.get("id") in fresh:
+                cards.append(j)
         _save(DISMISSED, dismissed)
+    # outside the inbox lock: the log has its own, and it is bookkeeping, never a reason to fail
+    triage.record("dismiss", cards, reason, note, via)
 
 
 def mark_kept(id: str) -> None:
