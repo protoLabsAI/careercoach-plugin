@@ -137,7 +137,9 @@ note about what's missing.
 ## The employer's own board beats an aggregator
 
 Ashby, Greenhouse and Lever publish keyless, documented posting APIs with the date a role first went up,
-which is fresher than any relister and needs no scraping. LinkedIn and Indeed are never scraped.
+which is fresher than any relister and needs no scraping. SmartRecruiters publishes the same kind of keyless
+posting API. Workday careers sites are not read: their edge rate-limits this plugin's client from the first
+request, and the plugin doesn't disguise itself to get past that. LinkedIn and Indeed are never scraped.
 
 ## Two control surfaces
 

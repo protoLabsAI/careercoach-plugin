@@ -12,8 +12,25 @@ there is no scraping and no terms-of-service gray area:
 - Lever       ``api.lever.co/v0/postings/{slug}?mode=json`` → ``createdAt`` (epoch ms)
 
 None of them searches, so the whole board comes back and ``passes`` filters it here by title
-(the target roles), location (remote-US / named places) and age. Parsers + filters are pure and
-unit-tested; only ``fetch_board`` / ``probe`` touch the network (httpx, a host dependency).
+(the target roles), location (remote-US / named places) and age.
+
+Many large employers hire through SmartRecruiters instead. Its public API is keyless too, but it
+pages, it searches, and its list pages carry no description, so it is read differently:
+
+- SmartRecruiters ``api.smartrecruiters.com/v1/companies/{company}/postings`` (100 a page,
+               ``q=`` searches) → ``releasedDate``, structured city/region/country + a ``remote``
+               flag; the text is on ``.../postings/{id}``. An unknown company answers 200 with no
+               postings, never a 404.
+
+A 5,000-posting board must not be downloaded to find five engineers, so ``fetch_board`` takes the
+target roles as ``search``: SmartRecruiters runs one search per role (capped), and only postings
+whose title matches a role get the per-posting read for their description (capped too). The other
+three ignore it.
+
+Workday is not read: its careers-site JSON (``{tenant}.wdN.myworkdayjobs.com/wday/cxs/...``) is
+public, but its Cloudflare edge answers this Python client with HTTP 429 from the first request
+(2026-11-18) while curl reads the same URLs, and getting past that would mean disguising the client. Parsers + filters are pure and unit-tested; only ``fetch_board`` / ``probe`` touch the
+network (httpx, a host dependency).
 """
 
 from __future__ import annotations
@@ -23,12 +40,18 @@ import hashlib
 import re
 from datetime import UTC, datetime
 
-ATS = ("ashby", "greenhouse", "lever")
+ATS = ("ashby", "greenhouse", "lever", "smartrecruiters")
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
 GREENHOUSE_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
 LEVER_URL = "https://api.lever.co/v0/postings/{slug}?mode=json"
-HOSTS = ("api.ashbyhq.com", "boards-api.greenhouse.io", "api.lever.co")
+SMARTRECRUITERS_URL = "https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+SMARTRECRUITERS_JOB_URL = "https://jobs.smartrecruiters.com/{company}/{id}"
+HOSTS = ("api.ashbyhq.com", "boards-api.greenhouse.io", "api.lever.co", "api.smartrecruiters.com")
+
+MAX_POSTINGS = 200  # per search (or per board, unsearched) on SmartRecruiters
+MAX_DETAILS = 30  # per-posting reads per board fetch, title matches only
+SR_PAGE = 100
 
 
 def _strip_html(s: str) -> str:
@@ -102,7 +125,9 @@ def _job(*, company: str, ats: str, slug: str, job_id: str, title: str, location
         "snippet": description[:400],
         "description": description[:8000],
         "desc_len": len(description),
-        "hash": content_hash(title or "", description, location or ""),
+        # with no posting text the title and place don't tell two openings apart (a board whose list
+        # carries no descriptions sends many such), so the posting's own id stands in for the text
+        "hash": content_hash(title or "", description or f"[{ats}:{slug}:{job_id}]", location or ""),
         "source": ats,
     }
 
@@ -198,8 +223,80 @@ def parse_lever(payload: list, *, company: str, slug: str) -> list[dict]:
     return out
 
 
-PARSERS = {"ashby": parse_ashby, "greenhouse": parse_greenhouse, "lever": parse_lever}
-URLS = {"ashby": ASHBY_URL, "greenhouse": GREENHOUSE_URL, "lever": LEVER_URL}
+_SR_COUNTRY = {"us": "United States"}
+
+
+def _sr_description(detail: dict) -> str:
+    sections = ((detail or {}).get("jobAd") or {}).get("sections") or {}
+    # the role first; the company blurb every posting repeats goes last
+    order = ("jobDescription", "qualifications", "additionalInformation", "companyDescription")
+    return " ".join(_strip_html((sections.get(k) or {}).get("text") or "") for k in order).strip()
+
+
+def parse_smartrecruiters(payload: dict, *, company: str, slug: str, details: dict | None = None) -> list[dict]:
+    """One page (or several, concatenated into ``content``) of SmartRecruiters postings. The list
+    carries no description: ``details`` maps a posting id to its ``.../postings/{id}`` response,
+    and a posting without one keeps ``desc_len`` None (unknown, so no "short description" flag)."""
+    out = []
+    for j in (payload or {}).get("content") or []:
+        if not isinstance(j, dict) or not j.get("id"):
+            continue
+        detail = (details or {}).get(str(j["id"])) or {}
+        loc = j.get("location") or {}
+        code = (loc.get("country") or "").lower()
+        where = loc.get("fullLocation") or ", ".join(x for x in (loc.get("city"), loc.get("region"), code.upper()) if x)
+        where = re.sub(r"(?:,\s*){2,}", ", ", where).strip(", ")  # "Dublin, , Ireland" (no region)
+        if loc.get("remote") and "remote" not in where.lower():
+            where = f"Remote - {where}" if where else "Remote"
+        ident = (j.get("company") or {}).get("identifier") or slug
+        desc = _sr_description(detail)
+        job = _job(
+            company=(j.get("company") or {}).get("name") or company,
+            ats="smartrecruiters",
+            slug=slug,
+            job_id=str(j["id"]),
+            title=j.get("name") or "",
+            location=where,
+            remote=bool(loc.get("remote")),  # hybrid and on-site both read False, as on Ashby
+            url=detail.get("postingUrl") or SMARTRECRUITERS_JOB_URL.format(company=ident, id=j["id"]),
+            posted=_iso(j.get("releasedDate")),
+            description=desc,
+            department=(j.get("department") or {}).get("label") or (j.get("function") or {}).get("label") or "",
+            countries=[_SR_COUNTRY.get(code, code.upper())],
+        )  # fmt: skip
+        if not detail:
+            job["desc_len"] = None
+        out.append(job)
+    return out
+
+
+def board_from_url(text: str) -> tuple[str, str]:
+    """``(ats, slug)`` for a pasted careers-board URL on a supported ATS, else ``("", "")``."""
+    text = (text or "").strip()
+    patterns = (
+        ("smartrecruiters", r"(?:jobs|careers)\.smartrecruiters\.com/([A-Za-z0-9_-]+)"),
+        ("ashby", r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)"),
+        ("greenhouse", r"(?:job-)?boards\.greenhouse\.io/(?:embed/job_board\?for=)?([A-Za-z0-9_-]+)"),
+        ("lever", r"jobs\.lever\.co/([A-Za-z0-9_-]+)"),
+    )
+    for ats, pat in patterns:
+        if m := re.search(r"^(?:https?://)?" + pat, text, re.I):
+            return ats, m.group(1)
+    return "", ""
+
+
+PARSERS = {
+    "ashby": parse_ashby,
+    "greenhouse": parse_greenhouse,
+    "lever": parse_lever,
+    "smartrecruiters": parse_smartrecruiters,
+}
+URLS = {
+    "ashby": ASHBY_URL,
+    "greenhouse": GREENHOUSE_URL,
+    "lever": LEVER_URL,
+    "smartrecruiters": SMARTRECRUITERS_URL,
+}
 
 
 # ── filters ───────────────────────────────────────────────────────────────────
@@ -418,9 +515,94 @@ class BoardNotFound(LookupError):
     pass
 
 
-async def fetch_board(ats: str, slug: str, company: str = "", *, client=None) -> list[dict]:
+def search_terms(search) -> list[str]:
+    """``search`` as the searches to run: a comma/semicolon/newline list of roles ("AI Engineer,
+    Frontend Engineer") or a list of exact titles (a title may itself hold a comma)."""
+    if isinstance(search, str):
+        parts = re.split(r"[,;\n]", search)
+    else:
+        parts = list(search or [])
+    seen, out = set(), []
+    for p in (re.sub(r"\s+", " ", str(x)).strip() for x in parts):
+        if p and p.lower() not in seen:
+            seen.add(p.lower())
+            out.append(p)
+    return out
+
+
+def _detail_worthy(title: str, terms: list[str]) -> bool:
+    # every word of one search term in the title: the same test ``passes`` applies to target roles
+    return bool(terms) and title_matches(title, ", ".join(t.replace(",", " ") for t in terms))
+
+
+async def _pages(fetch_page, page: int, cap: int) -> list[dict]:
+    """Page until a short page, the reported total, or ``cap``. A failure past the first page keeps
+    what came back (a rate limit mid-board shouldn't cost the roles already read)."""
+    rows: list[dict] = []
+    offset = 0
+    while offset < cap:
+        try:
+            batch, total = await fetch_page(offset)
+        except Exception:
+            if not offset:
+                raise
+            break
+        rows += batch
+        offset += page
+        if len(batch) < page or (total and offset >= total):
+            break
+    return rows[:cap]
+
+
+async def _fetch_smartrecruiters(client, slug: str, company: str, terms: list[str]) -> list[dict]:
+    base = SMARTRECRUITERS_URL.format(slug=slug)
+
+    def pager(q: str):
+        async def page(offset: int):
+            params = {"limit": SR_PAGE, "offset": offset}
+            if q:
+                params["q"] = q
+            resp = await client.get(base, params=params)
+            if resp.status_code == 404:
+                raise BoardNotFound(f"no smartrecruiters board named {slug!r}")
+            resp.raise_for_status()
+            data = resp.json() or {}
+            return data.get("content") or [], data.get("totalFound") or 0
+
+        return page
+
+    rows: dict[str, dict] = {}
+    for q in terms or [""]:
+        for r in await _pages(pager(q), SR_PAGE, MAX_POSTINGS):
+            rows.setdefault(str(r.get("id")), r)
+    want = [i for i, r in rows.items() if _detail_worthy(r.get("name") or "", terms)][:MAX_DETAILS]
+
+    async def detail(pid: str):
+        try:
+            resp = await client.get(f"{base}/{pid}")
+            return pid, resp.json() if resp.status_code == 200 else None
+        except Exception:  # noqa: BLE001 — a posting without its text is still a posting
+            return pid, None
+
+    sem = asyncio.Semaphore(5)
+
+    async def bounded(pid: str):
+        async with sem:
+            return await detail(pid)
+
+    details = {pid: d for pid, d in await asyncio.gather(*(bounded(p) for p in want)) if d}
+    return parse_smartrecruiters({"content": list(rows.values())}, company=company, slug=slug, details=details)
+
+
+async def fetch_board(ats: str, slug: str, company: str = "", *, client=None, search="") -> list[dict]:
     """Every open role on one company's board, parsed. Raises ``BoardNotFound`` on a 404 (the
-    company isn't on that ATS, or the slug is wrong — Ashby slugs are case-sensitive)."""
+    company isn't on that ATS, or the slug is wrong — Ashby slugs are case-sensitive).
+
+    ``search`` (target roles as a comma list, or a list of exact titles) narrows the boards that
+    search — SmartRecruiters: one search per term, each capped at ``MAX_POSTINGS``, and
+    only title matches get their description read. Unsearched, it returns the first
+    ``MAX_POSTINGS`` postings without descriptions. Ashby / Greenhouse / Lever
+    always return the whole board."""
     import httpx
 
     if ats not in URLS:
@@ -428,6 +610,8 @@ async def fetch_board(ats: str, slug: str, company: str = "", *, client=None) ->
     own = client is None
     client = client or httpx.AsyncClient(timeout=25.0, follow_redirects=True)
     try:
+        if ats == "smartrecruiters":
+            return await _fetch_smartrecruiters(client, slug, company or slug, search_terms(search))
         resp = await client.get(URLS[ats].format(slug=slug))
         if resp.status_code == 404:
             raise BoardNotFound(f"no {ats} board named {slug!r}")
@@ -465,12 +649,16 @@ def slug_candidates(company: str) -> list[str]:
     return uniq
 
 
+NAMED = ("greenhouse", "smartrecruiters")  # boards whose postings say whose board it is
+
+
 def _board_name_ok(company: str, jobs: list[dict]) -> bool:
-    """Greenhouse names the company on every posting; a board found under a shortened slug must name
-    the company we asked for ("Mercury Systems" must not land on the Mercury fintech board)."""
+    """Greenhouse and SmartRecruiters name the company on every posting; a board found under a
+    shortened slug must name the company we asked for ("Mercury Systems" must not land on the
+    Mercury fintech board)."""
     from ..record.companies import company_key
 
-    names = {j.get("company", "") for j in jobs if j.get("ats") == "greenhouse"}
+    names = {j.get("company", "") for j in jobs if j.get("ats") in NAMED}
     if not names:
         return True  # Ashby / Lever don't say; trust the slug
     want = company_key(company)
@@ -516,12 +704,12 @@ async def probe(company: str, slug: str = "", *, client=None, sem=None) -> tuple
         if not jobs or any(h[0] == ats for h in hits):
             continue
         if not slug and s in loose:
-            # found under a SHORTENED name: Greenhouse says whose board it is — check; Ashby and
-            # Lever don't, so say it's unverified rather than trust it silently
+            # found under a SHORTENED name: Greenhouse and SmartRecruiters say whose board it is —
+            # check; Ashby and Lever don't, so say it's unverified rather than trust it silently
             if not _board_name_ok(company, jobs):
                 problems.append(f"{ats}/{s} is {jobs[0].get('company')!r}'s board, not {company!r}")
                 continue
-            if ats != "greenhouse":
+            if ats not in NAMED:
                 problems.append(f"{ats}/{s} matched by the short name {s!r} — confirm it's {company}'s board")
         hits.append((ats, s, len(jobs)))
     # an exact-name board beats a guessed one, whatever their size; then the board with most roles

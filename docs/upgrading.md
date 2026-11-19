@@ -3,6 +3,21 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.6
+
+- **SmartRecruiters boards can be watched.** Adding a company to the watchlist now also looks for it on
+  SmartRecruiters, where many large employers post (ServiceNow, Bosch, Experian, Western Digital). These
+  boards can hold thousands of roles, so a scan searches them once per target role and reads the full
+  text only for titles that match.
+- **Paste a board's URL to pin it.** `careercoach_watchlist(action="add", company="ServiceNow",
+  slug="https://jobs.smartrecruiters.com/ServiceNow")` works, as do Ashby, Greenhouse and Lever board
+  links. A SmartRecruiters name with no postings is refused, because SmartRecruiters answers a misspelled
+  company with an empty board instead of an error.
+- **A role found elsewhere uses your watchlist pin.** When a role from Himalayas, JSearch or a feed is
+  looked up on the company's own board, a company on your watchlist is read from the board you pinned.
+- **Workday is still not supported.** Its careers sites answer this plugin with "too many requests" from
+  the first request, so Workday companies need a web search, as before.
+
 ## 0.17.5
 
 - **Every chat knows which applications are in motion.** Applications at an interview or offer stage
