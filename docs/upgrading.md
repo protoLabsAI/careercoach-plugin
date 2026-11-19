@@ -18,9 +18,9 @@ Version notes that change behavior. Release notes for every version are on the
   them all first, takes the fifteen strongest (newest among equals), and settles at once any whose full
   posting already puts them under your bar, so they stop waiting in line.
 - **Each source report says what you can do.** `watch_sources` entries that didn't answer carry a
-  `kind`: `resting` (a quota or cooldown that ends by itself), `key` (the saved key is rejected),
-  `subscription` (the vendor account needs one) or `retry` (the watch asks again next pass). A source
-  held back by the monthly reserve now says so.
+  `kind`: `resting` (today's share of its requests is used; it is back tomorrow), `key` (the saved key
+  is rejected), `subscription` (the vendor account needs one) or `retry` (the watch asks again on a
+  later pass).
 
 ## 0.17.6
 

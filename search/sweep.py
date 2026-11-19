@@ -105,15 +105,15 @@ def _save_cursor(source: str, position: int) -> None:
 
 def _kind(reason: str) -> str:
     """What a keyed source's refusal means for the operator: ``subscription`` (the vendor account
-    needs one), ``key`` (the saved key is rejected), ``resting`` (a quota or cooldown that ends by
-    itself) or ``retry`` (anything else: the watch asks again next pass)."""
+    needs one), ``key`` (the saved key is rejected) or ``retry`` (anything else, a rate limit or a
+    cooldown included: the watch asks again on a later pass). ``resting`` is never decided here: it
+    means today's share of the allowance is used and the source is back tomorrow, which only the
+    allowance check knows."""
     text = (reason or "").lower()
     if "subscribed" in text or "subscription" in text:
         return "subscription"
     if "rejected the key" in text or "denied access" in text or "needs a job-source api key" in text:
         return "key"
-    if "rate limit" in text or "quota" in text or "cooling down" in text or "used up" in text:
-        return "resting"
     return "retry"
 
 
@@ -136,10 +136,9 @@ async def _keyed(
         if month["reserved"]:
             # the last fifth of the month's requests is the operator's: chat searches and the
             # daily report keep the source, the watch sweeps the keyless ones. Said once a month.
-            note[:] = [
-                "the rest of this month's requests are kept for your own searches and the daily report",
-                "resting",
-            ]
+            # No note: holding the month's last fifth back is the plan working, not a source that
+            # didn't answer, so no report mentions it (spec §13.1).
+            note[:] = []
             if wl.note_watch_reserved(source):
                 log.warning(
                     "[careercoach] watch: %s has used %d of this month's %d requests; the rest are reserved "
