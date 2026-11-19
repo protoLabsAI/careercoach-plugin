@@ -728,6 +728,7 @@ def _render_inbox(
     inbox,
     *,
     watch_last_run="2026-10-20T09:00:00Z",
+    watch_sources=None,
     last_visit_iso="2026-10-30T00:00:00Z",
     sort="newest",
     hide_ghost=False,
@@ -742,6 +743,7 @@ def _render_inbox(
         "inbox": inbox,
         "followup_days": 10,
         "watch_last_run": watch_last_run,
+        "watch_sources": watch_sources or {},
     }
     ctx.eval("LOADING = false; JOBS = " + json.dumps(jobs) + ";")
     ctx.eval("LAST_VISIT = new Date(%s).getTime();" % json.dumps(last_visit_iso))
@@ -1587,3 +1589,110 @@ def test_drag_defer_and_enddrag_flush_are_wired(plugin):
     assert html.count("colEl.getAttribute('data-col')); endDrag();") == 2  # both drop handlers
     # a drop uses the card's id even if state refreshed meanwhile
     assert "var id = DRAG_ID || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));" in html
+
+
+# ── §13 source status ─────────────────────────────────────────────────────────
+_REST = "today's share of the plan's requests is used; it resumes tomorrow"
+_OK = {"ok": True, "jobs": 40, "note": ""}
+
+
+def _src(note, kind=None, ok=False):
+    entry = {"ok": ok, "jobs": 0, "note": note}
+    if kind:
+        entry["kind"] = kind
+    return entry
+
+
+def test_nothing_new_renders_when_every_source_answered(plugin):
+    """§13: the line shows only when a source didn't answer. A quiet day is not news."""
+    ctx = _view_ctx(plugin)
+    one = [_inbox_item("a", 100, "2026-10-30T08:00:00Z")]
+    assert "srcline" not in _render_inbox(ctx, one, watch_sources={"himalayas": _OK, "jsearch": _OK})
+    assert "srcline" not in _render_inbox(ctx, one, watch_sources={})
+    # answered with no roles, and held back with no note: neither is shown (§13.1)
+    assert "srcline" not in _render_inbox(ctx, one, watch_sources={"hn": {"ok": True, "jobs": 0, "note": ""}})
+    assert "srcline" not in _render_inbox(ctx, one, watch_sources={"jsearch": _src("")})
+    # the watch has never run: §7's "looking" state stands alone
+    assert "srcline" not in _render_inbox(ctx, [], watch_last_run="", watch_sources={"jsearch": _src("timed out")})
+
+
+def test_the_inbox_line_uses_the_spec_copy_for_each_case(plugin):
+    ctx = _view_ctx(plugin)
+    one = [_inbox_item("a", 100, "2026-10-30T08:00:00Z")]
+    resting = _render_inbox(ctx, one, watch_sources={"jsearch": _src(_REST, "resting")})
+    assert "JSearch is resting until tomorrow. Today's share of its requests is used." in resting
+    assert "data-srcdet" not in resting  # a stock note adds nothing: no Details
+    timeout = _render_inbox(ctx, one, watch_sources={"jsearch": _src("timed out", "retry")})
+    assert "JSearch didn't answer in time. The watch asks again next pass." in timeout
+    other = _render_inbox(ctx, one, watch_sources={"jobicy": _src("didn't answer", "retry")})
+    assert "Jobicy didn't answer. The watch asks again next pass." in other
+    several = _render_inbox(
+        ctx,
+        one,
+        watch_sources={
+            "himalayas": _OK,
+            "jsearch": _src(_REST, "resting"),
+            "jobicy": _src("didn't answer", "retry"),
+            "remoteok": _src("timed out", "retry"),
+        },
+    )
+    assert (
+        "JSearch is resting until tomorrow. Jobicy and Remote OK didn't answer; the watch asks again next pass."
+        in several
+    )
+    assert 'data-srcdet="src-det"' in several and 'aria-expanded="false"' in several
+    assert "<b>Remote OK:</b> timed out" in several and "Himalayas" not in several
+    assert several.index("ibx-toolbar") < several.index("srcline") < several.index("ibx-groups")  # under the toolbar
+    for word in ("failed", "error", "broken", "problem"):
+        assert word not in several.lower()
+    assert several.startswith('<div class="ibx-toolbar">') and "Last pass" in several
+
+
+def test_the_line_shows_in_the_cleared_inbox_too(plugin):
+    ctx = _view_ctx(plugin)
+    cleared = _render_inbox(ctx, [], watch_sources={"jsearch": _src("timed out", "retry")})
+    assert "All caught up" in cleared and "JSearch didn't answer in time." in cleared
+
+
+def test_an_older_server_without_kind_is_read_by_the_notes_words(plugin):
+    ctx = _view_ctx(plugin)
+    one = [_inbox_item("a", 100, "2026-10-30T08:00:00Z")]
+    assert "is resting until tomorrow" in _render_inbox(ctx, one, watch_sources={"jsearch": _src(_REST)})
+    long_note = "RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe at …"
+    # subscription and key are the operator's to fix: they go to the Today band, never the Inbox line
+    assert "srcline" not in _render_inbox(ctx, one, watch_sources={"jsearch": _src(long_note)})
+    assert ctx.eval("srcKind(%s)" % json.dumps(_src(long_note))) == "sub"  # not "key", though the note says key
+    assert ctx.eval("srcKind(%s)" % json.dumps(_src("RapidAPI rejected the key (403 Forbidden)"))) == "key"
+    assert ctx.eval("srcKind(%s)" % json.dumps(_src("anything else"))) == "retry"
+
+
+def test_a_source_the_operator_can_fix_is_a_today_row_with_details(plugin):
+    """§13.5: a key that isn't accepted, or a missing subscription, shows on every tab."""
+    ctx = _view_ctx(plugin)
+    long_note = "RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe at <rapidapi>"
+    jobs = {
+        "applications": [],
+        "columns": COLUMNS,
+        "inbox": [_inbox_item("a", 100, "2026-10-30T08:00:00Z")],
+        "followup_days": 10,
+        "watch_last_run": "2026-10-20T09:00:00Z",
+        "watch_sources": {"jsearch": _src(long_note, "subscription"), "jobicy": _src("timed out", "retry")},
+    }
+    ctx.eval("LOADING = false; LAST_VISIT = Date.now(); JOBS = " + json.dumps(jobs) + "; renderToday();")
+    today = _inner(ctx, "today")
+    assert (
+        "JSearch needs a subscription on your RapidAPI account. Once it has one, the watch uses it on the next pass."
+        in today
+    )
+    assert (
+        'data-srcdet="today-src-jsearch"' in today and "&lt;rapidapi&gt;" in today
+    )  # the full note, escaped, behind Details
+    assert "Jobicy" not in today  # a timeout sorts itself out: Inbox line only
+    jobs["watch_sources"] = {"jsearch": _src("RapidAPI (JSearch) rejected the key.", "key")}
+    ctx.eval("JOBS = " + json.dumps(jobs) + "; renderToday();")
+    assert "JSearch isn't accepting the saved key. You can change it in Settings → Career Coach." in _inner(
+        ctx, "today"
+    )
+    jobs["watch_sources"] = {"jsearch": _OK}
+    ctx.eval("JOBS = " + json.dumps(jobs) + "; renderToday();")
+    assert ctx.eval("document.getElementById('today').hidden") is True  # nothing needs the operator
