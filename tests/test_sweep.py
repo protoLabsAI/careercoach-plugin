@@ -250,7 +250,7 @@ def test_the_pass_reports_each_source_and_why_one_did_not_answer(mods, monkeypat
     asyncio.run(mods.sweep.market_sweep({}, ROLES, ["himalayas", "jobicy", "jsearch"], "KEY", 30, health))
     assert health["himalayas"] == {"ok": True, "jobs": 5, "note": ""}
     assert health["jobicy"]["ok"] and health["jobicy"]["jobs"] == 1
-    assert health["jsearch"] == {"ok": False, "jobs": 0, "note": "timed out"}
+    assert health["jsearch"] == {"ok": False, "jobs": 0, "note": "timed out", "kind": "retry"}
     mods.watchlist.record_watch_run(health)
     assert mods.watchlist.watch_sources()["jsearch"]["note"] == "timed out"
     assert mods.watchlist.unanswered_sources() == ["JSearch: timed out"]
@@ -273,3 +273,30 @@ def test_a_spent_allowance_and_a_missing_key_are_not_failures_to_report(mods, mo
     assert mods.watchlist.unanswered_sources() == []
     mods.watchlist.record_watch_run()  # an older caller: no report, nothing claimed
     assert mods.watchlist.watch_sources() == {} and mods.watchlist.unanswered_sources() == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "kind"),
+    [
+        ("RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe at …", "subscription"),
+        ("RapidAPI (JSearch) rejected the key. Check Settings → Career Coach → Job-source API key", "key"),
+        ("OpenWeb Ninja (JSearch) denied access: Invalid key", "key"),
+        ("RapidAPI (JSearch) rate limit or monthly quota reached. Wait and retry, or check your plan.", "resting"),
+        ("RapidAPI (JSearch) is cooling down until 2026-11-19T01:00:00+00:00", "resting"),
+        ("RapidAPI (JSearch) returned HTTP 502", "retry"),
+        ("", "retry"),
+    ],
+)
+def test_a_refusal_says_what_the_operator_can_do(mods, reason, kind):
+    assert mods.sweep._kind(reason) == kind
+
+
+def test_the_report_carries_the_kind_for_a_view(mods, monkeypatch):
+    _net(monkeypatch, lambda r: httpx.Response(403, json={"message": "You are not subscribed to this API."}))
+    health: dict = {}
+    asyncio.run(mods.sweep.market_sweep({}, ROLES, ["jsearch", "himalayas"], "KEY", 30, health))
+    assert health["jsearch"]["kind"] == "subscription" and "kind" not in health["himalayas"]
+    monkeypatch.setattr(mods.watchlist, "jsearch_allowance", lambda: 0)
+    health = {}
+    asyncio.run(mods.sweep.market_sweep({}, ROLES, ["jsearch", "himalayas"], "KEY", 30, health))
+    assert health["jsearch"]["kind"] == "resting"

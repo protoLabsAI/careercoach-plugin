@@ -3,6 +3,17 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.7
+
+- **The watch queues the best new roles first.** A pass over every role and source finds far more new
+  postings than the fifteen it looks up and queues. It used to take the fifteen newest. It now scores
+  them all first, takes the fifteen strongest (newest among equals), and settles at once any whose full
+  posting already puts them under your bar, so they stop waiting in line.
+- **Each source report says what you can do.** `watch_sources` entries that didn't answer carry a
+  `kind`: `resting` (a quota or cooldown that ends by itself), `key` (the saved key is rejected),
+  `subscription` (the vendor account needs one) or `retry` (the watch asks again next pass). A source
+  held back by the monthly reserve now says so.
+
 ## 0.17.6
 
 - **SmartRecruiters boards can be watched.** Adding a company to the watchlist now also looks for it on
