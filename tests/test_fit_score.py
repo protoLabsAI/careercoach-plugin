@@ -130,6 +130,8 @@ def test_a_recruiter_is_known_by_its_own_words(fs, line):
         "Build AI solutions for our clients.",
         "Partner with our client success team.",
         "Our clients are banks and insurers.",
+        "You will understand our client needs and work with our client team.",
+        "Ship what our client wants, fast.",
     ):  # a company that HAS clients is not a recruiter
         direct = own + " " + desc.split(". ", 1)[1]
         score, why = fs.score({**_job("AI Engineer", direct), "company": "Acme"}, "AI Engineer", PROFILE)

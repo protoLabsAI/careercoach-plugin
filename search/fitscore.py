@@ -153,8 +153,7 @@ _REPOSTER = re.compile(
 # Only the recruiter's phrasing: an employer with customers also writes "for our clients" and
 # "our client success team", and those must not match.
 _FOR_A_CLIENT = re.compile(
-    r"\b(?:our|my)\s+client(?:'s)?\s+(?:is|has|seeks?|needs?|wants?|requires?|team|company)\b(?!\s+success)|"
-    r"\b(?:our|my)\s+client,\s+an?\b|\bon\s+behalf\s+of\s+(?:our|a|my)\s+client\b|"
+    r"\b(?:our|my)\s+client\s+(?:is|has|seeks)\b|\b(?:our|my)\s+client,\s+an?\b|\bon\s+behalf\s+of\s+(?:our|a|my)\s+client\b|"
     r"\bfor\s+one\s+of\s+our\s+clients\b|\bclient\s+of\s+ours\b|\bconfidential\s+(?:client|company|employer)\b",
     re.I,
 )
