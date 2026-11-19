@@ -203,7 +203,7 @@ def report(log: list[dict]) -> dict:
 
 MIN_DECISIONS = 10  # fewer than this on a source or role says nothing yet
 #: Sources that are the watched companies' own boards: tuned through the watchlist, not Job source.
-BOARD_SOURCES = ("ashby", "greenhouse", "lever", "smartrecruiters")
+BOARD_SOURCES = ("ashby", "greenhouse", "lever", "smartrecruiters", "dover")
 
 
 def _low(row: dict, overall: float) -> bool:

@@ -18,7 +18,7 @@ careercoach-plugin/
 │  ├─ grounding.py          tracing a draft's figures back to the record
 │  └─ companies.py          company and role normalization for every dedup
 ├─ search/                  finding roles
-│  ├─ boards.py             company job boards: Ashby, Greenhouse, Lever, SmartRecruiters
+│  ├─ boards.py             company job boards: Ashby, Greenhouse, Lever, SmartRecruiters, Dover
 │  ├─ jobsource.py          market search: Himalayas, Hacker News, JSearch, Remotive
 │  ├─ feeds.py              keyless feeds: Jobicy, We Work Remotely, Remote OK
 │  ├─ resolve.py            the company's own posting for a role a board or aggregator listed

@@ -105,7 +105,7 @@ def register_hunt_tools(registry, cfg, extended: bool):
     async def careercoach_watchlist(action: str = "list", company: str = "", slug: str = "", ats: str = "",
                                     notes: str = "") -> str:  # fmt: skip
         """Manage the companies whose job boards are scanned. action: "list"; "add" (one or a comma-separated list,
-        auto-found on Ashby/Greenhouse/Lever/SmartRecruiters, or pin one with `ats` + `slug`, or its board URL as
+        auto-found on Ashby/Greenhouse/Lever/SmartRecruiters/Dover, or pin one with `ats` + `slug`, or its board URL as
         `slug`); "remove". Workday and custom careers sites can't be scanned — use web search."""
         action = (action or "list").strip().lower()
         if action == "list":
@@ -178,7 +178,7 @@ def register_hunt_tools(registry, cfg, extended: bool):
             out.append("Check these:\n" + "\n".join(f"- {n}" for n in notes_out[:10]))
         if missed:
             out.append(
-                f"Not found on Ashby, Greenhouse, Lever or SmartRecruiters: {', '.join(missed)}. They may use "
+                f"Not found on Ashby, Greenhouse, Lever, SmartRecruiters or Dover: {', '.join(missed)}. They may use "
                 "Workday or their own site, or a different board name — find their careers page and pass `ats` + "
                 "`slug` if it's on one of the four."
             )

@@ -27,6 +27,13 @@ target roles as ``search``: SmartRecruiters runs one search per role (capped), a
 whose title matches a role get the per-posting read for their description (capped too). The other
 three ignore it.
 
+Startups often hire through Dover, which is keyless too and reads like SmartRecruiters:
+
+- Dover       ``app.dover.com/api/v1/careers-page-slug/{slug}`` gives the board's id and the
+               company's name; ``.../careers-page/{id}/jobs`` lists the roles (title, workplace
+               type, locations; no text); ``.../inbound/application-portal-job/{job id}`` has the
+               text, the pay when the company shares it, and ``created``. An unknown slug is a 404.
+
 Workday is not read: its careers-site JSON (``{tenant}.wdN.myworkdayjobs.com/wday/cxs/...``) is
 public, but its Cloudflare edge answers this Python client with HTTP 429 from the first request
 (2026-11-18) while curl reads the same URLs, and getting past that would mean disguising the client. Parsers + filters are pure and unit-tested; only ``fetch_board`` / ``probe`` touch the
@@ -40,14 +47,18 @@ import hashlib
 import re
 from datetime import UTC, datetime
 
-ATS = ("ashby", "greenhouse", "lever", "smartrecruiters")
+ATS = ("ashby", "greenhouse", "lever", "smartrecruiters", "dover")
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
 GREENHOUSE_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
 LEVER_URL = "https://api.lever.co/v0/postings/{slug}?mode=json"
 SMARTRECRUITERS_URL = "https://api.smartrecruiters.com/v1/companies/{slug}/postings"
 SMARTRECRUITERS_JOB_URL = "https://jobs.smartrecruiters.com/{company}/{id}"
-HOSTS = ("api.ashbyhq.com", "boards-api.greenhouse.io", "api.lever.co", "api.smartrecruiters.com")
+DOVER_SLUG_URL = "https://app.dover.com/api/v1/careers-page-slug/{slug}"
+DOVER_JOBS_URL = "https://app.dover.com/api/v1/careers-page/{board}/jobs"
+DOVER_DETAIL_URL = "https://app.dover.com/api/v1/inbound/application-portal-job/{id}"
+DOVER_JOB_URL = "https://jobs.dover.com/{slug}/{id}"
+HOSTS = ("api.ashbyhq.com", "boards-api.greenhouse.io", "api.lever.co", "api.smartrecruiters.com", "app.dover.com")
 
 MAX_POSTINGS = 200  # per search (or per board, unsearched) on SmartRecruiters
 MAX_DETAILS = 30  # per-posting reads per board fetch, title matches only
@@ -270,11 +281,77 @@ def parse_smartrecruiters(payload: dict, *, company: str, slug: str, details: di
     return out
 
 
+#: Dover region names that mean "no particular place": the role is open wherever the company hires.
+_DOVER_ANYWHERE = ("international", "worldwide", "global", "anywhere", "remote")
+_DOVER_PER = {"HOURLY": "hour", "DAILY": "day", "WEEKLY": "week", "MONTHLY": "month"}
+
+
+def _dover_comp(detail: dict) -> str:
+    """The pay a Dover posting shares: ``"USD 140,000–190,000"``, with the period when it isn't a
+    year. "" when the company doesn't share it or gives no range."""
+    c = (detail or {}).get("compensation") or (detail or {}).get("compensation_details") or {}
+    if not isinstance(c, dict) or c.get("open_to_sharing_comp") is False:
+        return ""
+    lo, hi = c.get("lower_bound"), c.get("upper_bound")
+    try:
+        lo, hi = int(float(lo)), int(float(hi))
+    except (TypeError, ValueError):
+        return ""
+    if lo <= 0 or hi <= 0:
+        return ""
+    out = f"{(c.get('currency_code') or 'USD').upper()} {lo:,}–{hi:,}"
+    per = _DOVER_PER.get(str(c.get("salary_range_type") or "").upper())
+    return f"{out} per {per}" if per else out
+
+
+def parse_dover(payload: dict, *, company: str, slug: str, details: dict | None = None) -> list[dict]:
+    """A Dover board's roles (``results``). The list has no text, date or pay: ``details`` maps a
+    job id to its application-portal response, and a role without one keeps ``desc_len`` None."""
+    out = []
+    for j in (payload or {}).get("results") or []:
+        if not isinstance(j, dict) or not j.get("id") or j.get("is_sample") or j.get("is_published") is False:
+            continue
+        detail = (details or {}).get(str(j["id"])) or {}
+        kind = str(j.get("workplace_type") or "").upper()
+        remote = True if kind == "REMOTE" else False if kind in ("HYBRID", "ONSITE", "IN_OFFICE") else None
+        names, countries = [], []
+        for loc in j.get("locations") or []:
+            name = str((loc or {}).get("name") or "").strip()
+            if not name or name.lower() in _DOVER_ANYWHERE:
+                continue  # "International": no place named, so the role isn't tied to one
+            names.append(name)
+            country = str(((loc or {}).get("location_option") or {}).get("country") or "").strip()
+            if country:
+                countries.append("United States" if country.upper() == "US" else country.upper())
+        where = " / ".join(dict.fromkeys(names))
+        if remote:
+            where = f"Remote ({where})" if where else "Remote"
+        job = _job(
+            company=detail.get("client_name") or company,
+            ats="dover",
+            slug=slug,
+            job_id=str(j["id"]),
+            title=j.get("title") or "",
+            location=where,
+            remote=remote,
+            url=DOVER_JOB_URL.format(slug=slug, id=j["id"]),
+            posted=_iso(detail.get("created")),
+            description=_strip_html(detail.get("user_provided_description") or ""),
+            comp=_dover_comp(detail),
+            countries=countries if names else [],
+        )  # fmt: skip
+        if not detail:
+            job["desc_len"] = None
+        out.append(job)
+    return out
+
+
 def board_from_url(text: str) -> tuple[str, str]:
     """``(ats, slug)`` for a pasted careers-board URL on a supported ATS, else ``("", "")``."""
     text = (text or "").strip()
     patterns = (
         ("smartrecruiters", r"(?:jobs|careers)\.smartrecruiters\.com/([A-Za-z0-9_-]+)"),
+        ("dover", r"(?:jobs\.dover\.com|app\.dover\.com/(?:jobs|apply))/([A-Za-z0-9_-]+)"),
         ("ashby", r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)"),
         ("greenhouse", r"(?:job-)?boards\.greenhouse\.io/(?:embed/job_board\?for=)?([A-Za-z0-9_-]+)"),
         ("lever", r"jobs\.lever\.co/([A-Za-z0-9_-]+)"),
@@ -290,12 +367,14 @@ PARSERS = {
     "greenhouse": parse_greenhouse,
     "lever": parse_lever,
     "smartrecruiters": parse_smartrecruiters,
+    "dover": parse_dover,
 }
 URLS = {
     "ashby": ASHBY_URL,
     "greenhouse": GREENHOUSE_URL,
     "lever": LEVER_URL,
     "smartrecruiters": SMARTRECRUITERS_URL,
+    "dover": DOVER_SLUG_URL,
 }
 
 
@@ -612,13 +691,52 @@ async def _fetch_smartrecruiters(client, slug: str, company: str, terms: list[st
     return parse_smartrecruiters({"content": list(rows.values())}, company=company, slug=slug, details=details)
 
 
+async def _fetch_dover(client, slug: str, company: str, terms: list[str]) -> list[dict]:
+    """A Dover board: the slug gives the board id and the company's own name, the id gives the
+    roles, and each role's text is a read of its own. Text is read for the roles whose title
+    matches a search term, or for all of them when nothing is searched (these boards are small)."""
+    resp = await client.get(DOVER_SLUG_URL.format(slug=slug))
+    if resp.status_code == 404:
+        raise BoardNotFound(f"no dover board named {slug!r}")
+    resp.raise_for_status()
+    board = resp.json() or {}
+    if not board.get("id"):
+        raise BoardNotFound(f"no dover board named {slug!r}")
+    slug = board.get("slug") or slug  # Dover answers any letter case; its own spelling makes the links
+    base = DOVER_JOBS_URL.format(board=board["id"])
+
+    async def page(offset: int):
+        r = await client.get(base, params={"limit": SR_PAGE, "offset": offset})
+        r.raise_for_status()
+        data = r.json() or {}
+        return data.get("results") or [], data.get("count") or 0
+
+    rows = await _pages(page, SR_PAGE, MAX_POSTINGS)
+    # only the roles that will be shown: a sample or unpublished row is dropped by the parser
+    live = [r for r in rows if r.get("id") and not r.get("is_sample") and r.get("is_published") is not False]
+    want = [str(r["id"]) for r in live if not terms or _detail_worthy(r.get("title") or "", terms)]
+    sem = asyncio.Semaphore(5)
+
+    async def detail(jid: str):
+        async with sem:
+            try:
+                r = await client.get(DOVER_DETAIL_URL.format(id=jid))
+                return jid, r.json() if r.status_code == 200 else None
+            except Exception:  # noqa: BLE001 — a role without its text is still a role
+                return jid, None
+
+    details = {jid: d for jid, d in await asyncio.gather(*(detail(i) for i in want[:MAX_DETAILS])) if d}
+    return parse_dover({"results": rows}, company=board.get("name") or company, slug=slug, details=details)
+
+
 async def fetch_board(ats: str, slug: str, company: str = "", *, client=None, search="") -> list[dict]:
     """Every open role on one company's board, parsed. Raises ``BoardNotFound`` on a 404 (the
     company isn't on that ATS, or the slug is wrong — Ashby slugs are case-sensitive).
 
     ``search`` (target roles as a comma list, or a list of exact titles) narrows the boards that
     search — SmartRecruiters: one search per term, each capped at ``MAX_POSTINGS``, and
-    only title matches get their description read. Unsearched, it returns the first
+    only title matches get their description read. Dover reads the whole (small) board and the
+    text of the title matches. Unsearched, it returns the first
     ``MAX_POSTINGS`` postings without descriptions. Ashby / Greenhouse / Lever
     always return the whole board."""
     import httpx
@@ -630,6 +748,8 @@ async def fetch_board(ats: str, slug: str, company: str = "", *, client=None, se
     try:
         if ats == "smartrecruiters":
             return await _fetch_smartrecruiters(client, slug, company or slug, search_terms(search))
+        if ats == "dover":
+            return await _fetch_dover(client, slug, company or slug, search_terms(search))
         resp = await client.get(URLS[ats].format(slug=slug))
         if resp.status_code == 404:
             raise BoardNotFound(f"no {ats} board named {slug!r}")
@@ -667,7 +787,7 @@ def slug_candidates(company: str) -> list[str]:
     return uniq
 
 
-NAMED = ("greenhouse", "smartrecruiters")  # boards whose postings say whose board it is
+NAMED = ("greenhouse", "smartrecruiters", "dover")  # boards whose postings say whose board it is
 
 
 def _board_name_ok(company: str, jobs: list[dict]) -> bool:
