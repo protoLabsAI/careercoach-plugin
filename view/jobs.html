@@ -204,7 +204,17 @@
            opacity: 0; pointer-events: none; transition: opacity .15s; max-width: 80%; }
   #toast.show { opacity: 1; pointer-events: auto; }
   #toast.pl-toast--error { border-color: var(--pl-color-status-error); }  /* §7 move/undo failure */
-  #toast #toast-text { min-width: 0; }
+  #toast #toast-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  #toast .toast-l1 { display: flex; align-items: flex-start; gap: 12px; }
+  /* §14 dismiss reasons: the toast grows a second part, under the text, while it offers reasons */
+  #toast.has-more { display: grid; gap: 8px; width: min(640px, calc(100% - 32px)); max-width: none; box-sizing: border-box; }
+  #toast .why { font-size: 12px; color: var(--pl-color-fg-muted); margin: 0; }
+  #toast .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  #toast .chips .rk { margin-right: 4px; }
+  #toast .other { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #toast .other label { font-size: 12px; color: var(--pl-color-fg-muted); flex-basis: 100%; }
+  #toast .other .fld { flex: 1; min-width: 10em; display: flex; }
+  @container cc (max-width: 599px) { #toast .chips .rk { display: none; } }
 
   #chooser { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
              background: var(--pl-color-overlay); }
@@ -308,8 +318,11 @@
   </aside>
 
   <div id="toast" class="pl-toast" role="status" aria-live="polite">
-    <span id="toast-text"></span>
-    <button class="pl-btn pl-btn--ghost pl-btn--sm" id="toast-undo" type="button" hidden>Undo</button>
+    <div class="toast-l1">
+      <span id="toast-text"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" id="toast-undo" type="button" hidden>Undo</button>
+    </div>
+    <div id="toast-more" hidden></div>
   </div>
   <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
@@ -443,6 +456,10 @@
     var undo = document.getElementById('toast-undo');
     if (txt) txt.textContent = msg; else t.textContent = msg;
     t.classList.toggle('pl-toast--error', !!opts.error);
+    // §14: a dismissal's toast carries its reasons; any other toast replaces them (the earlier
+    // dismissal keeps its own window and is written when it closes, with whatever reason it has)
+    DIS = opts.reasons || null;
+    drawReasons();
     if (undo) {
       if (opts.undo) {
         undo.hidden = false;
@@ -454,7 +471,151 @@
     }
     t.classList.add('show');
     clearTimeout(toast._t);
+    if (opts.reasons) return;  // closed by sendDismissal when the dismissal's own window closes
     toast._t = setTimeout(function () { t.classList.remove('show'); }, opts.undo ? 6000 : 4000);
+  }
+
+  // §14 Dismiss reasons. Fixed order, fixed keys (1–9): [code, chip, "Noted: …" phrase, full label].
+  var REASONS = [
+    ['wrong_role', 'Wrong role', 'wrong role', 'Not the kind of role I want'],
+    ['level', 'Wrong level', 'wrong level', 'Too junior or too senior'],
+    ['stack', 'Wrong stack', 'wrong stack', 'Wrong tech stack'],
+    ['location', 'Location', "location doesn't work", "Location doesn't work"],
+    ['pay', 'Pay too low', 'pay too low', 'Pay too low'],
+    ['company', 'Company', 'not this company', 'Not this company'],
+    ['stale', 'Old or reposted', 'old or reposted', "Old, reposted, or a recruiter's listing"],
+    ['duplicate', 'Already seen', 'already seen', 'Already seen or applied'],
+    ['other', 'Other', 'something else', 'Something else (optional note)']
+  ];
+  var DIS = null;  // the dismissal the toast is showing: {ids, title, reason, note, done, sent, deadline, timer, left}
+  function disBase(d) { return d.ids.length === 1 ? 'Dismissed ' + (d.title || 'role') + '.' : 'Dismissed ' + d.ids.length + ' roles.'; }
+  function disNoted(d) {
+    var r = REASONS.filter(function (x) { return x[0] === d.reason; })[0];
+    var phrase = d.reason === 'other' && d.note ? '\u201c' + d.note + '\u201d' : (r ? r[2] : '');
+    return d.ids.length === 1 ? ' Noted: ' + phrase + '.' : ' Noted for all ' + d.ids.length + ': ' + phrase + '.';
+  }
+  function drawReasons() {
+    var t = document.getElementById('toast'), more = document.getElementById('toast-more'), txt = document.getElementById('toast-text');
+    if (!t || !more) return;
+    wireToastOnce(t);
+    var d = DIS;
+    if (!d || d.done) {
+      more.hidden = true; more.innerHTML = '';
+      if (t.classList) t.classList.toggle('has-more', false);
+      if (d && txt) txt.textContent = disBase(d) + disNoted(d);
+      return;
+    }
+    more.hidden = false;
+    if (t.classList) t.classList.toggle('has-more', true);
+    if (txt) txt.textContent = disBase(d);
+    if (d.reason === 'other') {
+      more.innerHTML = '<div class="other"><label for="toast-note">What was it? Optional.</label>' +
+        '<span class="fld"><input class="pl-input" id="toast-note" maxlength="140" placeholder="For example: contract only"></span>' +
+        '<button class="pl-btn pl-btn--sm" type="button" id="toast-save">Save</button></div>';
+      var inp = document.getElementById('toast-note'), save = document.getElementById('toast-save');
+      if (save) save.onclick = function () { finishOther(inp ? inp.value : ''); };
+      if (inp) {
+        inp.onkeydown = function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); finishOther(inp.value); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishOther(''); }
+        };
+        if (inp.focus) inp.focus();
+      }
+      return;
+    }
+    more.innerHTML = '<p class="why" id="toast-why">' +
+      (d.ids.length === 1 ? 'Why? Optional.' : 'Why? One reason for all ' + d.ids.length + '. Optional.') + '</p>' +
+      '<div class="chips" role="group" aria-labelledby="toast-why">' + REASONS.map(function (r, i) {
+        return '<button class="pl-chip" type="button" data-r="' + i + '" title="' + esc(r[3]) + '">' +
+          '<span class="rk" aria-hidden="true"><span class="pl-kbd">' + (i + 1) + '</span></span>' + esc(r[1]) + '</button>';
+      }).join('') + '</div>';
+    if (more.querySelectorAll) {
+      more.querySelectorAll('[data-r]').forEach(function (b) { b.onclick = function () { chooseReason(+b.getAttribute('data-r')); }; });
+    }
+  }
+  // §14.4: the window is 6s from the dismiss; a choice never restarts it, a late one gets 2s.
+  function disSchedule(d, ms) {
+    clearTimeout(d.timer);
+    d.left = null;
+    d.deadline = Date.now() + ms;
+    d.timer = setTimeout(function () { sendDismissal(d); }, ms);
+  }
+  function disStretch(d) {
+    if (d.sent) return;
+    if (d.left != null) { if (d.left < 2000) d.left = 2000; return; }  // paused: applies when it resumes
+    if (d.deadline - Date.now() < 2000) disSchedule(d, 2000);
+  }
+  // §14.4 rule 3: the window waits while the pointer is over the toast or focus is inside it.
+  function disPause(on) {
+    var d = DIS;
+    if (!d || d.sent) return;
+    if (on && d.left == null) { clearTimeout(d.timer); d.left = Math.max(0, d.deadline - Date.now()); }
+    else if (!on && d.left != null) { disSchedule(d, d.left); }
+  }
+  // After a choice, focus is on the Inbox row it was on before: the row after the dismissed one.
+  function backToInbox() {
+    var b = document.getElementById('body'), want = DIS && DIS.back, f = null;
+    var rows = b && b.querySelectorAll ? b.querySelectorAll('.ibx-row') : [];
+    for (var i = 0; i < rows.length; i++) { if (want && rows[i].getAttribute('data-id') === want) { f = rows[i]; break; } }
+    f = f || rows[0];
+    if (f && f.focus) f.focus();
+  }
+  function wireToastOnce(t) {
+    if (!t || t.__wired || !t.addEventListener) return;
+    t.__wired = true;
+    function sync() {
+      setTimeout(function () {
+        var inside = (t.matches && t.matches(':hover')) || (t.contains && t.contains(document.activeElement));
+        disPause(!!inside);
+      }, 0);
+    }
+    ['mouseenter', 'mouseleave', 'focusin', 'focusout'].forEach(function (ev) { t.addEventListener(ev, sync); });
+    t.addEventListener('keydown', function (e) { if (e.key === 'Escape' && DIS) { e.preventDefault(); backToInbox(); } });
+  }
+  function chooseReason(i) {
+    var d = DIS, r = REASONS[i];
+    if (!d || !r || d.done) return;
+    d.reason = r[0];
+    disStretch(d);
+    if (d.reason === 'other') { drawReasons(); return; }
+    d.done = true;
+    drawReasons(); backToInbox();
+    announce('Noted: ' + r[2] + '.');
+  }
+  function finishOther(v) {
+    var d = DIS;
+    if (!d || d.done) return;
+    d.note = String(v || '').trim().slice(0, 140);
+    d.done = true;
+    disStretch(d);
+    drawReasons(); backToInbox();
+    announce('Noted: ' + (d.note || 'something else') + '.');
+  }
+  // §14.7: the reason rides on the held write. The toast closes with that write, so a reason is
+  // never chosen after it (the spec's after-the-fact request, /inbox/dismiss-reason, is not needed
+  // here: hovering or typing in the toast holds the window open instead).
+  function sendDismissal(d) {
+    if (d.sent) return;
+    d.sent = true;
+    clearTimeout(d.timer);
+    d.ids.forEach(function (id) {
+      delete DISMISS_TIMERS[id];
+      var body = { id: id };
+      if (d.reason) body.reason = d.reason;
+      if (d.note) body.note = d.note;
+      write('/inbox/dismiss', body)
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
+        .catch(function () {
+          delete INBOX_HIDDEN[id];
+          render();
+          toast('Couldn’t move that role. It’s back where it was.', { error: true });
+        });
+    });
+    if (DIS === d) {  // the window closed on the toast still showing: it goes, as today
+      var t = document.getElementById('toast');
+      if (t && t.classList) t.classList.remove('show');
+      DIS = null; drawReasons();
+    }
   }
 
   function findApp(id) {
@@ -985,7 +1146,7 @@
       (ghosts ? '<button class="pl-chip" type="button" id="ibx-ghost" aria-pressed="' + (HIDE_GHOST ? 'true' : 'false') + '">' +
         (HIDE_GHOST ? '✓ ' : '') + 'Hide likely ghost jobs · ' + ghosts + '</button>' : '') +
       '<span class="ibx-kbd sm"><span class="pl-kbd">↑↓</span> move <span class="pl-kbd">K</span> keep ' +
-      '<span class="pl-kbd">D</span> dismiss <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span>' +
+      '<span class="pl-kbd">D</span> dismiss <span class="pl-kbd">1–9</span> reason <span class="pl-kbd">O</span> posting <span class="pl-kbd">Enter</span> open</span>' +
       '</div>';
   }
   function inboxSelToolbar(n) {
@@ -1076,6 +1237,13 @@
         } else if (k === 'k') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxKeep([id]); }
         else if (k === 'd') { e.preventDefault(); INBOX_FOCUS = nextId(); inboxDismiss([id]); }
         else if (k === 'o') { e.preventDefault(); openPosting(id); }
+        else if (/^[1-9]$/.test(e.key) && DIS && !DIS.done) { e.preventDefault(); chooseReason(+e.key - 1); }  // §14.5
+        else if (k === 'r' && DIS && !DIS.done) {
+          e.preventDefault();
+          var chip = document.getElementById('toast-more');
+          chip = chip && chip.querySelector ? chip.querySelector('.pl-chip') : null;
+          if (chip && chip.focus) chip.focus();
+        }
         else if (e.key === 'Enter') { e.preventDefault(); openInboxDetail(id); }
         else if (e.key === ' ' || e.key === 'Spacebar' || k === 'x') { e.preventDefault(); inboxToggle(id); }
       };
@@ -1126,31 +1294,28 @@
   // A write that fails after the window rolls the row back and shows the §7 error toast.
   function inboxDismiss(ids) {
     if (!ids || !ids.length) return;
-    var copy = ids.slice();
+    var copy = ids.slice(), back = INBOX_FOCUS;  // render() moves focus there, then forgets it
     copy.forEach(function (id) { INBOX_HIDDEN[id] = 1; });
     INBOX_SEL = {};
     render();
     var one = copy.length === 1 ? findInbox(copy[0]) : null;
-    toast(copy.length === 1 ? 'Dismissed ' + ((one && one.title) || 'role') + '.' : 'Dismissed ' + copy.length + ' roles.', {
+    var d = { ids: copy, title: (one && one.title) || '', reason: null, note: '', done: false, sent: false, left: null, back: back };
+    toast(disBase(d), {
+      reasons: d,
       undo: function () {
-        copy.forEach(function (id) { clearTimeout(DISMISS_TIMERS[id]); delete DISMISS_TIMERS[id]; delete INBOX_HIDDEN[id]; });
+        d.sent = true;  // cancelled: nothing is written, and the reason goes with it
+        clearTimeout(d.timer);
+        copy.forEach(function (id) { delete DISMISS_TIMERS[id]; delete INBOX_HIDDEN[id]; });
+        if (DIS === d) { DIS = null; drawReasons(); }
         render();
         announce('Dismiss undone.');
       }
     });
-    announce('Dismissed.');
-    copy.forEach(function (id) {
-      DISMISS_TIMERS[id] = setTimeout(function () {
-        delete DISMISS_TIMERS[id];
-        write('/inbox/dismiss', { id: id })
-          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); load(); })
-          .catch(function () {
-            delete INBOX_HIDDEN[id];
-            render();
-            toast('Couldn’t move that role. It’s back where it was.', { error: true });
-          });
-      }, 6000);
-    });
+    announce(copy.length === 1
+      ? 'Dismissed ' + (d.title || 'role') + '. Press 1 to 9 to add a reason, or keep going.'
+      : 'Dismissed ' + copy.length + ' roles. Press 1 to 9 to add one reason for all, or keep going.');
+    disSchedule(d, 6000);
+    copy.forEach(function (id) { DISMISS_TIMERS[id] = d.timer; });
   }
   // The inbox drawer (§3): opened by a row click or Enter so a posting can be read before Keep.
   // Rendered straight from the inbox item already in hand (no fetch — it is not an application yet).

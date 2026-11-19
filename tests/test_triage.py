@@ -169,7 +169,9 @@ def test_the_dismiss_route_takes_a_reason_and_refuses_an_unknown_one(plugin, cli
     assert [c["id"] for c in wl.inbox_for_view()] and tr.entries() == []  # nothing dismissed
     assert tc.post("/api/plugins/careercoach/inbox/dismiss", json={"id": "a", "reason": "pay"}).json() == {"ok": True}
     assert tc.post("/api/plugins/careercoach/inbox/dismiss", json={"id": "b"}).status_code == 200  # reason optional
-    later = tc.post("/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": ["b"], "reason": "Wrong level"})
+    later = tc.post(
+        "/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": ["b"], "reason": "Too junior or too senior"}
+    )
     assert later.json() == {"ok": True, "updated": 1}
     assert (
         tc.post("/api/plugins/careercoach/inbox/dismiss-reason", json={"ids": [], "reason": "pay"}).status_code == 400

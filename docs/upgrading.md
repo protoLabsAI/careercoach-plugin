@@ -3,6 +3,14 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.12
+
+- **The Jobs view asks why, without slowing you down.** When you dismiss a role, the toast that carries
+  Undo also offers nine reasons. One tap or one number key (1 to 9) adds a reason; ignore it and the
+  dismissal goes through as before, logged with no reason. A multi-select dismiss takes one reason for
+  the whole selection. "Other" takes a short note. The 6-second Undo window is unchanged, and it waits
+  while the pointer or focus is on the toast.
+
 ## 0.17.11
 
 - **Every inbox decision is logged.** Each keep and each dismissal is recorded with the card as it was

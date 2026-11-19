@@ -23,13 +23,13 @@ LOG_CAP = 5000  # entries kept, oldest dropped first
 #: Why a role was dismissed. Codes are stored; labels are shown.
 REASONS = {
     "wrong_role": "Not the kind of role I want",
-    "level": "Wrong level",
+    "level": "Too junior or too senior",
     "stack": "Wrong tech stack",
     "location": "Location doesn't work",
     "pay": "Pay too low",
     "company": "Not this company",
     "recruiter": "Recruiter or reposted listing",
-    "stale": "Old or probably filled",
+    "stale": "Old, reposted, or a recruiter's listing",  # the view's key 7 covers all three
     "duplicate": "Already seen or applied",
     "other": "Something else",
 }
@@ -233,12 +233,15 @@ def suggestions(rep: dict) -> list[str]:
         "level": 'Add the levels you don\'t want ("staff", "principal", "junior") to the excluded titles.',
         "recruiter": "These companies can be added to the recruiter list so their listings stay under the bar",
         "stack": "Add the stacks you don't work in to your profile's do-not-claim list, so they count against a role.",
-        "stale": "Lower the maximum posting age.",
+        "stale": "Lower the maximum posting age, and see which sources these came from",
         "duplicate": "The same role is arriving more than once: worth a look at how sources are deduplicated.",
     }
     for code, row in rep["reasons"].items():
         if reasoned and row["count"] >= 5 and row["count"] / reasoned >= 0.2 and code in hints:
             line = f"{REASONS[code]} was the reason {row['count']} times. {hints[code]}"
+            if code == "stale" and row["sources"]:
+                top = sorted(row["sources"].items(), key=lambda kv: -kv[1])[:3]
+                line += ": " + ", ".join(f"{name} {n}" for name, n in top) + "."
             if code == "recruiter" and row["companies"]:
                 top = sorted(row["companies"].items(), key=lambda kv: -kv[1])[:5]
                 line += ": " + ", ".join(name for name, _ in top) + "."
