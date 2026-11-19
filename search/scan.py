@@ -82,7 +82,10 @@ async def scan_watchlist(
         async def _one(c: dict):
             async with sem:
                 try:
-                    return c, await boards.fetch_board(c["ats"], c["slug"], c["company"], client=client), ""
+                    # the roles double as the search on boards that search (Workday,
+                    # SmartRecruiters), so a 5,000-posting board isn't read whole
+                    jobs = await boards.fetch_board(c["ats"], c["slug"], c["company"], client=client, search=roles)
+                    return c, jobs, ""
                 except Exception as e:  # noqa: BLE001 — one dead board must not sink the scan
                     return c, [], f"{c['company']} ({c['ats']}/{c['slug']}): {e}"
 

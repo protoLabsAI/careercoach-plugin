@@ -17,8 +17,10 @@ min_protoagent_version: "0.231.0"
 # Declarative posture (ADR 0071) — company research still runs through the agent's own
 # web_search/fetch_url tools, but the live job sources (careercoach_search_jobs: JSearch on RapidAPI or OpenWeb Ninja, Himalayas,
 # the Hacker News Algolia API, Remotive on explicit request), the company job-board scan (the public
-# Ashby / Greenhouse / Lever posting APIs) and careercoach_prepare_application (a Greenhouse job's
-# public application schema) call out directly, so `network` lists exactly those hosts.
+# Ashby / Greenhouse / Lever / SmartRecruiters posting APIs and Workday careers-site JSON) and
+# careercoach_prepare_application (a Greenhouse job's public application schema) call out directly,
+# so `network` lists exactly those hosts. Workday serves each employer from its own subdomain
+# (nike.wd1.myworkdayjobs.com), so that one is listed as a suffix.
 capabilities:
   network:
     - "jsearch.p.rapidapi.com"
@@ -32,6 +34,8 @@ capabilities:
     - "boards-api.greenhouse.io"
     - "api.ashbyhq.com"
     - "api.lever.co"
+    - "api.smartrecruiters.com"
+    - "*.myworkdayjobs.com"
   # the operator profile + application tracker live under the instance root
   # (<instance_root>/careercoach); role-packet files go to the configured workspace
   # (packet_root; blank uses this agent's own folder inside its data directory).

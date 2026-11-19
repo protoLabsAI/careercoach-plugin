@@ -366,7 +366,7 @@ def test_lookup_outcomes_are_recorded_and_shown(resolve, mods, monkeypatch, trac
     tool, wl = track
     wl.add_to_inbox([on_board, no_board, _card("c", company="Elsewhere")])
     assert "board doesn't list this title" in tool.invoke({"action": "show", "inbox_id": "a"})
-    assert "has no Ashby/Greenhouse/Lever board" in tool.invoke({"action": "show", "inbox_id": "b"})
+    assert "has no Ashby/Greenhouse/Lever/SmartRecruiters board" in tool.invoke({"action": "show", "inbox_id": "b"})
     assert "wasn't looked up" in tool.invoke({"action": "show", "inbox_id": "c"})
 
 

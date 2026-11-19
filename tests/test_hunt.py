@@ -371,7 +371,7 @@ def test_watchlist_add_probes_every_ats(hunt_tools):
     out = _run(hunt_tools["careercoach_watchlist"], {"action": "add", "company": "Acme, Globex, Initech, Nowhere"})
     assert "Watching 3" in out and "acme — " not in out
     assert "Acme — ashby/acme" in out and "Globex — greenhouse/globex" in out and "Initech — lever/initech" in out
-    assert "Not found on Ashby, Greenhouse or Lever: Nowhere" in out
+    assert "Not found on Ashby, Greenhouse, Lever or SmartRecruiters: Nowhere" in out
     listed = _run(hunt_tools["careercoach_watchlist"], {})
     assert listed.startswith("3 watched companies")
 

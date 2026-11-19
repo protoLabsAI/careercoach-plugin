@@ -105,8 +105,9 @@ def register_hunt_tools(registry, cfg, extended: bool):
     async def careercoach_watchlist(action: str = "list", company: str = "", slug: str = "", ats: str = "",
                                     notes: str = "") -> str:  # fmt: skip
         """Manage the companies whose job boards are scanned. action: "list"; "add" (one or a comma-separated list,
-        auto-found on Ashby/Greenhouse/Lever, or pin one with `ats` + `slug`); "remove". Workday and custom careers
-        sites can't be scanned — use web search."""
+        auto-found on Ashby/Greenhouse/Lever/SmartRecruiters, or pin one with `ats` + `slug`); "remove". Workday boards
+        are never auto-found: pin one by passing its careers URL as `slug` (e.g. https://nike.wd1.myworkdayjobs.com/nke)
+        or ats="workday", slug="tenant/wdN/site". Custom careers sites can't be scanned — use web search."""
         action = (action or "list").strip().lower()
         if action == "list":
             rows = wl.load_watchlist()
@@ -130,14 +131,32 @@ def register_hunt_tools(registry, cfg, extended: bool):
         if not names:
             return "Name the company (or a comma-separated list) to add."
         if ats or slug:
+            ats, slug = ats.strip().lower(), slug.strip()
+            from_url = boards.board_from_url(slug)
+            if from_url[0] and (not ats or ats == from_url[0]):
+                ats, slug = from_url  # a pasted careers URL names its board
+            elif ats == "workday" and boards.workday_slug(slug):
+                slug = boards.workday_slug(slug)
             if len(names) != 1 or not (ats and slug):
-                return "To pin a board, pass exactly one company with both `ats` and `slug`."
+                return (
+                    "To pin a board, pass exactly one company with both `ats` and `slug` "
+                    "(or its careers URL as `slug`)."
+                )
             try:
-                n = len(await boards.fetch_board(ats.strip().lower(), slug.strip(), names[0]))
+                jobs = await boards.fetch_board(ats, slug, names[0])
             except Exception as e:  # noqa: BLE001
-                return f"Couldn't read the {ats}/{slug} board: {e}. Check the slug (Ashby slugs are case-sensitive)."
-            wl.add_company(names[0], ats.strip().lower(), slug.strip(), notes)
-            return f"Watching {names[0]} — {ats}/{slug}, {n} open role(s) right now."
+                hint = {
+                    "ashby": "Ashby slugs are case-sensitive",
+                    "workday": "a Workday slug is tenant/wdN/site, or paste the careers URL",
+                }.get(ats, "check the slug")
+                return f"Couldn't read the {ats}/{slug} board: {e}. ({hint}.)"
+            if not jobs and ats == "smartrecruiters":
+                # SmartRecruiters answers an unknown company with an empty board, not a 404
+                return f"The smartrecruiters/{slug} board has no postings — check the company identifier in its URL."
+            wl.add_company(names[0], ats, slug, notes)
+            n = len(jobs)
+            many = f"{n}+" if n >= boards.MAX_POSTINGS and ats in ("workday", "smartrecruiters") else str(n)
+            return f"Watching {names[0]} — {ats}/{slug}, {many} open role(s) right now."
         import asyncio
 
         import httpx
@@ -165,8 +184,9 @@ def register_hunt_tools(registry, cfg, extended: bool):
             out.append("Check these:\n" + "\n".join(f"- {n}" for n in notes_out[:10]))
         if missed:
             out.append(
-                f"Not found on Ashby, Greenhouse or Lever: {', '.join(missed)}. They may use Workday or their own "
-                "site, or a different board name — find their careers page and pass `ats` + `slug` if it's one of the three."
+                f"Not found on Ashby, Greenhouse, Lever or SmartRecruiters: {', '.join(missed)}. They may use "
+                "Workday (paste the careers URL as `slug`) or their own site, or a different board name — find "
+                "their careers page and pass `ats` + `slug` if it's on a supported board."
             )
         return "\n\n".join(out)
 

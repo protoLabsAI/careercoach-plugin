@@ -50,8 +50,8 @@ The coach loads these on demand. One is also a chat command.
 
 `careercoach_find_roles` has two sources:
 
-- **Your watchlist** (the default). It reads each watched company's own Ashby, Greenhouse or Lever board,
-  keyless, with the date each role first went up. It filters to your target roles, locations and maximum
+- **Your watchlist** (the default). It reads each watched company's own Ashby, Greenhouse, Lever,
+  SmartRecruiters or Workday board, keyless, with the date each role first went up. It filters to your target roles, locations and maximum
   age, and marks what's new, what you've already tracked, and likely ghost jobs (long open, reposted, or
   thin on detail).
 - **The market.** The keyless Himalayas remote board, this month's Hacker News "Who is hiring?", or JSearch

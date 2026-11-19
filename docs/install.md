@@ -73,7 +73,8 @@ if you'd rather not enable code execution.
 Set **Target roles** (comma-separated, each one an all-words title match), **Locations** (places plus
 `remote`, which means remote and open to the US, for example `remote, portland`), **Exclude titles with**
 and **Max posting age**. Then build a watchlist: "add Anthropic, OpenAI and Vercel to my watchlist". Each
-company is looked up on Ashby, Greenhouse and Lever.
+company is looked up on Ashby, Greenhouse, Lever and SmartRecruiters. A Workday company can't be found by
+name, so paste its careers page instead: "watch Nike at https://nike.wd1.myworkdayjobs.com/nke".
 
 ### Wider market search
 
