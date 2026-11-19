@@ -281,8 +281,11 @@ def test_a_spent_allowance_and_a_missing_key_are_not_failures_to_report(mods, mo
         ("RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe at …", "subscription"),
         ("RapidAPI (JSearch) rejected the key. Check Settings → Career Coach → Job-source API key", "key"),
         ("OpenWeb Ninja (JSearch) denied access: Invalid key", "key"),
-        ("RapidAPI (JSearch) rate limit or monthly quota reached. Wait and retry, or check your plan.", "resting"),
-        ("RapidAPI (JSearch) is cooling down until 2026-11-19T01:00:00+00:00", "resting"),
+        (
+            "RapidAPI (JSearch) rate limit or monthly quota reached. Wait and retry, or check your plan.",
+            "retry",
+        ),  # may outlast tomorrow
+        ("RapidAPI (JSearch) is cooling down until 2026-11-19T01:00:00+00:00", "retry"),  # may outlast tomorrow
         ("RapidAPI (JSearch) returned HTTP 502", "retry"),
         ("", "retry"),
     ],
@@ -300,3 +303,17 @@ def test_the_report_carries_the_kind_for_a_view(mods, monkeypatch):
     health = {}
     asyncio.run(mods.sweep.market_sweep({}, ROLES, ["jsearch", "himalayas"], "KEY", 30, health))
     assert health["jsearch"]["kind"] == "resting"
+
+
+def test_resting_means_back_tomorrow_and_the_monthly_reserve_is_not_reported(mods, monkeypatch):
+    """The view prints "resting until tomorrow" for kind resting, so only the daily share may use it."""
+    _net(monkeypatch)
+    usage = {"reserved": True, "spent": False, "used": 170, "limit": 200, "left": 30, "refill": "2026-12-01"}
+    monkeypatch.setattr(mods.watchlist, "month_usage", lambda *a, **k: usage)
+    monkeypatch.setattr(mods.watchlist, "note_watch_reserved", lambda source: False)
+    health: dict = {}
+    cfg = {"jobs_api_monthly_limit": 200}
+    asyncio.run(mods.sweep.market_sweep(cfg, ROLES, ["jsearch", "himalayas"], "KEY", 30, health))
+    assert health["jsearch"]["note"] == "" and "kind" not in health["jsearch"]
+    mods.watchlist.record_watch_run(health)
+    assert mods.watchlist.unanswered_sources() == []

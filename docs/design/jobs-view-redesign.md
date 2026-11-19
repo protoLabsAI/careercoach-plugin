@@ -131,6 +131,7 @@ Mark applied keeps its inline confirm (a `pl-dialog`, never `window.confirm`). T
 | **Undo a move** | The toast's Undo calls `POST /applications/{id}/undo-move`, never a second move: it restores the prior status (legacy included), `updated` and history, so the follow-up clock and "oldest move" sort are untouched. If it fails, reload the board and show the error toast "Couldn't undo that. The role stayed where you moved it." |
 | **Unknown legacy status** | An "Other" column appears at the end of the board only when such rows exist (current behaviour, kept). |
 | **Live refresh** (`careercoach.#` event) | Re-render in place. Keep scroll, open groups, focus and the open drawer. Never jump tabs. |
+| **A source didn't answer** | The Inbox status line or a Today band row, per §13. Nothing new when every source answered. |
 
 ## 8. Narrow widths and split-screen
 The layout reads the view root's width through a container query, not the viewport, so the rail panel and split-screen both work.
@@ -179,3 +180,83 @@ The layout reads the view root's width through a container query, not the viewpo
 - **Volumes:** 49 inbox (7 today, 21 this week, 12 older, 9 title didn't match, 1 ghost), 2 saved/preparing, 15 applied (3 flagged for follow-up), 1 interviewing, 86 closed (83 rejected, 3 passed). Fit shows on 4 roles only.
 - **Controls:** Scenario (Real volumes / Nothing needs you today / Brand-new agent), Width (wide / 720px split / 420px rail), Theme (console / light / dark).
 - The no-kit drawer also offers "I applied already: mark applied", so a role applied outside the coach can still move to Applied.
+
+## 13. Source status
+
+The watch searches several job sources each pass. When one doesn't answer, the view says so in one quiet line, and only then. When every source answered, nothing new renders.
+
+### 13.1 What the data covers
+
+- `watch_sources` holds one entry per **market** source the last pass asked: Himalayas, Hacker News, Jobicy, We Work Remotely, Remote OK, JSearch (or JSearch via OpenWeb Ninja), Remotive.
+- The company boards are not in it. This section says nothing about them.
+- A keyed source with no key saved is not in it, because that is the normal keyless setup. The view never mentions it.
+- An entry with `ok: true` is never shown, even when `jobs` is 0. A quiet day is not news.
+- An entry with `ok: false` and an empty `note` is never shown. Today that only happens when the month's last fifth of JSearch requests is held back for chat and the daily report, which is normal.
+
+### 13.2 Four kinds of "didn't answer"
+
+The view sorts each `ok: false` entry by its `note`. The first rule that matches wins. Matching is case-insensitive.
+
+| Kind | `note` matches | How it reads | Where it shows |
+|---|---|---|---|
+| **Resting** | `resumes tomorrow` or `share of the plan` | normal, nothing to do | Inbox status line |
+| **Needs a subscription** | `subscribed` or `subscription` | Josh can fix it (on RapidAPI) | Today band |
+| **Needs its key** | `key`, `401`, `403`, `unauthori`, `forbidden` | Josh can fix it (in Settings → Career Coach) | Today band |
+| **Asked again next pass** | anything else (`timed out`, `didn't answer`, any other text) | normal, the watch retries | Inbox status line |
+
+The "Needs a subscription" rule runs before "Needs its key" because the RapidAPI subscription note also contains the word "key".
+
+### 13.3 Display names
+
+Use the short label: Himalayas, Hacker News, Jobicy, We Work Remotely, Remote OK, JSearch, Remotive. `openwebninja` also shows as **JSearch**. An unknown key shows as itself.
+
+### 13.4 Where it goes
+
+1. **Inbox status line.** One muted line (`muted sm`, `--pl-color-fg-muted`) directly under the Inbox toolbar, above the first group. It sits on its own line at every width, so it never competes with Sort or the shortcut hint. It shows only when at least one source is Resting or Asked again next pass. On the Inbox empty state ("All caught up") the same line sits under the existing description.
+2. **Today band row.** Needs its key and Needs a subscription each add one row to the Today band (§2), after the other rows. The band shows on every tab, so Josh sees it from Pipeline. A source in the Today band is left out of the Inbox status line, so nothing is said twice.
+
+No icon colour, no warning or error tone, no badge, no banner. The Today row uses the same neutral `●` marker as the Interviewing row, with `aria-hidden="true"`.
+
+### 13.5 Exact copy
+
+`{ago}` is the relative time of `watch_last_run` ("2h ago", "yesterday"), written the same way as Inbox posted dates.
+
+| Case | What shows |
+|---|---|
+| **All answered** | Nothing new. The Inbox empty state keeps "Your watch last ran on {date}. New roles land here." |
+| **One source resting until tomorrow** | Inbox line: `Last pass {ago}: JSearch is resting until tomorrow. Today's share of its requests is used.` |
+| **One source timed out** | Inbox line: `Last pass {ago}: JSearch didn't answer in time. The watch asks again next pass.` |
+| **One source refusing the key** | Today row: `JSearch isn't accepting the saved key. You can change it in Settings → Career Coach.` Button: **Details**. |
+| **Account not subscribed (RapidAPI)** | Today row: `JSearch needs a subscription on your RapidAPI account. Once it has one, the watch uses it on the next pass.` Button: **Details**. |
+| **Several not answering** | Inbox line, Resting first, then the rest: `Last pass {ago}: JSearch is resting until tomorrow. Jobicy and Remote OK didn't answer; the watch asks again next pass.` Plus a **Details** link button at the end of the line. A refused key in the same pass still goes to the Today band. |
+
+Wording rules for the line:
+- Lists of names: `A`, `A and B`, `A, B and C`. Four or more: `A, B and 2 more`. Every name is in Details.
+- Plural verbs: "Jobicy and Remote OK **are** resting until tomorrow."
+- A single source that didn't answer in time says "didn't answer in time". A source with any other note says "didn't answer". For several, the line always says "didn't answer".
+- Never use "failed", "error", "broken" or "problem" in any of this copy.
+
+### 13.6 Truncation rule for long notes
+
+The line and the Today row never show a raw `note`. They always use the fixed copy above. The full `note` is only shown under **Details**.
+
+- **Details** is a `pl-btn--ghost pl-btn--sm` button with `aria-expanded`. It is present when the line or row carries a source whose note adds something: any note other than `timed out`, `didn't answer` or the resting sentence.
+- Pressing it shows one muted line per source under the line or row: `{Name}: {note}`, the note in full and wrapping. Pressing it again hides them.
+- Details stays open across a live refresh (§7) while the same sources are listed.
+
+### 13.7 Behaviour and accessibility
+
+- It renders from `/jobs` data only and re-renders on live refresh in place. It is not a live region and announces nothing, so a background pass never interrupts a screen reader.
+- If `watch_last_run` is empty (the watch hasn't run), nothing here shows. §7's "Your watch is looking" state stands.
+- Text carries the meaning; nothing relies on colour (1.4.1). Muted text uses `--pl-color-fg-muted` on `--pl-color-bg`, which the kit already clears for AA in light and dark.
+- Widths: the line is a block that wraps. At 600–899px and below 600px it wraps under the toolbar with no sideways scroll. The Today rows follow the band's existing cap (3 rows, or 2 below 600px, with "+N more").
+
+### 13.8 Preview
+
+`docs/design/jobs-source-status-preview.fragment.html` (an HTML fragment for `/_ds/plugin-kit.css`, invented data). Controls: Case (all six from §13.5), Inbox (with roles / cleared), Width (wide / 720px / 420px), Theme.
+
+### 13.9 Open decision for Josh
+
+The view finds the kind by matching words in `note`, because that is all PR #141 sends. That works for the notes we know. If the server later adds `"kind": "resting" | "key" | "subscription" | "retry"` to each entry, the view uses it and stops matching words. That change is small and optional; this spec works without it.
+
+Approved by the owner on 2026-11-18. §13.9 is settled: the server sends `kind` on each entry (v0.17.7), and the view reads the note's words only when `kind` is absent.

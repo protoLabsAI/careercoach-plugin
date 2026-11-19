@@ -1,0 +1,226 @@
+<!-- Career Coach Jobs view · source status (spec §13) — preview fragment. Needs /_ds/plugin-kit.css around it.
+     Invented data. Proposal only: nothing here is built. -->
+<style>
+  .pv { display: grid; gap: var(--pl-space-3); font-family: var(--pl-font-sans); }
+  .pv-bar { display: flex; flex-wrap: wrap; gap: var(--pl-space-3); align-items: center; font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); }
+  .pv-bar label { display: flex; gap: var(--pl-space-2); align-items: center; }
+  .pv-note { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); margin: 0; }
+  .cc { container: cc / inline-size; overflow: hidden; height: 560px; margin: 0 auto; width: 100%;
+        border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); background: var(--pl-color-bg);
+        display: flex; flex-direction: column; color: var(--pl-color-fg); }
+  .cc.mid { width: 720px; max-width: 100%; }
+  .cc.rail { width: 420px; max-width: 100%; }
+  .hd { display: flex; align-items: flex-start; gap: var(--pl-space-3); padding: var(--pl-space-4) var(--pl-space-4) var(--pl-space-2); }
+  .hd .t { font-size: var(--pl-font-size-xl); font-weight: var(--pl-font-weight-semibold); margin: 0; }
+  .hd .s { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); margin: 2px 0 0; }
+  .hd .sp { flex: 1; }
+  .today { margin: 0 var(--pl-space-4) var(--pl-space-2); padding: var(--pl-space-2) var(--pl-space-3);
+           border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); background: var(--pl-color-bg-raised); }
+  .today h3 { margin: 0 0 4px; font-size: var(--pl-font-size-2xs); text-transform: uppercase; letter-spacing: .06em; color: var(--pl-color-fg-muted); font-weight: var(--pl-font-weight-semibold); }
+  .trow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pl-space-2); padding: var(--pl-space-1) 0; font-size: var(--pl-font-size-sm); border-top: 1px solid var(--pl-color-border); }
+  .trow:first-of-type { border-top: 0; }
+  .trow .grow { flex: 1; min-width: 12em; }
+  .trow .warn { color: var(--pl-color-status-warning); }
+  .tabs { display: flex; gap: var(--pl-space-1); padding: 0 var(--pl-space-4); border-bottom: 1px solid var(--pl-color-border); }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--pl-color-fg-muted); font: inherit; font-size: var(--pl-font-size-sm);
+         padding: var(--pl-space-2) var(--pl-space-3); display: flex; gap: 6px; align-items: center; }
+  .tab[aria-selected="true"] { color: var(--pl-color-fg); border-bottom-color: var(--pl-color-accent); }
+  .cnt { font-size: var(--pl-font-size-2xs); padding: 0 6px; border-radius: var(--pl-radius-pill); background: var(--pl-color-bg-subtle); color: var(--pl-color-fg-muted); }
+  .body { flex: 1; min-height: 0; overflow: auto; padding: var(--pl-space-3) var(--pl-space-4) var(--pl-space-4); }
+  .muted { color: var(--pl-color-fg-muted); }
+  .sm { font-size: var(--pl-font-size-xs); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: var(--pl-space-2); align-items: center; font-size: var(--pl-font-size-xs); }
+  .kbd-hint { margin-left: auto; }
+  @container cc (max-width: 599px) { .kbd-hint { display: none; } .hd .s { display: none; } }
+  /* the new piece: one muted line under the toolbar */
+  .srcline { margin: var(--pl-space-2) 0 var(--pl-space-3); font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); line-height: var(--pl-font-line-height-body); }
+  .srcline .det-wrap { display: inline-block; margin-left: var(--pl-space-1); }
+  .srcdetail { margin: var(--pl-space-1) 0 0; padding: 0; list-style: none; font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); overflow-wrap: anywhere; }
+  .srcdetail li { padding: 2px 0; }
+  .srcdetail b { color: var(--pl-color-fg); font-weight: var(--pl-font-weight-medium); }
+  .trow .srcdetail { flex-basis: 100%; }
+  .srcgap { height: var(--pl-space-3); }
+  .grp { border: 1px solid var(--pl-color-border); border-radius: var(--pl-radius); margin-bottom: var(--pl-space-2); background: var(--pl-color-bg-raised); }
+  .grp > .gh { display: flex; gap: var(--pl-space-2); align-items: center; padding: var(--pl-space-2) var(--pl-space-3); font-size: var(--pl-font-size-sm); font-weight: var(--pl-font-weight-semibold); }
+  .row { padding: var(--pl-space-2) var(--pl-space-3); border-top: 1px solid var(--pl-color-border); }
+  .row .ti { font-size: var(--pl-font-size-sm); font-weight: var(--pl-font-weight-semibold); }
+  .row .meta { font-size: var(--pl-font-size-xs); color: var(--pl-color-fg-muted); }
+  .emptyc { text-align: center; padding: var(--pl-space-6) var(--pl-space-4); }
+  .emptyc .et { font-weight: var(--pl-font-weight-semibold); font-size: var(--pl-font-size-base); }
+  .emptyc .srcline { margin: var(--pl-space-2) auto 0; max-width: 46ch; }
+</style>
+
+<div class="pv">
+  <div class="pv-bar" role="group" aria-label="Preview controls">
+    <label>Case <select id="pv-case" class="pl-select">
+      <option value="all">All answered</option>
+      <option value="resting">One resting until tomorrow</option>
+      <option value="timeout">One timed out</option>
+      <option value="key">One refusing the key</option>
+      <option value="sub">Account not subscribed (long note)</option>
+      <option value="several" selected>Several not answering</option>
+    </select></label>
+    <label>Inbox <select id="pv-ibx" class="pl-select">
+      <option value="roles">With roles</option>
+      <option value="empty">Cleared</option>
+    </select></label>
+    <label>Width <select id="pv-w" class="pl-select">
+      <option value="">Wide</option>
+      <option value="mid">720px (split)</option>
+      <option value="rail">420px (rail)</option>
+    </select></label>
+    <label>Theme <select id="pv-th" class="pl-select">
+      <option value="">Console</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select></label>
+  </div>
+  <p class="pv-note">Proposal for spec §13. Only the line under the Inbox toolbar and the source row in Today are new; everything else is the shipped view, simplified.</p>
+
+  <div class="cc" id="cc">
+    <div class="hd">
+      <div>
+        <div class="pl-eyebrow">Career Coach</div>
+        <h1 class="t">Jobs</h1>
+        <p class="s">Targeting: Staff Engineer, Platform Engineer</p>
+      </div>
+      <span class="sp"></span>
+      <button class="pl-btn pl-btn--ghost pl-btn--sm" type="button">About you</button>
+    </div>
+    <section class="today pl-callout pl-callout--info" id="today" aria-label="Needs you today" hidden></section>
+    <div class="tabs" role="tablist" aria-label="Jobs">
+      <button class="tab" role="tab" aria-selected="false" type="button">Pipeline <span class="cnt">18</span></button>
+      <button class="tab" role="tab" aria-selected="true" type="button" id="ibx-tab">Inbox <span class="cnt" id="ibx-cnt">49</span></button>
+      <button class="tab" role="tab" aria-selected="false" type="button">Closed <span class="cnt">86</span></button>
+    </div>
+    <div class="body" id="body" role="tabpanel" aria-labelledby="ibx-tab"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var NAMES = { himalayas: 'Himalayas', hn: 'Hacker News', jobicy: 'Jobicy', weworkremotely: 'We Work Remotely',
+                remoteok: 'Remote OK', jsearch: 'JSearch', openwebninja: 'JSearch', remotive: 'Remotive' };
+  function base() {
+    return { himalayas: { ok: true, jobs: 299, note: '' }, hn: { ok: true, jobs: 41, note: '' },
+             jobicy: { ok: true, jobs: 12, note: '' }, weworkremotely: { ok: true, jobs: 37, note: '' },
+             remoteok: { ok: true, jobs: 64, note: '' }, jsearch: { ok: true, jobs: 18, note: '' } };
+  }
+  var REST = "today's share of the plan's requests is used; it resumes tomorrow";
+  var CASES = {
+    all: {},
+    resting: { jsearch: { ok: false, jobs: 0, note: REST } },
+    timeout: { jsearch: { ok: false, jobs: 0, note: 'timed out' } },
+    key: { jsearch: { ok: false, jobs: 0, note: 'RapidAPI rejected the key (403 Forbidden)' } },
+    sub: { jsearch: { ok: false, jobs: 0, note: "RapidAPI accepted the key, but its account isn't subscribed to JSearch. Subscribe to the JSearch API on RapidAPI (the free Basic plan is enough), then save the key again." } },
+    several: { jsearch: { ok: false, jobs: 0, note: REST }, jobicy: { ok: false, jobs: 0, note: "didn't answer" },
+               remoteok: { ok: false, jobs: 0, note: 'timed out' } }
+  };
+
+  // §13.2: first matching rule wins; subscription before key.
+  function kind(note) {
+    var n = String(note || '').toLowerCase();
+    if (/resumes tomorrow|share of the plan/.test(n)) return 'rest';
+    if (/subscribed|subscription/.test(n)) return 'sub';
+    if (/key|401|403|unauthori|forbidden/.test(n)) return 'key';
+    return 'retry';
+  }
+  // §13.6: a note "adds something" unless it is one of the stock ones.
+  function addsDetail(note) { return !/^(timed out|didn't answer)$/.test(note) && kind(note) !== 'rest'; }
+  function list(a) {
+    if (a.length > 3) return a.slice(0, 2).join(', ') + ' and ' + (a.length - 2) + ' more';
+    return a.length < 3 ? a.join(' and ') : a[0] + ', ' + a[1] + ' and ' + a[2];
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function detailList(items, id) {
+    return '<ul class="srcdetail" id="' + id + '" hidden>' + items.map(function (x) {
+      return '<li><b>' + esc(x.name) + ':</b> ' + esc(x.note) + '</li>'; }).join('') + '</ul>';
+  }
+  function detailBtn(id) {
+    return '<span class="det-wrap"><button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" aria-expanded="false" aria-controls="' + id + '" data-det="' + id + '">Details</button></span>';
+  }
+
+  function sources() {
+    var s = base(), c = CASES[$('pv-case').value], out = [];
+    Object.keys(c).forEach(function (k) { s[k] = c[k]; });
+    Object.keys(s).forEach(function (k) {
+      var r = s[k];
+      if (r.ok || !r.note) return;            // §13.1: answered, or held back on purpose
+      out.push({ key: k, name: NAMES[k] || k, note: r.note, kind: kind(r.note) });
+    });
+    return out;
+  }
+
+  // §13.5 Inbox status line: resting and retry kinds only.
+  function statusLine(src) {
+    var R = src.filter(function (x) { return x.kind === 'rest'; }),
+        T = src.filter(function (x) { return x.kind === 'retry'; });
+    if (!R.length && !T.length) return '';
+    var parts = [];
+    if (R.length) {
+      parts.push(list(R.map(function (x) { return x.name; })) + (R.length > 1 ? ' are' : ' is') + ' resting until tomorrow.' +
+        (R.length === 1 && !T.length ? " Today's share of its requests is used." : ''));
+    }
+    if (T.length === 1 && !R.length) {
+      parts.push(T[0].name + (T[0].note === 'timed out' ? " didn't answer in time." : " didn't answer.") + ' The watch asks again next pass.');
+    } else if (T.length) {
+      parts.push(list(T.map(function (x) { return x.name; })) + " didn't answer; the watch asks again next pass.");
+    }
+    var shown = R.concat(T), det = shown.length > 1 || shown.some(function (x) { return addsDetail(x.note); });
+    return '<div class="srcline">Last pass 2h ago: ' + esc(parts.join(' ')) +
+      (det ? detailBtn('src-det') + detailList(shown, 'src-det') : '') + '</div>';
+  }
+
+  // §13.5 Today rows: key and subscription kinds.
+  function todayRows(src) {
+    return src.filter(function (x) { return x.kind === 'key' || x.kind === 'sub'; }).map(function (x, i) {
+      var t = x.kind === 'key'
+        ? x.name + " isn't accepting the saved key. You can change it in Settings → Career Coach."
+        : x.name + ' needs a subscription on your RapidAPI account. Once it has one, the watch uses it on the next pass.';
+      var id = 'today-det-' + i;
+      return '<div class="trow"><span aria-hidden="true">●</span><span class="grow">' + esc(t) + '</span>' +
+        (addsDetail(x.note) ? detailBtn(id) + detailList([x], id) : '') + '</div>';
+    }).join('');
+  }
+
+  function render() {
+    var src = sources(), roles = $('pv-ibx').value === 'roles';
+    var cc = $('cc'); cc.className = 'cc' + ($('pv-w').value ? ' ' + $('pv-w').value : '');
+
+    var today = $('today'), rows = '';
+    if (roles) rows += '<div class="trow"><span class="warn" aria-hidden="true">⚠</span><span class="grow">3 applications have had no reply in 10+ days</span>' +
+      '<button class="pl-btn pl-btn--sm" type="button">Review</button></div>';
+    rows += todayRows(src);
+    today.hidden = !rows;
+    today.innerHTML = rows ? '<h3>Needs you today</h3>' + rows : '';
+
+    $('ibx-cnt').hidden = !roles;
+    var line = statusLine(src), b = $('body');
+    if (!roles) {
+      b.innerHTML = '<div class="emptyc pl-empty"><div class="et">All caught up</div>' +
+        '<p class="muted sm">Your watch last ran on 2026-11-18. New roles land here.</p>' + line + '</div>';
+    } else {
+      b.innerHTML = '<div class="toolbar"><label class="muted" for="pv-sort">Sort</label>' +
+        '<select id="pv-sort" class="pl-select"><option>Newest</option><option>Oldest</option></select>' +
+        '<span class="kbd-hint muted sm"><span class="pl-kbd">↑↓</span> move <span class="pl-kbd">K</span> keep <span class="pl-kbd">D</span> dismiss</span></div>' +
+        (line || '<div class="srcgap"></div>') +
+        '<div class="grp"><div class="gh">Today <span class="cnt">7</span></div>' +
+        '<div class="row"><div class="ti">Staff Platform Engineer</div><div class="meta">Northwind · 2h ago · Title matches <i>Platform Engineer</i></div></div>' +
+        '<div class="row"><div class="ti">Staff Engineer, Developer Tools</div><div class="meta">Lumen Labs · 5h ago · Title matches <i>Staff Engineer</i></div></div>' +
+        '</div><div class="grp"><div class="gh">This week <span class="cnt">21</span></div>' +
+        '<div class="row"><div class="ti">Senior Software Engineer, Infra</div><div class="meta">Corvid · 3d ago · Title partly matches <i>Platform Engineer</i></div></div></div>';
+    }
+    Array.prototype.forEach.call(cc.querySelectorAll('[data-det]'), function (btn) {
+      btn.onclick = function () {
+        var open = btn.getAttribute('aria-expanded') !== 'true';
+        btn.setAttribute('aria-expanded', String(open));
+        $(btn.getAttribute('data-det')).hidden = !open;
+      };
+    });
+  }
+  ['pv-case', 'pv-ibx', 'pv-w'].forEach(function (id) { $(id).onchange = render; });
+  $('pv-th').onchange = function () { var v = $('pv-th').value, r = document.documentElement; if (v) r.setAttribute('data-theme', v); else r.removeAttribute('data-theme'); };
+  render();
+})();
+</script>

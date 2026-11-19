@@ -69,6 +69,15 @@
   .emptyc { display: grid; place-items: center; text-align: center; gap: 10px; padding: 48px 24px; }
   .emptyc .empty-title { font-size: 15px; font-weight: 600; }
   .emptyc-desc { max-width: 380px; margin: 0; }
+  /* §13 source status: one muted line under the Inbox toolbar, and the notes behind Details */
+  .srcline { margin: 0 0 12px; font-size: 12px; color: var(--pl-color-fg-muted); line-height: 1.5; }
+  .srcline .det-wrap { display: inline-block; margin-left: 4px; }
+  .srcdetail { margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--pl-color-fg-muted); overflow-wrap: anywhere; }
+  .srcdetail li { padding: 2px 0; }
+  .srcdetail b { color: var(--pl-color-fg); font-weight: 500; }
+  .trow .srcdetail { flex-basis: 100%; }
+  .trow.has-detail { flex-wrap: wrap; }
+  .emptyc .srcline { margin: 0 auto; max-width: 46ch; }
   .sugs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 
   /* Inbox tab (§3): a toolbar, freshness accordions (reusing .grp) and listbox rows whose Keep /
@@ -383,6 +392,7 @@
   // (id -> 1), which freshness groups are open, rows removed optimistically (kept or dismissing,
   // id -> 1), the HELD dismiss timers (id -> handle; the write waits out the 6s Undo window), and
   // the row to focus after the next inbox re-render. All reset to their defaults here.
+  var SRC_OPEN = {};  // §13.6: which source Details are open, kept across a live refresh
   var INBOX_SORT = 'newest', HIDE_GHOST = false, INBOX_SEL = {},
       INBOX_OPEN = { today: true, week: true, older: false, miss: false },
       INBOX_HIDDEN = {}, DISMISS_TIMERS = {}, INBOX_FOCUS = null;
@@ -654,6 +664,13 @@
     if (nk.length) { items.push({ ic: '○', tone: 'info',
       t: nk.length + (nk.length === 1 ? ' saved role has' : ' saved or preparing roles have') + ' no apply kit yet',
       b: 'Build', go: function () { openDetail(nk[0].id); } }); }
+    srcItems().forEach(function (x) {
+      if (x.kind !== 'key' && x.kind !== 'sub') return;
+      items.push({ ic: '●', tone: 'info', src: x,
+        t: x.kind === 'key'
+          ? x.name + " isn't accepting the saved key. You can change it in Settings → Career Coach."
+          : x.name + ' needs a subscription on your RapidAPI account. Once it has one, the watch uses it on the next pass.' });
+    });
     return items;
   }
   function renderToday() {
@@ -670,12 +687,17 @@
       var mark = it.tone === 'warning'
         ? '<span class="tmark pl-chip pl-chip--warning" aria-hidden="true">' + it.ic + '</span>'
         : '<span class="tmark" aria-hidden="true">' + it.ic + '</span>';
+      if (it.src) {  // §13: a source row has Details (when its note adds something), never an action
+        return '<div class="trow pl-row has-detail">' + mark + '<span class="grow">' + esc(it.t) + '</span>' +
+          (srcAddsDetail(it.src) ? srcDetailHtml([it.src], 'today-src-' + it.src.key) : '') + '</div>';
+      }
       return '<div class="trow pl-row">' + mark + '<span class="grow">' + esc(it.t) + '</span>' +
         '<button class="pl-btn pl-btn--sm" data-t="' + i + '">' + esc(it.b) + '</button></div>';
     }).join('') + (more > 0 ? '<div class="trow pl-row"><span class="grow"></span>' +
       '<button class="pl-btn pl-btn--ghost pl-btn--sm" id="today-more">+' + more + ' more</button></div>' : '');
     el.querySelectorAll('[data-t]').forEach(function (btn) { btn.onclick = function () { shown[+btn.getAttribute('data-t')].go(); }; });
     var m = document.getElementById('today-more'); if (m) m.onclick = function () { TODAY_ALL = true; renderToday(); };
+    wireSrcDetails(el);
   }
   // WAI-ARIA tabs (§10): roving tabindex, arrow/Home/End keys, counts in the accessible name,
   // the count hidden at 0. During loading the strip shows with no counts.
@@ -788,6 +810,77 @@
   // A row is "new" when it was surfaced since the last visit — the same first_seen||posted clock the
   // Today band counts (§3). LAST_VISIT comes from localStorage, falling back to the last 24h (§11.1).
   function isNew(it) { var t = itemTime(it); return !!t && t > LAST_VISIT; }
+  // §13 Source status. The watch searches several market sources each pass; when one didn't
+  // answer, the view says so in one quiet line, and only then. Fixed copy, never the raw note.
+  var SRC_NAMES = { himalayas: 'Himalayas', hn: 'Hacker News', jobicy: 'Jobicy', weworkremotely: 'We Work Remotely',
+                    remoteok: 'Remote OK', jsearch: 'JSearch', openwebninja: 'JSearch', remotive: 'Remotive' };
+  // The server sends `kind`; an older server sends only the note, read by §13.2's rules
+  // (subscription before key: that note also says "key").
+  function srcKind(r) {
+    var k = { resting: 'rest', subscription: 'sub', key: 'key', retry: 'retry' }[r.kind];
+    if (k) return k;
+    var n = String(r.note || '').toLowerCase();
+    if (/resumes tomorrow|share of the plan/.test(n)) return 'rest';
+    if (/subscribed|subscription/.test(n)) return 'sub';
+    if (/key|401|403|unauthori|forbidden/.test(n)) return 'key';
+    return 'retry';
+  }
+  // §13.1: only a source that didn't answer AND says why. An answer with no roles is not news.
+  function srcItems() {
+    var s = JOBS.watch_sources || {}, out = [];
+    if (!JOBS.watch_last_run) return out;
+    Object.keys(s).forEach(function (k) {
+      var r = s[k];
+      if (!r || r.ok || !r.note) return;
+      out.push({ key: k, name: SRC_NAMES[k] || k, note: String(r.note), kind: srcKind(r) });
+    });
+    return out;
+  }
+  // §13.6: Details exists when a note adds something beyond the stock ones.
+  function srcAddsDetail(x) { return x.kind !== 'rest' && !/^(timed out|didn't answer)$/.test(x.note); }
+  function srcList(a) {
+    if (a.length > 3) return a.slice(0, 2).join(', ') + ' and ' + (a.length - 2) + ' more';
+    return a.length < 3 ? a.join(' and ') : a[0] + ', ' + a[1] + ' and ' + a[2];
+  }
+  function srcDetailHtml(items, id) {
+    var open = !!SRC_OPEN[id];
+    return '<span class="det-wrap"><button class="pl-btn pl-btn--ghost pl-btn--sm" type="button" aria-expanded="' +
+      (open ? 'true' : 'false') + '" aria-controls="' + id + '" data-srcdet="' + id + '">Details</button></span>' +
+      '<ul class="srcdetail" id="' + id + '"' + (open ? '' : ' hidden') + '>' + items.map(function (x) {
+        return '<li><b>' + esc(x.name) + ':</b> ' + esc(x.note) + '</li>'; }).join('') + '</ul>';
+  }
+  // §13.5 Inbox status line: the kinds that sort themselves out (resting, asked again next pass).
+  function srcStatusLine() {
+    var src = srcItems(),
+        R = src.filter(function (x) { return x.kind === 'rest'; }),
+        T = src.filter(function (x) { return x.kind === 'retry'; });
+    if (!R.length && !T.length) return '';
+    var parts = [];
+    if (R.length) {
+      parts.push(srcList(R.map(function (x) { return x.name; })) + (R.length > 1 ? ' are' : ' is') + ' resting until tomorrow.' +
+        (R.length === 1 && !T.length ? " Today's share of its requests is used." : ''));
+    }
+    if (T.length === 1 && !R.length) {
+      parts.push(T[0].name + (T[0].note === 'timed out' ? " didn't answer in time." : " didn't answer.") + ' The watch asks again next pass.');
+    } else if (T.length) {
+      parts.push(srcList(T.map(function (x) { return x.name; })) + " didn't answer; the watch asks again next pass.");
+    }
+    var shown = R.concat(T), det = shown.length > 1 || shown.some(srcAddsDetail);
+    var ago = relAge(JOBS.watch_last_run);
+    return '<div class="srcline">Last pass' + (ago ? ' ' + esc(ago) : '') + ': ' + esc(parts.join(' ')) +
+      (det ? srcDetailHtml(shown, 'src-det') : '') + '</div>';
+  }
+  function wireSrcDetails(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[data-srcdet]').forEach(function (btn) {
+      btn.onclick = function () {
+        var id = btn.getAttribute('data-srcdet');
+        SRC_OPEN[id] = !SRC_OPEN[id];
+        btn.setAttribute('aria-expanded', SRC_OPEN[id] ? 'true' : 'false');
+        var list = document.getElementById(id); if (list) list.hidden = !SRC_OPEN[id];
+      };
+    });
+  }
   // "2h ago" / "3d ago" from the posted (or first_seen) date — plain text, never a numeric score.
   function relAge(dateStr) {
     if (!dateStr) return '';
@@ -908,7 +1001,8 @@
     if (!ran) { title = 'Your watch is looking'; desc = 'New roles land here.'; }
     else { title = 'All caught up'; desc = 'Your watch last ran on ' + esc(String(ran).slice(0, 10)) + '. New roles land here.'; }
     b.innerHTML = '<div class="emptyc pl-empty"><div class="empty-title">' + title + '</div>' +
-      '<p class="muted sm emptyc-desc">' + desc + '</p></div>';
+      '<p class="muted sm emptyc-desc">' + desc + '</p>' + srcStatusLine() + '</div>';
+    wireSrcDetails(b);
   }
   function renderInbox(b) {
     var all = inboxVisible();
@@ -923,9 +1017,10 @@
       var gr = rows.filter(function (it) { return bucket(it) === g[0]; });
       return gr.length ? inboxGroupHtml(g, gr) : '';
     }).join('');
-    b.innerHTML = (n ? inboxSelToolbar(n) : inboxSortToolbar(ghosts)) +
+    b.innerHTML = (n ? inboxSelToolbar(n) : inboxSortToolbar(ghosts)) + srcStatusLine() +
       '<div class="' + (n ? 'ibx-multi' : '') + '" id="ibx-groups">' + groups + '</div>';
     wireInbox(b);
+    wireSrcDetails(b);
   }
   function wireInbox(b) {
     var sort = document.getElementById('ibx-sort');

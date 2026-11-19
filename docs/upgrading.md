@@ -3,6 +3,14 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.8
+
+- **The Jobs view says when a job source didn't answer.** When every source answered, nothing new
+  appears. A source that is resting until tomorrow or timed out gets one muted line under the Inbox
+  toolbar ("Last pass 2h ago: JSearch didn't answer in time. The watch asks again next pass."). A source
+  you can fix, a key that isn't accepted or an account that needs a subscription, adds one row to
+  "Needs you today". **Details** shows the source's own message.
+
 ## 0.17.7
 
 - **The watch queues the best new roles first.** A pass over every role and source finds far more new
@@ -10,9 +18,9 @@ Version notes that change behavior. Release notes for every version are on the
   them all first, takes the fifteen strongest (newest among equals), and settles at once any whose full
   posting already puts them under your bar, so they stop waiting in line.
 - **Each source report says what you can do.** `watch_sources` entries that didn't answer carry a
-  `kind`: `resting` (a quota or cooldown that ends by itself), `key` (the saved key is rejected),
-  `subscription` (the vendor account needs one) or `retry` (the watch asks again next pass). A source
-  held back by the monthly reserve now says so.
+  `kind`: `resting` (today's share of its requests is used; it is back tomorrow), `key` (the saved key
+  is rejected), `subscription` (the vendor account needs one) or `retry` (the watch asks again on a
+  later pass).
 
 ## 0.17.6
 
