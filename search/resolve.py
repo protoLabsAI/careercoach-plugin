@@ -80,6 +80,42 @@ def match_title(title: str, board_jobs: list[dict]) -> dict | None:
     return best_j if best >= 0.8 else None
 
 
+_STOP = frozenset(
+    "about above after again against being below between both could doing during each every from further "
+    "having here into itself more most other ours over same should some such than that their theirs them "
+    "then there these they this those through under until very were what when where which while will with "
+    "would your yours team teams work working role roles experience years company remote including "
+    "seeking looking join environment benefits competitive engineer engineering".split()
+)
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z][a-z0-9+#-]{4,}", (text or "").lower()) if w not in _STOP}
+
+
+def match_text(job: dict, board_jobs: list[dict]) -> dict | None:
+    """The board posting a REWRITTEN listing was made from. A reposting site changes the title
+    ("Frontend Engineer - KYC" becomes "Frontend Engineer - AI-Driven Web Apps (Remote)") and
+    paraphrases the text, so the title match fails; the distinctive words survive. Takes the
+    board posting that contains the largest share of the listing's content words, when that share
+    is at least 60% and clearly ahead of the runner-up (15 points). A listing with fewer than 12
+    content words is too thin to match on."""
+    want = _content_words(" ".join(str(job.get(k) or "") for k in ("snippet", "description")))
+    if len(want) < 12:
+        return None
+    scored = []
+    for b in board_jobs:
+        have = _content_words(f"{b.get('title', '')} {b.get('description', '')}")
+        if have:
+            scored.append((len(want & have) / len(want), b))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best, hit = scored[0]
+    second = scored[1][0] if len(scored) > 1 else 0.0
+    return hit if best >= 0.6 and best - second >= 0.15 else None
+
+
 def _transient(problem: str) -> bool:
     """A probe problem that may clear up (a 429, timeout, 5xx), as opposed to its deterministic
     rejections — a board that names another company, or one matched only by a short-name guess —
@@ -186,9 +222,20 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
         board_jobs = boards_for[key]
         for j in group:
             hit = match_title(j.get("title", ""), board_jobs) if board_jobs else None
+            if hit is None and board_jobs and j.get("via_blocked"):
+                # a reposting site rewrote the title: find the posting by its words, and give the
+                # role back the company's own title
+                hit = match_text(j, board_jobs)
+                if hit and hit.get("url") and hit.get("title"):
+                    j["listed_title"] = j.get("title") or ""
+                    j["title"] = hit["title"]
             j["ats_lookup"] = "found" if hit and hit.get("url") else ("no title" if board_jobs else "no board")
             if hit and hit.get("url"):
                 j["apply_url"] = hit["url"]
+                if j.get("via_blocked"):
+                    # nothing the reposter added is kept: its pay range is its own invention
+                    # (Binance's posting gave none; the listing said $90-150K)
+                    j.pop("comp", None)
                 if (hit.get("location") or "").strip():
                     # the company's own posting says where the job is; a board's "Remote (US)"
                     # for an on-site San Francisco role is the board's guess

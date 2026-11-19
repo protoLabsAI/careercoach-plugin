@@ -699,6 +699,35 @@ def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin,
     assert not {m["url"] for m in first} & {m["url"] for m in second}
 
 
+def test_a_blocked_sites_lead_is_shown_only_with_the_companys_own_posting(watch_env, mods, monkeypatch):
+    """The operator saved two JobLeads roles hoping the coach would find where to really apply."""
+    lead = lambda n: {"job_title": f"Design Engineer {n}", "employer_name": f"Leadco {n}", "job_is_remote": True,  # noqa: E731
+                      "job_country": "US", "job_description": LONG, "job_id": f"jl{n}",
+                      "job_apply_link": f"https://www.jobleads.com/us/job/{n}",
+                      "job_posted_at_datetime_utc": (NOW - timedelta(days=1)).isoformat()}  # fmt: skip
+    plugin, reg, cfg, calls = _with_jsearch(
+        watch_env, monkeypatch, lambda r: httpx.Response(200, json={"data": {"jobs": [lead(1), lead(2)]}})
+    )
+    resolve = importlib.import_module(plugin.__name__ + ".search.resolve")
+
+    async def found_one(batch, **kw):
+        for j in batch:
+            if j["company"] == "Leadco 1":
+                j.update(apply_url="https://jobs.ashbyhq.com/leadco/1", ats_lookup="found", title="Design Engineer")
+            elif j.get("via_blocked"):
+                j["ats_lookup"] = "no board"
+        return 1
+
+    monkeypatch.setattr(resolve, "resolve", found_one)
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    leads = [j for j in got if j["company"].startswith("Leadco")]
+    assert [(j["company"], j["apply_url"]) for j in leads] == [("Leadco 1", "https://jobs.ashbyhq.com/leadco/1")]
+    cards = [c for c in mods.watchlist.inbox_for_view() if c["company"].startswith("Leadco")]
+    assert len(cards) == 1 and "jobleads" not in json.dumps(cards)  # the reposter's link is nowhere
+    again = asyncio.run(plugin._watch_tick(reg, cfg, 0))
+    assert not [j for j in again if j["company"].startswith("Leadco")]  # the untraced lead doesn't come back
+
+
 def test_the_pass_queues_the_best_new_roles_not_just_the_newest(watch_env, mods, plugin, monkeypatch):
     """Twenty new roles, fifteen lookups a pass: the strong ones must not wait behind newer weak ones."""
     _, reg, cfg = watch_env

@@ -461,12 +461,19 @@ def test_a_blocked_job_site_is_never_the_link_and_never_the_only_source(js):
                               {"publisher": "Temporal", "apply_link": "https://temporal.io/careers/ai-engineer"}]}  # fmt: skip
     fine = {"job_title": "Design Engineer", "employer_name": "Acme", "job_apply_link": "https://acme.com/jobs/1"}
     google = {"job_title": "UI Engineer", "employer_name": "Globex", "job_google_link": "https://google.com/search?q=x"}
-    got = js.parse_jsearch({"data": [only, also, fine, google]})
-    assert [(j["company"], j["url"]) for j in got] == [
+    nameless = {"job_title": "Engineer", "job_apply_link": "https://www.jobleads.com/us/job/x"}
+    got = js.parse_jsearch({"data": [only, also, fine, google, nameless]})
+    lead, *rest = got
+    # only the blocked site carries it: kept as a lead to trace to the company, never with its link
+    assert lead["company"] == "Augment" and lead["via_blocked"] is True
+    assert "jobleads" not in lead["url"] and lead["url"].startswith("https://www.google.com/search?q=Augment+Frontend")
+    assert not boards.blocked_site(lead["url"])
+    assert [(j["company"], j["url"]) for j in rest] == [
         ("Temporal", "https://temporal.io/careers/ai-engineer"),  # another site carries it: that link is used
         ("Acme", "https://acme.com/jobs/1"),
         ("Globex", "https://google.com/search?q=x"),
-    ]
+    ]  # and a lead with no company named has nothing to trace: dropped
+    assert not any(j.get("via_blocked") for j in rest)
     assert boards.blocked_site("https://www.jobleads.com/x") and boards.blocked_site("jobleads.com/x")
     assert boards.blocked_site("https://us.jobleads.com/x") and not boards.blocked_site("https://notjobleads.com/x")
     assert not boards.blocked_site("") and not boards.blocked_site("https://acme.com/?ref=jobleads.com")
