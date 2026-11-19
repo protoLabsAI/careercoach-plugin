@@ -644,8 +644,9 @@ def _register_jobsearch_tool(registry, cfg, extended: bool):
         from .record import state
 
         # List what can reach the inbox, so the count the agent reports is the count the operator sees.
-        jobs = [j for j in result.jobs if boards.passes(j, locations=location)]
-        left_out = len(result.jobs) - len(jobs)
+        listed = [j for j in result.jobs if not boards.blocked_site(j.get("url", ""))]  # never shown, never counted
+        jobs = [j for j in listed if boards.passes(j, locations=location)]
+        left_out = len(listed) - len(jobs)
         if left_out:
             src += f" Left out {left_out} other(s) outside your locations."
         try:

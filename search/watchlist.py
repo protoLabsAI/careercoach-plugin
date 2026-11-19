@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ..record import profile as _store
 from ..record import state
-from .boards import age_days
+from .boards import age_days, blocked_site
 from ..record.companies import company_key, role_key
 
 StoreUnreadable = _store.StoreUnreadable
@@ -512,6 +512,9 @@ def add_to_inbox(jobs: list[dict]) -> int:
     with _store._locked("inbox"):
         box = _load(INBOX, [])
         dismissed = _load(DISMISSED, {})
+        # a blocked job site's cards go, including ones queued before the site was blocked
+        box = [j for j in box if not blocked_site(j.get("url", ""))]
+        jobs = [j for j in jobs if not blocked_site(j.get("url", ""))]
         have = {j.get("id") for j in box}
 
         def _role(j: dict) -> tuple[str, str]:

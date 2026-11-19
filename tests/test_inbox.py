@@ -78,6 +78,13 @@ def test_the_same_role_from_another_source_is_one_card(mods):
     assert {c["id"] for c in wl.inbox_for_view() if c["title"] == "Staff Frontend Engineer"} == {"gh2", "gh3"}
 
 
+def test_a_blocked_sites_cards_leave_the_inbox_and_cannot_return(mods):
+    wl = mods.watchlist
+    wl._save(wl.INBOX, [job("old", url="https://www.jobleads.com/us/job/old"), job("keep", hash="k")])  # queued earlier
+    wl.add_to_inbox([job("new", url="https://www.jobleads.com/us/job/new", hash="n"), job("ok", hash="o")])
+    assert {c["id"] for c in wl.inbox_for_view()} == {"keep", "ok"}
+
+
 def test_dismissal_survives_eviction_and_blocks_id_or_hash(mods, monkeypatch):
     wl = mods.watchlist
     wl.add_to_inbox([job(), job("alias", hash="hash-one"), job("hashless", hash="")])

@@ -449,6 +449,31 @@ def test_an_aggregators_page_title_is_trimmed_to_the_role(js):
     assert js.parse_jsearch({"data": [kept]})[0]["title"] == "Engineer, Job Matching at Scale"
 
 
+def test_a_blocked_job_site_is_never_the_link_and_never_the_only_source(js):
+    """JobLeads republishes postings under rewritten titles and sells the applicant a sign-up."""
+    boards = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".boards")
+    only = {"job_title": "Frontend Engineer", "employer_name": "Augment",
+            "job_apply_link": "https://www.jobleads.com/us/job/frontend-engineer",
+            "apply_options": [{"publisher": "JobLeads", "apply_link": "https://www.jobleads.com/us/job/frontend-engineer"}]}  # fmt: skip
+    also = {"job_title": "AI Engineer", "employer_name": "Temporal",
+            "job_apply_link": "https://www.jobleads.com/us/job/ai-engineer",
+            "apply_options": [{"publisher": "JobLeads", "apply_link": "https://www.jobleads.com/us/job/ai-engineer"},
+                              {"publisher": "Temporal", "apply_link": "https://temporal.io/careers/ai-engineer"}]}  # fmt: skip
+    fine = {"job_title": "Design Engineer", "employer_name": "Acme", "job_apply_link": "https://acme.com/jobs/1"}
+    google = {"job_title": "UI Engineer", "employer_name": "Globex", "job_google_link": "https://google.com/search?q=x"}
+    got = js.parse_jsearch({"data": [only, also, fine, google]})
+    assert [(j["company"], j["url"]) for j in got] == [
+        ("Temporal", "https://temporal.io/careers/ai-engineer"),  # another site carries it: that link is used
+        ("Acme", "https://acme.com/jobs/1"),
+        ("Globex", "https://google.com/search?q=x"),
+    ]
+    assert boards.blocked_site("https://www.jobleads.com/x") and boards.blocked_site("jobleads.com/x")
+    assert boards.blocked_site("https://us.jobleads.com/x") and not boards.blocked_site("https://notjobleads.com/x")
+    assert not boards.blocked_site("") and not boards.blocked_site("https://acme.com/?ref=jobleads.com")
+    assert boards.passes({"title": "AI Engineer", "url": "https://www.jobleads.com/us/job/1"}) is False
+    assert boards.passes({"title": "AI Engineer", "url": "https://acme.com/jobs/1"}) is True
+
+
 def test_a_remote_jsearch_role_passes_the_remote_us_filter(js):
     boards = importlib.import_module(js.__name__.rsplit(".", 1)[0] + ".boards")
     remote, onsite = js.parse_jsearch(_JSEARCH_V2)

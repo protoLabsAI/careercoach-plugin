@@ -89,8 +89,18 @@ def parse_jsearch(payload: dict) -> list[dict]:
     data = (payload or {}).get("data")
     if isinstance(data, dict):
         data = data.get("jobs")
+    from .boards import blocked_site
+
     out: list[dict] = []
     for j in data or []:
+        # Google for Jobs lists every site that carries a posting. Take the first that isn't a
+        # blocked one; a posting only a blocked site carries is not a posting the coach shows.
+        listed = [j.get("job_apply_link")] + [o.get("apply_link") for o in j.get("apply_options") or [] if o]
+        listed = [u for u in listed if u]
+        links = [u for u in listed if not blocked_site(u)]
+        if listed and not links:
+            continue
+        link = links[0] if links else (j.get("job_google_link") or "")
         loc = ", ".join(x for x in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if x)
         remote = bool(j.get("job_is_remote"))
         if remote:
@@ -103,7 +113,7 @@ def parse_jsearch(payload: dict) -> list[dict]:
             else (j.get("job_title") or ""),
             company=j.get("employer_name") or "",
             location=loc,
-            url=j.get("job_apply_link") or j.get("job_google_link") or "",
+            url=link,
             # v2 can send a null datetime with the epoch-seconds timestamp still set
             posted=j.get("job_posted_at_datetime_utc") or _iso_epoch(j.get("job_posted_at_timestamp")),
             snippet=(j.get("job_description") or "")[:400],
