@@ -512,6 +512,11 @@ def add_to_inbox(jobs: list[dict]) -> int:
     with _store._locked("inbox"):
         box = _load(INBOX, [])
         dismissed = _load(DISMISSED, {})
+        from .boards import blocked_site
+
+        # a blocked job site's cards go, including ones queued before the site was blocked
+        box = [j for j in box if not blocked_site(j.get("url", ""))]
+        jobs = [j for j in jobs if not blocked_site(j.get("url", ""))]
         have = {j.get("id") for j in box}
 
         def _role(j: dict) -> tuple[str, str]:

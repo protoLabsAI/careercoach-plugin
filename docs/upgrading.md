@@ -3,6 +3,13 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.9
+
+- **JobLeads is out of the search.** JobLeads republishes other companies' postings under rewritten
+  titles and routes applicants through its own paid sign-up. Its links are never used: a JSearch role
+  that another site also carries uses that site's link, and a role only JobLeads carries is dropped.
+  JobLeads cards already in the inbox are removed the next time the inbox is written.
+
 ## 0.17.8
 
 - **The Jobs view says when a job source didn't answer.** When every source answered, nothing new

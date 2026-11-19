@@ -495,10 +495,27 @@ def location_terms(locations: str) -> list[str]:
     return out
 
 
+#: Job sites whose listings are never shown. JobLeads republishes other companies' postings under
+#: rewritten titles and sends the applicant through its own paid sign-up; the operator called it
+#: out as a scam on 2026-11-18. A role reaches the coach only through a link that isn't one of these.
+BLOCKED_SITES = ("jobleads.com",)
+
+
+def blocked_site(url: str) -> bool:
+    """Is this link on a blocked job site (the domain itself or any subdomain of it)?"""
+    from urllib.parse import urlsplit
+
+    raw = (url or "").strip()
+    host = (urlsplit(raw if "://" in raw else "//" + raw).hostname or "").lower()
+    return any(host == site or host.endswith("." + site) for site in BLOCKED_SITES)
+
+
 def passes(job: dict, *, roles: str = "", exclude: str = "", locations: str = "", max_age_days: float = 0,
            now: datetime | None = None) -> bool:  # fmt: skip
     """The whole filter: title, location, and age (``max_age_days`` 0 = any age; a posting with
     no date passes the age check rather than vanishing)."""
+    if blocked_site(job.get("url", "")):
+        return False
     if not title_matches(job.get("title", ""), roles, exclude):
         return False
     if not location_matches(job, locations):
