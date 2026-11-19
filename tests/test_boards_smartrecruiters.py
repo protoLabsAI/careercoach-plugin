@@ -239,3 +239,16 @@ def test_the_manifest_lists_every_board_host(plugin, mods):
 
     manifest = yaml.safe_load((Path(plugin.__file__).parent / "protoagent.plugin.yaml").read_text())
     assert set(mods.boards.HOSTS) <= set(manifest["capabilities"]["network"])
+
+
+def test_two_openings_with_no_text_read_do_not_share_a_hash(plugin):
+    """A SmartRecruiters list carries no descriptions: same title, same place, different roles."""
+    import importlib
+
+    boards = importlib.import_module(plugin.__name__ + ".search.boards")
+    common = dict(company="ServiceNow", ats="smartrecruiters", slug="servicenow", title="Senior Software Engineer",
+                  location="Santa Clara, CA, US", remote=False, url="https://x", posted="", description="")  # fmt: skip
+    a, b = boards._job(job_id="1", **common), boards._job(job_id="2", **common)
+    assert a["hash"] != b["hash"]
+    same = dict(common, description="The same posting text. " * 20)
+    assert boards._job(job_id="1", **same)["hash"] == boards._job(job_id="2", **same)["hash"]  # a repost still matches

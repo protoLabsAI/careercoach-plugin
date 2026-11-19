@@ -125,7 +125,9 @@ def _job(*, company: str, ats: str, slug: str, job_id: str, title: str, location
         "snippet": description[:400],
         "description": description[:8000],
         "desc_len": len(description),
-        "hash": content_hash(title or "", description, location or ""),
+        # with no posting text the title and place don't tell two openings apart (a board whose list
+        # carries no descriptions sends many such), so the posting's own id stands in for the text
+        "hash": content_hash(title or "", description or f"[{ats}:{slug}:{job_id}]", location or ""),
         "source": ats,
     }
 
