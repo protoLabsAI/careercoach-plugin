@@ -104,14 +104,16 @@ def _save_cursor(source: str, position: int) -> None:
 
 
 async def _keyed(
-    source: str, queries: list[str], cfg: dict, api_key: str, max_age_days: float
+    source: str, queries: list[str], cfg: dict, api_key: str, max_age_days: float, note: list | None = None
 ) -> tuple[list, bool, bool]:
-    """Ask a keyed source the next few role groups. Returns ``(jobs, answered, refused)``."""
+    """Ask a keyed source the next few role groups. Returns ``(jobs, answered, refused)``;
+    ``note`` (a one-item list) receives why it didn't answer, in plain words."""
     from . import jobsource
     from . import watchlist as wl
 
     jobs: list[dict] = []
     answered = refused = False
+    note = note if note is not None else []
     start = _cursor(source) % len(queries)
     asked = timeouts = 0
     limit = wl.monthly_limit(cfg)
@@ -129,6 +131,7 @@ async def _keyed(
             break
         if wl.jsearch_allowance() == 0:
             log.info("[careercoach] watch: today's JSearch requests are spent; back tomorrow")
+            note[:] = ["today's share of the plan's requests is used; it resumes tomorrow"]
             break
         if asked:
             await asyncio.sleep(KEYED_SPACING_S)
@@ -141,6 +144,7 @@ async def _keyed(
             )  # fmt: skip
         except Exception as e:  # noqa: BLE001 — a setup error: nothing to retry this pass
             log.warning("[careercoach] watch: JSearch can't be asked (%s)", jobsource._failure(e))
+            note[:] = [jobsource._failure(e)]
             refused = True
             break
         if got.fallback_reason and not got.transient:
@@ -151,12 +155,14 @@ async def _keyed(
                 "[careercoach] watch: JSearch isn't answering (%s); this pass uses the other sources only.",
                 got.fallback_reason,
             )
+            note[:] = [got.fallback_reason]
             refused = True
             break
         asked += 1
         if got.fallback_reason:  # a timeout or a dropped connection: this query's loss, not the pass's
             wl.note_jsearch_call({})  # the request was sent: count it, the vendor may have
             timeouts += 1
+            note[:] = ["timed out"]
             log.info("[careercoach] watch: JSearch timed out on %r (%s)", query, got.fallback_reason)
             if timeouts >= TRANSIENT_LIMIT:
                 log.warning("[careercoach] watch: JSearch timed out %d times in a row; back next pass", timeouts)
@@ -164,6 +170,7 @@ async def _keyed(
             continue
         timeouts = 0
         answered = True
+        note[:] = []
         wl.note_jsearch_call(got.quota)
         jobs += [{**j, "source": source} for j in got.jobs]
     _save_cursor(source, (start + asked) % len(queries))
@@ -197,12 +204,13 @@ async def _keyless(source: str, queries: list[str], cfg: dict, max_age_days: flo
 
 
 async def market_sweep(
-    cfg: dict, roles: str, sources: list[str], api_key: str, max_age_days: float
+    cfg: dict, roles: str, sources: list[str], api_key: str, max_age_days: float, health: dict | None = None
 ) -> tuple[list, bool]:
     """Every configured market source, for every target role. Returns ``(jobs, answered)``:
     the raw postings (each stamped with the ``source`` that listed it; the caller filters and
     dedupes) and whether any source answered at all. When only keyed sources are configured and
-    one doesn't answer, Himalayas is swept in its place. Never raises."""
+    one doesn't answer, Himalayas is swept in its place. ``health``, when given, is filled with one
+    report per source: ``{"ok": bool, "jobs": int, "note": why-not}``. Never raises."""
     from . import feeds, jobsource
 
     queries = role_groups(roles)
@@ -214,22 +222,32 @@ async def market_sweep(
     keyless_configured = any(s in jobsource.KEYLESS for s in sources)
     stand_in = False
     for source in sources:
+        note: list[str] = []
+        got: list[dict] = []
+        ok = False
+        skipped = False
         try:
             if source in feeds.FEEDS:
                 got, ok = [{**j, "source": source} for j in await feeds.fetch(source)], True
             elif source in jobsource.JSEARCH_VENDORS:
                 if api_key:
-                    got, ok, refused = await _keyed(source, queries, cfg, api_key, max_age_days)
+                    got, ok, refused = await _keyed(source, queries, cfg, api_key, max_age_days, note)
                 else:  # no key is the normal keyless setup, not a failure: skip it without a word
-                    got, ok, refused = [], False, True
+                    got, ok, refused, skipped = [], False, True, True
                 if (refused or not ok) and not keyless_configured and not stand_in:
                     stand_in = True
                     sources.append("himalayas")  # a keyed outage must not cost the pass the market
             else:
                 got, ok = await _keyless(source, queries, cfg, max_age_days)
+                if not ok:
+                    note = ["didn't answer"]
         except Exception as e:  # noqa: BLE001 — one source's failure never costs the others
             log.info("[careercoach] watch market source %s failed: %s", source, jobsource._failure(e))
-            continue
+            note = [jobsource._failure(e)]
+        if health is not None and not skipped:
+            # "ok" means it gave the pass something or had nothing wrong: a keyed source that
+            # answered some queries and timed out on one still answered
+            health[source] = {"ok": bool(ok), "jobs": len(got), "note": "" if ok else (note[0] if note else "")}
         jobs += got
         answered = answered or ok
     return jobs, answered

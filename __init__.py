@@ -3075,6 +3075,52 @@ def _with_standard_answers(block: str) -> str:
     return f"{block}\n{note}"
 
 
+LIVE_STATUSES = ("interviewing", "offer")
+LIVE_NOTE_SHOWN = 280
+
+
+def _live_applications_note() -> str:
+    """The applications in motion, for the always-on profile block: one line per row at an
+    interview or offer stage, with its latest note. A chat starts with no memory of the last one;
+    an interview booked in Tuesday's chat was described as "only a first call set up" on Thursday.
+    The tracker is the one record every chat shares, so its live rows ride in front of every turn."""
+    from .record import profile, state
+
+    try:
+        rows = [r for r in state.load_applications() if r.get("status") in LIVE_STATUSES]
+    except Exception:  # noqa: BLE001 — an unreadable tracker must not break the turn
+        return ""
+    if not rows:
+        return ""
+    rows.sort(key=lambda r: str(r.get("updated") or r.get("date") or ""), reverse=True)
+    lines = [
+        "IN MOTION (from the tracker; the current stage of each, as last recorded):",
+    ]
+    for r in rows[:8]:
+        note = " ".join(str(r.get("notes") or "").split())
+        if len(note) > LIVE_NOTE_SHOWN:
+            note = note[:LIVE_NOTE_SHOWN].rsplit(" ", 1)[0] + "…"
+        head = f"{r.get('company', '')} — {r.get('role', '')} [{r.get('status')}, updated {str(r.get('updated') or r.get('date') or '')[:10]}]"
+        lines.append("  " + profile._defang(head + (f": {note}" if note else "")))
+    lines.append(
+        "When the operator reports progress on any application, update its tracker row in the same turn "
+        "(careercoach_track): the next chat knows only what the tracker holds."
+    )
+    return "\n".join(lines)
+
+
+def _splice_note(block: str, note: str) -> str:
+    """Put ``note`` just before the block's closing tag."""
+    if not block or not note:
+        return block
+    closing = "</operator_profile>"
+    stripped = block.rstrip()
+    if stripped.endswith(closing):
+        head = stripped[: -len(closing)].rstrip("\n")
+        return f"{head}\n\n{note}\n{closing}"
+    return f"{block}\n{note}"
+
+
 def _register_profile_middleware(registry) -> None:
     """Put the operator's profile in front of the model on every call.
 
@@ -3147,7 +3193,7 @@ def _register_profile_middleware(registry) -> None:
             block = self._current()
             if not block:
                 return request  # nothing known yet; /setup-coach owns the cold start
-            block = _with_standard_answers(block)
+            block = _splice_note(_with_standard_answers(block), _live_applications_note())
             msgs = list(getattr(request, "messages", None) or [])
             msgs.append(_context_frame(block))
             _stash_for_prompt_capture(block)
@@ -3233,6 +3279,7 @@ def _register_views(registry, cfg) -> None:
                 "columns": state.COLUMNS,
                 "followup_days": days,
                 "watch_last_run": wl.watch_last_run(),
+                "watch_sources": wl.watch_sources(),
             }
         )
 
@@ -3498,7 +3545,8 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
     except ValueError as e:
         log.info("[careercoach] watch market selection failed: %s", e)
         sources = []  # invalid market settings must not discard the watched boards' results
-    swept, market_answered = await sweep.market_sweep(cfg, roles, sources, api_key, f["max_age_days"])
+    health: dict = {}
+    swept, market_answered = await sweep.market_sweep(cfg, roles, sources, api_key, f["max_age_days"], health)
     answered = answered or market_answered
     for j in swept:
         if boards.passes(
@@ -3509,7 +3557,7 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             market.append(j)
     if answered:
         try:
-            wl.record_watch_run()
+            wl.record_watch_run(health)
         except OSError as e:  # the note is chrome: it must not cost this pass its results
             log.info("[careercoach] watch run not recorded: %s", e)
     try:
@@ -3531,7 +3579,14 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
         except Exception as e:  # noqa: BLE001 — resolution is a bonus; scoring works without it
             log.info("[careercoach] ATS resolution skipped: %s", e)
         fitscore.rate_all(batch, roles, fitscore.min_salary(cfg))
-        matches = [j for j in batch if j["score"] >= min_score]
+        # A board said "Remote (US)"; the company's own posting may say San Francisco, on site.
+        # resolve() copies the company's location onto the role, so ask the location filter again.
+        matches = [
+            j
+            for j in batch
+            if j["score"] >= min_score
+            and (j.get("ats_lookup") != "found" or boards.location_matches(j, f["locations"]))
+        ]
         wl.add_to_inbox(matches)
         wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
     except state.StoreUnreadable as e:

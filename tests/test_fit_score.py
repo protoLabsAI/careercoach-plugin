@@ -110,6 +110,34 @@ def test_a_recruiter_or_reposter_listing_cannot_top_the_inbox(fs, company):
     assert real > 80 and "reposter" not in why  # a product company with a similar name is not caught
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Our client is a fast-growing fintech hiring an AI Engineer.",
+        "Our client, a Series B startup, needs an engineer.",
+        "We are recruiting on behalf of a client in healthcare.",
+        "This role is for one of our clients, a Series B startup.",
+        "A confidential employer is looking for an engineer.",
+    ],
+)
+def test_a_recruiter_is_known_by_its_own_words(fs, line):
+    """A consulting firm reposting a client's role has an ordinary company name."""
+    desc = line + " Python, TypeScript, React, LLM agents and evals. " * 20
+    score, why = fs.score({**_job("AI Engineer", desc), "company": "Techaffinity"}, "AI Engineer", PROFILE)
+    assert score <= fs.REPOSTER_CAP and "recruiter or reposter" in why
+    for own in (
+        "You will work with our clients' data and ship to client teams.",
+        "Build AI solutions for our clients.",
+        "Partner with our client success team.",
+        "Our clients are banks and insurers.",
+        "You will understand our client needs and work with our client team.",
+        "Ship what our client wants, fast.",
+    ):  # a company that HAS clients is not a recruiter
+        direct = own + " " + desc.split(". ", 1)[1]
+        score, why = fs.score({**_job("AI Engineer", direct), "company": "Acme"}, "AI Engineer", PROFILE)
+        assert "reposter" not in why, own
+
+
 def test_seniority_and_junior_cap(fs):
     desc = "Python, TypeScript, React, LLM agents and evals."
     senior, _ = fs.score(_job("Senior Product Engineer", desc), ROLES, PROFILE)
@@ -254,6 +282,36 @@ def test_an_aggregator_link_is_swapped_for_the_companys_own_posting(resolve, mod
     assert via_aggregator["apply_url"] == via_feed["apply_url"] == "https://jobs.ashbyhq.com/acme/a1"
     assert via_aggregator["url"].startswith("https://www.jobleads.com")  # where it was listed is kept
     assert "apply_url" not in already_direct and "apply_url" not in from_a_board_scan
+
+
+def test_the_companys_own_posting_decides_where_the_job_is(resolve, mods, monkeypatch):
+    """A board listed Nango as Remote (US); the company's Ashby posting said San Francisco, on site."""
+    onsite = {"jobs": [{**ASHBY_ACME["jobs"][0], "location": "San Francisco, CA", "isRemote": False}]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.ashbyhq.com" and request.url.path.endswith("/acme"):
+            return httpx.Response(200, json=onsite)
+        return httpx.Response(404, json={})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    job = {"title": "AI Engineer", "company": "Acme", "source": "himalayas", "remote": True, "countries": ["United States"],
+           "location": "Remote (United States)", "url": "https://himalayas.app/companies/acme/jobs/ai"}  # fmt: skip
+    boards = importlib.import_module(resolve.__name__.rsplit(".", 1)[0] + ".boards")
+    assert boards.location_matches(job, "remote, portland, or") is True
+    assert asyncio.run(resolve.resolve([job])) == 1
+    assert job["location"] == "San Francisco, CA" and job["listed_location"] == "Remote (United States)"
+    assert job["remote"] is False and "countries" not in job
+    assert boards.location_matches(job, "remote, portland, or") is False  # the watch asks again and drops it
+    # an ATS that doesn't say remote or on site (remote=None) leaves the board's word standing
+    monkeypatch.setattr(
+        resolve, "match_title", lambda t, jobs: {"url": "https://x/1", "location": "United States", "remote": None}
+    )
+    kept = {"title": "AI Engineer", "company": "Acme", "source": "himalayas", "remote": True, "countries": ["United States"],
+            "location": "Remote (United States)", "url": "https://himalayas.app/companies/acme/jobs/ai2"}  # fmt: skip
+    assert asyncio.run(resolve.resolve([kept])) == 1
+    assert kept["remote"] is True and kept["countries"] == ["United States"] and kept["location"] == "United States"
+    assert boards.location_matches(kept, "remote, portland, or") is True
 
 
 def test_resolve_remembers_a_miss_and_leaves_other_links_alone(resolve, mods, monkeypatch):

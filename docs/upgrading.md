@@ -3,6 +3,23 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.5
+
+- **Every chat knows which applications are in motion.** Applications at an interview or offer stage
+  are listed in front of every turn, each with its latest tracker note. A new chat no longer describes
+  an interview by what an older chat knew. The coach is also told to update the tracker in the same
+  turn you report progress.
+- **The digest says when a job source didn't answer.** Each watch pass records which market sources
+  answered. If one timed out, refused the key or used its day's requests, the next digest names it and
+  says the others were searched as usual. The same report is in the Jobs data as `watch_sources`.
+- **The company's own posting decides where a job is.** When a board lists a role as remote and the
+  company's own posting says a city, the card takes the company's location, and the watch checks it
+  against your locations again. A board's "Remote (US)" for an on-site role no longer gets through.
+- **A recruiter is known by its own words.** A posting that says "our client", "on behalf of a client"
+  or "confidential employer" is capped like a recruiter's listing, whatever the company name.
+- **Aggregator page titles are trimmed.** "Software Engineer job at CGI in Knoxville" becomes
+  "Software Engineer".
+
 ## 0.17.4
 
 - **Another field's engineer no longer scores as a match.** Every word of "Design Engineer" is also in

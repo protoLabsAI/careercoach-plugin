@@ -802,6 +802,18 @@ def test_the_watch_waits_its_interval_between_scans(plugin, iso, monkeypatch):
     assert seen.get("breath") == 30 and "interval" not in seen
 
 
+def test_the_digest_names_a_source_that_did_not_answer(hunt_tools, mods):
+    assert "didn't answer" not in _run(hunt_tools["careercoach_digest"], {})  # nothing recorded: nothing said
+    mods.watchlist.record_watch_run(
+        {"himalayas": {"ok": True, "jobs": 40, "note": ""}, "jsearch": {"ok": False, "jobs": 0, "note": "timed out"}}
+    )
+    out = _run(hunt_tools["careercoach_digest"], {})
+    assert "## Sources that didn't answer on the last watch pass\n- JSearch: timed out" in out
+    assert "The other sources were searched as usual." in out and "Himalayas" not in out.split("didn't answer")[1]
+    mods.watchlist.record_watch_run({"himalayas": {"ok": True, "jobs": 40, "note": ""}})
+    assert "didn't answer" not in _run(hunt_tools["careercoach_digest"], {})
+
+
 def test_the_digest_shows_and_drains_the_watch_inbox(hunt_tools, mods):
     mods.watchlist.add_to_inbox(
         [

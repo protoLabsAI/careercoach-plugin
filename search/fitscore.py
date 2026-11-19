@@ -149,6 +149,14 @@ _REPOSTER = re.compile(
     r"recruit(?:ing|ment|ers?)|staffing|talent\s+(?:solutions|partners|group))\b",
     re.I,
 )
+# A recruiter says so in the text even when its name doesn't: "our client is a fast-growing…".
+# Only the recruiter's phrasing: an employer with customers also writes "for our clients" and
+# "our client success team", and those must not match.
+_FOR_A_CLIENT = re.compile(
+    r"\b(?:our|my)\s+client\s+(?:is|has|seeks)\b|\b(?:our|my)\s+client,\s+an?\b|\bon\s+behalf\s+of\s+(?:our|a|my)\s+client\b|"
+    r"\bfor\s+one\s+of\s+our\s+clients\b|\bclient\s+of\s+ours\b|\bconfidential\s+(?:client|company|employer)\b",
+    re.I,
+)
 REPOSTER_CAP = 55  # under the default inbox bar: still in a search's results, never a top card
 _TECH_RE = {k: re.compile(rf"(?<![\w+#.])(?:{v})(?![\w+#])", re.I) for k, v in TECH.items()}
 
@@ -296,7 +304,7 @@ def score(job: dict, roles: str, profile_text: str, min_salary: int = 0) -> tupl
         overall = min(overall, 45)
     elif len(off) >= 2:
         overall = min(overall, 55)
-    if _REPOSTER.search(job.get("company") or ""):
+    if _REPOSTER.search(job.get("company") or "") or _FOR_A_CLIENT.search(text):
         # the real employer is unknown, so the stack and pay can't be trusted to be one job's
         why.append("listed by a recruiter or reposter, employer not named")
         overall = min(overall, REPOSTER_CAP)

@@ -179,6 +179,17 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
             j["ats_lookup"] = "found" if hit and hit.get("url") else ("no title" if board_jobs else "no board")
             if hit and hit.get("url"):
                 j["apply_url"] = hit["url"]
+                if (hit.get("location") or "").strip():
+                    # the company's own posting says where the job is; a board's "Remote (US)"
+                    # for an on-site San Francisco role is the board's guess
+                    if hit["location"].strip() != (j.get("location") or "").strip():
+                        j["listed_location"] = j.get("location") or ""
+                    j["location"] = hit["location"]
+                    if hit.get("remote") is not None:
+                        # only when the company SAYS remote or on site: an ATS that doesn't say
+                        # (Greenhouse, unless the location text does) leaves the board's word standing
+                        j["remote"] = hit["remote"]
+                        j.pop("countries", None)  # the board's country list no longer describes it
                 if len(hit.get("description") or "") > len(j.get("description") or ""):
                     j["description"] = hit["description"]
                 if hit.get("comp") and (not j.get("comp") or _foreign(j["comp"])):

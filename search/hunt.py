@@ -395,6 +395,13 @@ def register_hunt_tools(registry, cfg, extended: bool):
                 + "\n".join(scan.format_job(j, i) for i, j in enumerate(shown_inbox, 1))
                 + (f"\n…{len(inbox) - 25} more stay queued for the next digest." if len(inbox) > 25 else "")
             )
+        quiet_sources = wl.unanswered_sources()
+        if quiet_sources:
+            sections.append(
+                "## Sources that didn't answer on the last watch pass\n"
+                + "\n".join(f"- {s}" for s in quiet_sources)
+                + "\nThe other sources were searched as usual."
+            )
         try:
             due = contacts.due_followups()
         except contacts.StoreUnreadable:

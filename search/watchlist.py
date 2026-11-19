@@ -55,9 +55,32 @@ def _save(name: str, data) -> None:
 WATCH_RUN = "watch-run.json"
 
 
-def record_watch_run() -> None:
-    """Note that a watch pass finished with at least one source answering."""
-    _save(WATCH_RUN, {"last_run": _now()})
+def record_watch_run(sources: dict | None = None) -> None:
+    """Note that a watch pass finished with at least one source answering. ``sources`` is the
+    pass's market-source report (``sweep.market_sweep``'s ``health``): per source, whether it
+    answered, how many postings it sent, and why not when it didn't."""
+    _save(WATCH_RUN, {"last_run": _now(), "sources": sources or {}})
+
+
+def watch_sources() -> dict:
+    """The last pass's market-source report, ``{}`` if none was recorded. Never raises."""
+    try:
+        got = _load(WATCH_RUN, {}).get("sources")
+    except StoreUnreadable:
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def unanswered_sources() -> list[str]:
+    """One plain sentence per market source that didn't answer on the last pass, for the digest
+    and the Jobs data: "JSearch (Google-for-Jobs): timed out". Empty when all answered."""
+    from .jobsource import PROVIDER_LABELS
+
+    out = []
+    for name, report in watch_sources().items():
+        if isinstance(report, dict) and not report.get("ok") and report.get("note"):
+            out.append(f"{PROVIDER_LABELS.get(name, name).split(' (')[0]}: {report['note']}")
+    return out
 
 
 def watch_last_run() -> str:
