@@ -3567,7 +3567,18 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             found += [j for j in (scan.annotate(j, index) for j in fresh) if not j["tracked"]]
         if not found:
             return []
+        # Best first. A pass over every role and source finds a hundred new postings, and the
+        # fifteen newest are not the fifteen best: score them all on the text in hand (no network),
+        # settle at once the ones a full posting already puts under the bar, and spend the pass's
+        # fifteen company lookups on the strongest of the rest. Ties go to the newest.
+        fitscore.rate_all(found, roles, fitscore.min_salary(cfg))
+        settled = [
+            j for j in found if j["score"] < min_score and len(j.get("description") or "") >= fitscore.THIN_CHARS
+        ]
+        settled_ids = {j["id"] for j in settled}
+        found = [j for j in found if j["id"] not in settled_ids]
         found.sort(key=lambda j: j.get("posted") or "", reverse=True)
+        found.sort(key=lambda j: j["score"], reverse=True)
         batch = found[:15]  # a first scan of a big watchlist must not flood the pipeline
         # The watch never writes the TRACKER — that's the operator's record of roles they chose.
         # New matches wait in the watch inbox; the digest shows them, and the coach tracks the
@@ -3588,7 +3599,8 @@ async def _watch_tick(registry, cfg, min_score: int) -> list[dict]:
             and (j.get("ats_lookup") != "found" or boards.location_matches(j, f["locations"]))
         ]
         wl.add_to_inbox(matches)
-        wl.record_sightings(batch, log_name=wl.WATCH_SEEN)  # handled: inboxed, or below the bar
+        # handled: inboxed, or below the bar (the settled ones without a lookup)
+        wl.record_sightings(batch + settled, log_name=wl.WATCH_SEEN)
     except state.StoreUnreadable as e:
         log.warning("[careercoach] watch scan recorded nothing: %s", e)
         return []

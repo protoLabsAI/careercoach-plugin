@@ -699,6 +699,26 @@ def test_the_per_scan_cap_leaves_the_rest_for_next_time(watch_env, mods, plugin,
     assert not {m["url"] for m in first} & {m["url"] for m in second}
 
 
+def test_the_pass_queues_the_best_new_roles_not_just_the_newest(watch_env, mods, plugin, monkeypatch):
+    """Twenty new roles, fifteen lookups a pass: the strong ones must not wait behind newer weak ones."""
+    _, reg, cfg = watch_env
+    strong = "Python, TypeScript, React, LLM agents, evals and design systems. " * 20
+    weak = "COBOL mainframe batch jobs, SAP ABAP and Salesforce Apex administration. " * 20
+    jobs = []
+    for i in range(20):
+        good = i >= 15  # the five strong roles are the OLDEST
+        jobs.append({**ASHBY["jobs"][0], "id": f"b{i}", "jobUrl": f"https://jobs.ashbyhq.com/acme/b{i}",
+                     "title": f"AI Engineer {i}", "descriptionHtml": strong if good else weak,
+                     "publishedAt": _ago(1 + i)})  # fmt: skip
+    monkeypatch.setitem(BOARDS, ("api.ashbyhq.com", "acme"), {"jobs": jobs})
+    cfg["target_roles"] = "AI Engineer"
+    got = asyncio.run(plugin._watch_tick(reg, cfg, 65))
+    assert {m["title"] for m in got} >= {f"AI Engineer {i}" for i in range(15, 20)}  # all five, on the first pass
+    assert all(m["score"] >= 65 for m in got)
+    # the weak ones were settled without a lookup: nothing is left waiting for a later pass
+    assert asyncio.run(plugin._watch_tick(reg, cfg, 65)) == []
+
+
 # ── one board per row, full-name slugs, spelling-variant hints, US time zones, job URLs ──
 def test_one_board_one_watchlist_row(mods):
     wl = mods.watchlist

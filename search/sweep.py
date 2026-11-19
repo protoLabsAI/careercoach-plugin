@@ -103,6 +103,20 @@ def _save_cursor(source: str, position: int) -> None:
         log.info("[careercoach] watch cursor not saved: %s", e)
 
 
+def _kind(reason: str) -> str:
+    """What a keyed source's refusal means for the operator: ``subscription`` (the vendor account
+    needs one), ``key`` (the saved key is rejected), ``resting`` (a quota or cooldown that ends by
+    itself) or ``retry`` (anything else: the watch asks again next pass)."""
+    text = (reason or "").lower()
+    if "subscribed" in text or "subscription" in text:
+        return "subscription"
+    if "rejected the key" in text or "denied access" in text or "needs a job-source api key" in text:
+        return "key"
+    if "rate limit" in text or "quota" in text or "cooling down" in text or "used up" in text:
+        return "resting"
+    return "retry"
+
+
 async def _keyed(
     source: str, queries: list[str], cfg: dict, api_key: str, max_age_days: float, note: list | None = None
 ) -> tuple[list, bool, bool]:
@@ -122,6 +136,10 @@ async def _keyed(
         if month["reserved"]:
             # the last fifth of the month's requests is the operator's: chat searches and the
             # daily report keep the source, the watch sweeps the keyless ones. Said once a month.
+            note[:] = [
+                "the rest of this month's requests are kept for your own searches and the daily report",
+                "resting",
+            ]
             if wl.note_watch_reserved(source):
                 log.warning(
                     "[careercoach] watch: %s has used %d of this month's %d requests; the rest are reserved "
@@ -131,7 +149,7 @@ async def _keyed(
             break
         if wl.jsearch_allowance() == 0:
             log.info("[careercoach] watch: today's JSearch requests are spent; back tomorrow")
-            note[:] = ["today's share of the plan's requests is used; it resumes tomorrow"]
+            note[:] = ["today's share of the plan's requests is used; it resumes tomorrow", "resting"]
             break
         if asked:
             await asyncio.sleep(KEYED_SPACING_S)
@@ -144,7 +162,7 @@ async def _keyed(
             )  # fmt: skip
         except Exception as e:  # noqa: BLE001 — a setup error: nothing to retry this pass
             log.warning("[careercoach] watch: JSearch can't be asked (%s)", jobsource._failure(e))
-            note[:] = [jobsource._failure(e)]
+            note[:] = [jobsource._failure(e), _kind(jobsource._failure(e))]
             refused = True
             break
         if got.fallback_reason and not got.transient:
@@ -155,14 +173,14 @@ async def _keyed(
                 "[careercoach] watch: JSearch isn't answering (%s); this pass uses the other sources only.",
                 got.fallback_reason,
             )
-            note[:] = [got.fallback_reason]
+            note[:] = [got.fallback_reason, _kind(got.fallback_reason)]
             refused = True
             break
         asked += 1
         if got.fallback_reason:  # a timeout or a dropped connection: this query's loss, not the pass's
             wl.note_jsearch_call({})  # the request was sent: count it, the vendor may have
             timeouts += 1
-            note[:] = ["timed out"]
+            note[:] = ["timed out", "retry"]
             log.info("[careercoach] watch: JSearch timed out on %r (%s)", query, got.fallback_reason)
             if timeouts >= TRANSIENT_LIMIT:
                 log.warning("[careercoach] watch: JSearch timed out %d times in a row; back next pass", timeouts)
@@ -240,14 +258,17 @@ async def market_sweep(
             else:
                 got, ok = await _keyless(source, queries, cfg, max_age_days)
                 if not ok:
-                    note = ["didn't answer"]
+                    note = ["didn't answer", "retry"]
         except Exception as e:  # noqa: BLE001 — one source's failure never costs the others
             log.info("[careercoach] watch market source %s failed: %s", source, jobsource._failure(e))
-            note = [jobsource._failure(e)]
+            note = [jobsource._failure(e), "retry"]
         if health is not None and not skipped:
             # "ok" means it gave the pass something or had nothing wrong: a keyed source that
             # answered some queries and timed out on one still answered
             health[source] = {"ok": bool(ok), "jobs": len(got), "note": "" if ok else (note[0] if note else "")}
+            if not ok and note:
+                # what the operator can do about it, so a view never has to read the note's words
+                health[source]["kind"] = note[1] if len(note) > 1 else "retry"
         jobs += got
         answered = answered or ok
     return jobs, answered
