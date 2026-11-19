@@ -28,7 +28,7 @@ query words loosely — "design engineer" returns plumbing roles), so keyless re
 filtered client-side against the query with ``prescore``, and the result says which provider
 answered, so a keyless fallback is never mistaken for a search of the whole market.
 
-Company job boards (Ashby / Greenhouse / Lever / SmartRecruiters) are read by ``boards.py``. Only ``search_jobs()``
+Company job boards (Ashby / Greenhouse / Lever / SmartRecruiters / Dover) are read by ``boards.py``. Only ``search_jobs()``
 here touches the network (via httpx, a host dependency); the response parsers and ``prescore`` are
 pure and unit-tested.
 """
