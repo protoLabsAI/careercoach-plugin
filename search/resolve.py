@@ -238,6 +238,8 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                     # "remote" and country when the company's posting names no place at all
                     j.pop("comp", None)
                     if not (hit.get("location") or "").strip():
+                        j["listed_location"] = j.get("location") or ""
+                        j["location"] = ""  # the company names no place: the reposter's is not kept
                         j["remote"] = hit.get("remote")
                         j.pop("countries", None)
                 if (hit.get("location") or "").strip():

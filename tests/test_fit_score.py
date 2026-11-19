@@ -372,6 +372,19 @@ def test_a_lead_from_a_blocked_site_gets_the_companys_title_link_and_place(resol
     # and so is its "remote, US": the company's posting doesn't say remote, so nothing does
     assert lead["remote"] is None and "countries" not in lead
     assert boards.location_matches(lead, "remote, portland, or") is False
+    # the company's posting names no place at all: the reposter's "Remote" is not kept either
+    nowhere = [{**_BOARD[0], "location": "", "remote": None}]
+
+    async def board2(ats, slug, name, **kw):
+        return nowhere
+
+    monkeypatch.setattr(boards, "fetch_board", board2)
+    lead2 = {"title": "Frontend Engineer - AI-Driven Web Apps (Remote)", "company": "Binance", "source": "jsearch",
+             "via_blocked": True, "remote": True, "countries": ["US"], "location": "Remote (US)",
+             "url": "https://www.google.com/search?q=Binance+Frontend+2", "snippet": _REWRITTEN}  # fmt: skip
+    assert asyncio.run(resolve.resolve([lead2])) == 1
+    assert lead2["location"] == "" and lead2["listed_location"] == "Remote (US)" and lead2["remote"] is None
+    assert boards.location_matches(lead2, "remote, portland, or") is False
     # an ordinary board listing whose title doesn't match is NOT matched by text: only a blocked site's lead is
     plain = {"title": "Something Else Entirely", "company": "Binance", "source": "himalayas",
              "url": "https://himalayas.app/x", "snippet": _REWRITTEN}  # fmt: skip
