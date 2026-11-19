@@ -3,6 +3,20 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.11
+
+- **Every inbox decision is logged.** Each keep and each dismissal is recorded with the card as it was
+  shown: company, title, source, fit score and its reasoning, location and pay. The inbox forgets a
+  card once it is handled; the log (`triage-log.json`) doesn't.
+- **A dismissal can carry a reason.** Not the kind of role, wrong level, wrong stack, location, pay,
+  the company, a recruiter or reposted listing, old, a duplicate, or something else with a note. Tell
+  the coach why when you dismiss a role in chat and it logs it. The Jobs view's dismiss doesn't ask
+  yet; it accepts a reason once the view is updated.
+- **A triage report.** Ask the coach for it ("show the triage report"). It gives what you kept and
+  dismissed, the reasons, the keep rate by source, by target role and by fit score, and what those
+  numbers suggest changing: a source or role you almost never keep, a threshold to raise, a setting
+  to check. It suggests; it never changes a setting.
+
 ## 0.17.10
 
 - **A JobLeads-only role is traced to where you really apply.** Version 0.17.9 dropped a role that
