@@ -6,7 +6,7 @@ company's own page beats applying through a middleman. The first case below is w
 
 Himalayas' "applicationLink" is a page on himalayas.app, and Cloudflare challenges every automated
 fetch of it — so a Himalayas role the coach couldn't open was a role it couldn't evaluate or apply
-to. Most of those companies post on Ashby, Greenhouse, Lever or SmartRecruiters, whose public APIs
+to. Most of those companies post on Ashby, Greenhouse, Lever, SmartRecruiters or Dover, whose public APIs
 we already read (``boards.py``). This looks the company up there once (cached for a week, hits and
 misses alike), finds the same title on its board, and hands back the real posting URL and full
 description. A company on the watchlist uses its pinned board instead of a name guess.

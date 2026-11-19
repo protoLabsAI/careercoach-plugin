@@ -18,7 +18,7 @@ step below serves one of those three.
 ## Where roles come from (best first)
 
 1. **The watched companies' own job boards** — `careercoach_find_roles(source="watched")`. Ashby / Greenhouse / Lever /
-   SmartRecruiters publish every open role with the date it *first* went up; this is fresher than any aggregator and
+   SmartRecruiters / Dover publish every open role with the date it *first* went up; this is fresher than any aggregator and
    it's the employer's own data. Results come pre-filtered by Settings (target roles, title
    exclusions, locations, max age) and marked **NEW** (never seen by an earlier scan), **already
    tracked**, **you've applied to N roles here**, and **⚠ ghost warnings**.

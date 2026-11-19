@@ -180,7 +180,7 @@ def register_hunt_tools(registry, cfg, extended: bool):
             out.append(
                 f"Not found on Ashby, Greenhouse, Lever, SmartRecruiters or Dover: {', '.join(missed)}. They may use "
                 "Workday or their own site, or a different board name — find their careers page and pass `ats` + "
-                "`slug` if it's on one of the four."
+                "`slug` if it's on one of those."
             )
         return "\n\n".join(out)
 
