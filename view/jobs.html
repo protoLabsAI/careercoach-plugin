@@ -458,7 +458,11 @@
     t.classList.toggle('pl-toast--error', !!opts.error);
     // §14: a dismissal's toast carries its reasons; any other toast replaces them (the earlier
     // dismissal keeps its own window and is written when it closes, with whatever reason it has)
+    var prev = DIS;
     DIS = opts.reasons || null;
+    // a dismissal whose window was waiting on the pointer or focus is no longer the toast's: its
+    // window runs again from where it stopped, or it would never be written
+    if (prev && prev !== DIS && !prev.sent && prev.left != null) disSchedule(prev, prev.left);
     drawReasons();
     if (undo) {
       if (opts.undo) {

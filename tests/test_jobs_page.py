@@ -1832,6 +1832,18 @@ def test_the_window_waits_while_the_toast_is_hovered_or_focused(plugin):
     assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1"}]]
 
 
+def test_a_paused_dismissal_is_still_written_when_another_toast_takes_over(plugin):
+    """Pointer resting on the toast, D on the next row: the first dismissal must not be lost."""
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); __now += 1000; disPause(true);")  # hovering: in1's window waits
+    ctx.eval("inboxDismiss(['in2']);")  # the next dismissal takes the toast
+    ctx.eval("disPause(false); __fire();")  # the pointer leaves; both windows close
+    assert sorted(w[1]["id"] for w in _writes(ctx)) == ["in1", "in2"]
+    ctx = _reason_ctx(plugin)
+    ctx.eval("inboxDismiss(['in1']); disPause(true); toast('Kept — in Saved.'); __fire();")  # any other toast
+    assert _writes(ctx) == [["/inbox/dismiss", {"id": "in1"}]]
+
+
 def test_the_shortcut_hint_names_the_reason_keys(plugin):
     ctx = _view_ctx(plugin)
     assert '<span class="pl-kbd">1–9</span> reason' in _render_inbox(
