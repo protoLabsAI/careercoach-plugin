@@ -6,9 +6,10 @@ company's own page beats applying through a middleman. The first case below is w
 
 Himalayas' "applicationLink" is a page on himalayas.app, and Cloudflare challenges every automated
 fetch of it — so a Himalayas role the coach couldn't open was a role it couldn't evaluate or apply
-to. Most of those companies post on Ashby, Greenhouse or Lever, whose public APIs we already read
-(``boards.py``). This looks the company up there once (cached for a week, hits and misses alike),
-finds the same title on its board, and hands back the real posting URL and full description.
+to. Most of those companies post on Ashby, Greenhouse, Lever or SmartRecruiters, whose public APIs
+we already read (``boards.py``). This looks the company up there once (cached for a week, hits and
+misses alike), finds the same title on its board, and hands back the real posting URL and full
+description. A company on the watchlist uses its pinned board instead of a name guess.
 
 ``match_title`` is pure; ``resolve`` touches the network through ``boards``.
 """
@@ -97,7 +98,7 @@ def _fresh(entry: dict, now: datetime) -> bool:
 async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
     """Fill ``apply_url`` (and a fuller ``description``) in place for jobs a board or aggregator
     listed (``indirect``), from the company's own ATS, and record the outcome as ``ats_lookup``: "found",
-    "no title" (the company's board doesn't list it) or "no board" (no Ashby/Greenhouse/Lever board).
+    "no title" (the company's board doesn't list it) or "no board" (no board on a supported ATS).
     A job not looked up this pass (past the cap, or a probe that hit a 429/timeout) is left without
     ``ats_lookup``. Returns how many it resolved. Never raises."""
     import httpx
@@ -118,13 +119,20 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
     for j in todo:
         by_co.setdefault(company_key(j["company"]), []).append(j)
 
+    try:
+        rows = wl.load_watchlist()
+    except Exception:  # noqa: BLE001 — an unreadable watchlist just means guessing, as before
+        rows = []
+    pinned = {company_key(r.get("company", "")): r for r in rows if r.get("ats") and r.get("slug")}
     boards_for: dict[str, list[dict]] = {}
     probed = 0
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         sem = asyncio.Semaphore(10)
 
-        async def _lookup(key: str, name: str, slug: str):
+        async def _lookup(key: str, name: str, slug: str, titles: list[str]):
             entry = cache.get(key)
+            if key in pinned:  # the operator's own pin beats any guess, cached or not
+                entry = {"ats": pinned[key]["ats"], "slug": pinned[key]["slug"], "checked": now.isoformat()}
             if entry and _fresh(entry, now) and not entry.get("ats"):
                 return key, None  # a recent miss: don't probe again this week
             if entry and _fresh(entry, now) and entry.get("ats"):
@@ -151,7 +159,8 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
                 ats, s = found[0][0], found[0][1]
                 cache[key] = {"company": name, "ats": ats, "slug": s, "checked": now.isoformat()}
             try:
-                return key, await boards.fetch_board(ats, s, name, client=client)
+                # the titles are the search on boards that search (SmartRecruiters)
+                return key, await boards.fetch_board(ats, s, name, client=client, search=titles)
             except Exception as e:  # noqa: BLE001 — the board exists; it just didn't load this time
                 log.info("[careercoach] ATS board read failed for %s (%s/%s): %s", name, ats, s, e)
                 return key, "retry"
@@ -161,7 +170,8 @@ async def resolve(jobs: list[dict], *, now: datetime | None = None) -> int:
             if probed >= MAX_COMPANIES:
                 break
             probed += 1
-            calls.append(_lookup(key, group[0]["company"], group[0].get("company_slug") or ""))
+            titles = [j.get("title") or "" for j in group]
+            calls.append(_lookup(key, group[0]["company"], group[0].get("company_slug") or "", titles))
         for key, got in await asyncio.gather(*calls):
             if got == "retry":
                 continue

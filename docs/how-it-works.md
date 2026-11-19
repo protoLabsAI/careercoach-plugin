@@ -61,8 +61,12 @@ form-filling beta, are in [applying.md](applying.md).
 ## Job sources
 
 Ashby, Greenhouse and Lever publish keyless posting APIs with the date a role first went up. They don't
-search, so `search/boards.py` filters each whole board locally, and a first-seen log (`seen.json`) decides what's
-new and spots reposts, because boards reset a posting's date when it's relisted.
+search, so `search/boards.py` filters each whole board locally. SmartRecruiters has a keyless API too, but its
+boards can run to thousands of postings, so it is searched once per target role (at most 200 postings a
+search) and only matching titles get their full text read. Workday isn't supported: its careers-site JSON
+answers this plugin's client with HTTP 429 from the first request. A first-seen log
+(`seen.json`) decides what's new and spots reposts, because boards reset a posting's date when it's
+relisted.
 
 Market search is provider-abstracted and keyless by default: Himalayas and Hacker News, or JSearch with a
 key. Only `search/jobsource.py` and `search/boards.py` make outbound calls, and the manifest declares exactly those hosts.
