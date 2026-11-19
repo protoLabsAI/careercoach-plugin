@@ -3,6 +3,14 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.13
+
+- **Dover boards can be watched.** Many startups post their openings on Dover. Adding a company to the
+  watchlist now also looks for it there, and a Dover careers link (`jobs.dover.com/…` or
+  `app.dover.com/jobs/…`) can be pasted to pin a board. A Dover role shows the company's own title,
+  location, the pay when the company shares it, and the date it was posted. A role found on a job board
+  or through JSearch is also looked up on the company's Dover board.
+
 ## 0.17.12
 
 - **The Jobs view asks why, without slowing you down.** When you dismiss a role, the toast that carries

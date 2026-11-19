@@ -43,7 +43,15 @@ def blocked(url: str) -> bool:
 #: to whoever syndicated the posting (JobLeads, Jobgether, Indeed, …), never to the company.
 INDIRECT_SOURCES = ("himalayas", "jsearch", "openwebninja", "jobicy", "weworkremotely", "remoteok")
 #: A link already on one of these is the company's own posting: nothing to look up.
-DIRECT_HOSTS = ("greenhouse.io", "ashbyhq.com", "lever.co", "myworkdayjobs.com", "workable.com", "smartrecruiters.com")
+DIRECT_HOSTS = (
+    "greenhouse.io",
+    "ashbyhq.com",
+    "lever.co",
+    "myworkdayjobs.com",
+    "workable.com",
+    "smartrecruiters.com",
+    "dover.com",
+)
 
 
 def indirect(job: dict) -> bool:

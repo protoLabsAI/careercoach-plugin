@@ -208,7 +208,7 @@ def test_watchlist_pins_a_board_from_its_url_and_finds_smartrecruiters(hunt_tool
     assert out == "Watching ServiceNow — smartrecruiters/ServiceNow, 3 open role(s) right now."
     out = _run(wl, {"action": "add", "company": "ServiceNow, Nowhere"})
     assert "ServiceNow — smartrecruiters/servicenow, 3 open role(s)" in out
-    assert "Not found on Ashby, Greenhouse, Lever or SmartRecruiters: Nowhere" in out
+    assert "Not found on Ashby, Greenhouse, Lever, SmartRecruiters or Dover: Nowhere" in out
     # SmartRecruiters answers an unknown company with an empty board: don't pin a typo
     empty = _run(wl, {"action": "add", "company": "Visa", "ats": "smartrecruiters", "slug": "Visa"})
     assert "has no postings" in empty and "Visa" not in _run(wl, {})
