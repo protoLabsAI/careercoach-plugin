@@ -114,6 +114,7 @@ def test_a_recruiter_or_reposter_listing_cannot_top_the_inbox(fs, company):
     "line",
     [
         "Our client is a fast-growing fintech hiring an AI Engineer.",
+        "Our client, a Series B startup, needs an engineer.",
         "We are recruiting on behalf of a client in healthcare.",
         "This role is for one of our clients, a Series B startup.",
         "A confidential employer is looking for an engineer.",
@@ -124,9 +125,15 @@ def test_a_recruiter_is_known_by_its_own_words(fs, line):
     desc = line + " Python, TypeScript, React, LLM agents and evals. " * 20
     score, why = fs.score({**_job("AI Engineer", desc), "company": "Techaffinity"}, "AI Engineer", PROFILE)
     assert score <= fs.REPOSTER_CAP and "recruiter or reposter" in why
-    direct = "You will work with our clients' data and ship to client teams. " + desc.split(". ", 1)[1]
-    score, why = fs.score({**_job("AI Engineer", direct), "company": "Acme"}, "AI Engineer", PROFILE)
-    assert "reposter" not in why  # a company that HAS clients is not a recruiter
+    for own in (
+        "You will work with our clients' data and ship to client teams.",
+        "Build AI solutions for our clients.",
+        "Partner with our client success team.",
+        "Our clients are banks and insurers.",
+    ):  # a company that HAS clients is not a recruiter
+        direct = own + " " + desc.split(". ", 1)[1]
+        score, why = fs.score({**_job("AI Engineer", direct), "company": "Acme"}, "AI Engineer", PROFILE)
+        assert "reposter" not in why, own
 
 
 def test_seniority_and_junior_cap(fs):
@@ -294,6 +301,15 @@ def test_the_companys_own_posting_decides_where_the_job_is(resolve, mods, monkey
     assert job["location"] == "San Francisco, CA" and job["listed_location"] == "Remote (United States)"
     assert job["remote"] is False and "countries" not in job
     assert boards.location_matches(job, "remote, portland, or") is False  # the watch asks again and drops it
+    # an ATS that doesn't say remote or on site (remote=None) leaves the board's word standing
+    monkeypatch.setattr(
+        resolve, "match_title", lambda t, jobs: {"url": "https://x/1", "location": "United States", "remote": None}
+    )
+    kept = {"title": "AI Engineer", "company": "Acme", "source": "himalayas", "remote": True, "countries": ["United States"],
+            "location": "Remote (United States)", "url": "https://himalayas.app/companies/acme/jobs/ai2"}  # fmt: skip
+    assert asyncio.run(resolve.resolve([kept])) == 1
+    assert kept["remote"] is True and kept["countries"] == ["United States"] and kept["location"] == "United States"
+    assert boards.location_matches(kept, "remote, portland, or") is True
 
 
 def test_resolve_remembers_a_miss_and_leaves_other_links_alone(resolve, mods, monkeypatch):
