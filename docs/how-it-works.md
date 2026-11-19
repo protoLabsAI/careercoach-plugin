@@ -63,7 +63,9 @@ form-filling beta, are in [applying.md](applying.md).
 Ashby, Greenhouse and Lever publish keyless posting APIs with the date a role first went up. They don't
 search, so `search/boards.py` filters each whole board locally. SmartRecruiters has a keyless API too, but its
 boards can run to thousands of postings, so it is searched once per target role (at most 200 postings a
-search) and only matching titles get their full text read. Workday isn't supported: its careers-site JSON
+search) and only matching titles get their full text read. Dover, where many startups post, is keyless as
+well: the board lists its roles, and each role's text, shared pay and posted date are a read of their own.
+Workday isn't supported: its careers-site JSON
 answers this plugin's client with HTTP 429 from the first request. A first-seen log
 (`seen.json`) decides what's new and spots reposts, because boards reset a posting's date when it's
 relisted.
