@@ -3,6 +3,15 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.10
+
+- **A JobLeads-only role is traced to where you really apply.** Version 0.17.9 dropped a role that
+  only JobLeads carried. The watch now keeps it as a lead, looks the company up on its own board, and
+  shows the role only if it finds the company's posting, with the company's own title, location and
+  link. JobLeads rewrites titles, so the posting is found by its wording. Nothing JobLeads added is
+  kept: its link is never shown and its pay range is dropped. If the company's posting turns out to be
+  outside your locations, or isn't found, the role isn't shown.
+
 ## 0.17.9
 
 - **JobLeads is out of the search.** JobLeads republishes other companies' postings under rewritten

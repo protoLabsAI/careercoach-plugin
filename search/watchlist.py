@@ -507,6 +507,8 @@ def add_to_inbox(jobs: list[dict]) -> int:
         "description",
         "apply_url",
         "ats_lookup",
+        "listed_title",
+        "listed_location",
         "hash",
     )
     with _store._locked("inbox"):

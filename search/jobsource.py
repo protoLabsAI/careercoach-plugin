@@ -94,13 +94,23 @@ def parse_jsearch(payload: dict) -> list[dict]:
     out: list[dict] = []
     for j in data or []:
         # Google for Jobs lists every site that carries a posting. Take the first that isn't a
-        # blocked one; a posting only a blocked site carries is not a posting the coach shows.
+        # blocked one. A posting only a blocked site carries is kept as a LEAD: its link is never
+        # used or shown, and the role reaches the operator only if the company's own posting is
+        # found for it (``resolve``; ``via_blocked`` marks it until then).
         listed = [j.get("job_apply_link")] + [o.get("apply_link") for o in j.get("apply_options") or [] if o]
         listed = [u for u in listed if u]
         links = [u for u in listed if not blocked_site(u)]
-        if listed and not links:
-            continue
+        via_blocked = bool(listed) and not links
+        if via_blocked and not (j.get("employer_name") or "").strip():
+            continue  # no company to look up: nothing to trace
         link = links[0] if links else (j.get("job_google_link") or "")
+        if via_blocked and not link:
+            # a stable stand-in so the lead has an identity; it is a search, not a place to apply
+            from urllib.parse import quote_plus
+
+            link = "https://www.google.com/search?q=" + quote_plus(
+                f"{j.get('employer_name')} {j.get('job_title')} careers {j.get('job_id') or ''}".strip()
+            )
         loc = ", ".join(x for x in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if x)
         remote = bool(j.get("job_is_remote"))
         if remote:
@@ -120,6 +130,8 @@ def parse_jsearch(payload: dict) -> list[dict]:
             source="jsearch",
             description=j.get("job_description") or "",
         )
+        if via_blocked:
+            job["via_blocked"] = True
         if remote:
             job["remote"] = True
             if j.get("job_country"):
@@ -494,6 +506,9 @@ async def search_jobs(
                 jobs, quota = await _get_jsearch(query, location, remote, api_key, max_age_days)
             else:
                 jobs = await _get_openwebninja(query, location, remote, api_key)
+            # a blocked site's leads go last (either vendor): a chat search never lists them, and
+            # they must not take the places of roles it can show when the limit is applied
+            jobs.sort(key=lambda j: bool(j.get("via_blocked")))
             fetched = len(jobs)
             watchlist.note_month_call(prov, quota)
             watchlist.clear_source_cooldown(prov)

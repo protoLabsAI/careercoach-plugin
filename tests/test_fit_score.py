@@ -314,6 +314,84 @@ def test_the_companys_own_posting_decides_where_the_job_is(resolve, mods, monkey
     assert boards.location_matches(kept, "remote, portland, or") is True
 
 
+# What Binance's own board said, and what JobLeads made of it (2026-11-18).
+_KYC = (
+    "Responsibilities: Design, develop, and maintain advanced web applications for Binance's internal teams, "
+    "including AI-driven products and other business-critical applications. Collaborate with cross-functional and "
+    "cross-country teams to define, design, and implement new features across various projects. Integrate and "
+    "efficiently utilize third-party data sources, APIs, and AI models where applicable. Requirements: 2+ years of "
+    "JavaScript experience, proficiency in React and Vue, and a track record of delivering high-quality interfaces."
+)
+_REWRITTEN = (
+    "Binance is seeking an experienced frontend engineer to design, develop, and maintain advanced web applications "
+    "for internal teams, including AI-driven products. You will collaborate with cross-country teams to deliver new "
+    "features and integrate third-party data sources and AI models. Required 2+ years of JavaScript experience, "
+    "proficiency in React and Vue, and a track record of delivering high-quality UI."
+)
+_BOARD = [
+    {"title": "Frontend Engineer - KYC", "url": "https://gh/kyc", "location": "Hong Kong; Singapore; Taiwan",
+     "remote": None, "description": _KYC},
+    {"title": "Senior Frontend Engineer - Web3 Wallet", "url": "https://gh/wallet", "location": "Hong Kong",
+     "description": "Build the wallet's React interfaces. Work with product on swaps, staking and on-chain flows."},
+    {"title": "Fullstack Engineer - Square", "url": "https://gh/square", "location": "Singapore",
+     "description": "Own services and React and Vue pages for the Square community feed and creator tools."},
+]  # fmt: skip
+
+
+def test_a_rewritten_listing_is_matched_to_the_posting_it_came_from(resolve):
+    lead = {"title": "Frontend Engineer - AI-Driven Web Apps (Remote)", "snippet": _REWRITTEN}
+    assert resolve.match_title(lead["title"], _BOARD) is None  # the reposter changed the title
+    assert resolve.match_text(lead, _BOARD)["url"] == "https://gh/kyc"
+    assert resolve.match_text({"snippet": "React and Vue engineer wanted."}, _BOARD) is None  # too thin to judge
+    generic = {"snippet": "We are a fast growing startup building delightful products with modern tooling, great culture, "
+               "unlimited vacation, strong mission, talented people, ambitious goals and wonderful customers worldwide."}  # fmt: skip
+    assert resolve.match_text(generic, _BOARD) is None  # nothing on the board is this
+    twins = [_BOARD[0], {**_BOARD[0], "url": "https://gh/kyc-2", "title": "Frontend Engineer - KYC (APAC)"}]
+    assert resolve.match_text(lead, twins) is None  # two postings fit equally: no guess
+
+
+def test_a_lead_from_a_blocked_site_gets_the_companys_title_link_and_place(resolve, mods, monkeypatch):
+    async def board(ats, slug, name, **kw):
+        return _BOARD
+
+    async def probe(name, slug="", **kw):
+        return [("greenhouse", "binance")], []
+
+    boards = importlib.import_module(resolve.__name__.rsplit(".", 1)[0] + ".boards")
+    monkeypatch.setattr(boards, "fetch_board", board)
+    monkeypatch.setattr(boards, "probe", probe)
+    lead = {"title": "Frontend Engineer - AI-Driven Web Apps (Remote)", "company": "Binance", "source": "jsearch",
+            "via_blocked": True, "remote": True, "countries": ["US"], "location": "Remote", "comp": "90,000–150,000",
+            "url": "https://www.google.com/search?q=Binance+Frontend", "snippet": _REWRITTEN}  # fmt: skip
+    assert asyncio.run(resolve.resolve([lead])) == 1
+    assert lead["apply_url"] == "https://gh/kyc" and lead["ats_lookup"] == "found"
+    assert lead["title"] == "Frontend Engineer - KYC" and lead["listed_title"].startswith(
+        "Frontend Engineer - AI-Driven"
+    )
+    assert lead["location"] == "Hong Kong; Singapore; Taiwan" and "comp" not in lead  # the reposter's pay is dropped
+    # and so is its "remote, US": the company's posting doesn't say remote, so nothing does
+    assert lead["remote"] is None and "countries" not in lead
+    assert boards.location_matches(lead, "remote, portland, or") is False
+    # the company's posting names no place at all: the reposter's "Remote" is not kept either
+    nowhere = [{**_BOARD[0], "location": "", "remote": None}]
+
+    async def board2(ats, slug, name, **kw):
+        return nowhere
+
+    monkeypatch.setattr(boards, "fetch_board", board2)
+    lead2 = {"title": "Frontend Engineer - AI-Driven Web Apps (Remote)", "company": "Binance", "source": "jsearch",
+             "via_blocked": True, "remote": True, "countries": ["US"], "location": "Remote (US)",
+             "url": "https://www.google.com/search?q=Binance+Frontend+2", "snippet": _REWRITTEN}  # fmt: skip
+    assert asyncio.run(resolve.resolve([lead2])) == 1
+    assert lead2["location"] == "" and lead2["listed_location"] == "Remote (US)" and lead2["remote"] is None
+    assert boards.location_matches(lead2, "remote, portland, or") is False
+    # an ordinary board listing whose title doesn't match is NOT matched by text: only a blocked site's lead is
+    plain = {"title": "Something Else Entirely", "company": "Binance", "source": "himalayas",
+             "url": "https://himalayas.app/x", "snippet": _REWRITTEN}  # fmt: skip
+    asyncio.run(resolve.resolve([plain]))
+    assert plain["ats_lookup"] == "no title" and "apply_url" not in plain
+
+
 def test_resolve_remembers_a_miss_and_leaves_other_links_alone(resolve, mods, monkeypatch):
     calls: list[str] = []
     _ats_net(monkeypatch, calls)
