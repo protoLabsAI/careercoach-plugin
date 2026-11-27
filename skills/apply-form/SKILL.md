@@ -22,6 +22,21 @@ operator confirms them; honor `do_not_claim` in every mode.
 Otherwise follow the kit-first steps below. The `apply` workflow remains the autonomous
 research → evaluate → save-kit route. None of these modes authorizes browser submission.
 
+## Several roles at once
+
+To build kits for several roles in parallel, give each role to the `application_writer`
+subagent (`task_batch` with `run_in_background: true`). The writer runs with no operator, so it
+has no profile or answer-bank write tools. Write its brief in terms of the tools it does have,
+or the dispatch is refused:
+
+- Standard answers come from `careercoach_read_sources(source="answers")`.
+- The writer renders the approved résumé as it is. It reports any bullet changes it wants
+  instead of saving a résumé variant.
+- Leave the profile and answer-bank tools out of the brief entirely.
+
+When the reports come back, show the operator the proposed résumé changes and any new answers.
+Save the approved ones yourself, using the steps below.
+
 ## 1. Evaluate the posting
 
 Use [Research and documents](application-guide.md) to evaluate fit against the operator's confirmed profile
