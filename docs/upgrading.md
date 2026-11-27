@@ -3,6 +3,14 @@
 Version notes that change behavior. Release notes for every version are on the
 [releases page](https://github.com/protoLabsAI/careercoach-plugin/releases).
 
+## 0.17.14
+
+- **Apply kits for several roles build in parallel the first time.** When asked to prep many roles at
+  once, the coach hands each one to its apply-kit writer in the background. The writer can't change your
+  profile or answer bank, and the coach used to ask it to anyway, so every handoff was refused and it had
+  to try again. Now it briefs the writer correctly, and the résumé changes and new answers the writer
+  suggests come back to you to approve.
+
 ## 0.17.13
 
 - **Dover boards can be watched.** Many startups post their openings on Dover. Adding a company to the
